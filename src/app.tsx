@@ -65,6 +65,8 @@ export function App() {
           onUploadAvatar={(file) => void session.uploadAvatar(file)}
           onEquipAvatar={(cid) => void session.equipAvatar(cid)}
           onRemoveAvatar={session.removeAvatar}
+          townCharacters={session.townCharacters}
+          onEquipTownCharacter={(entry) => void session.equipTownCharacter(entry)}
           worlds={session.worlds}
           currentWorld={session.currentWorld}
           worldBusy={session.worldBusy}

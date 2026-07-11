@@ -63,6 +63,9 @@ export const ja: Dict = {
   'avatar.license': 'ライセンス',
   'avatar.invalid': '有効なVRMファイルではありません。',
   'avatar.saved': 'アバターに保存しました。',
+  'avatar.townTitle': 'tc-townのキャラクター',
+  'avatar.townEquip': '装備する',
+  'avatar.townNoModel': 'このキャラクターは装備できるVRMがありません。',
 
   // World panel
   'world.title': 'ワールド',

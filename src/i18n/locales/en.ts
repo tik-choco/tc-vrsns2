@@ -65,6 +65,9 @@ export const en = {
   'avatar.license': 'License',
   'avatar.invalid': 'That file is not a valid VRM.',
   'avatar.saved': 'Saved to your avatars.',
+  'avatar.townTitle': 'Characters from tc-town',
+  'avatar.townEquip': 'Equip',
+  'avatar.townNoModel': 'No VRM avatar available for this character.',
 
   // World (environment) panel
   'world.title': 'World',

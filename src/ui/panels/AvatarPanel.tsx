@@ -1,13 +1,32 @@
 import { Trash2 } from 'lucide-preact'
 import { useTranslation } from '../../i18n'
 import type { GameOverlayProps } from '../uiContract'
+import type { CharacterIndexEntry } from '../../interop/townCharacters'
 import { PanelShell } from './PanelShell'
 import { CatalogPanel } from './CatalogPanel'
 
 type Props = Pick<
   GameOverlayProps,
-  'avatars' | 'currentAvatarCid' | 'avatarBusy' | 'onUploadAvatar' | 'onEquipAvatar' | 'onRemoveAvatar'
+  | 'avatars'
+  | 'currentAvatarCid'
+  | 'avatarBusy'
+  | 'onUploadAvatar'
+  | 'onEquipAvatar'
+  | 'onRemoveAvatar'
+  | 'townCharacters'
+  | 'onEquipTownCharacter'
 > & { onClose: () => void }
+
+/**
+ * A town character is only equippable once it carries a well-formed
+ * vrmChecksum (already format-validated in interop/townCharacters.ts) —
+ * that's the only thing the equip flow can actually verify bytes against.
+ * A vrmCid alone (with no checksum) is not sufficient, since equipping it
+ * would mean trusting unverified bytes fetched from mist storage.
+ */
+function isEquippable(entry: CharacterIndexEntry): boolean {
+  return Boolean(entry.vrmChecksum)
+}
 
 export function AvatarPanel(props: Props) {
   const { t } = useTranslation()
@@ -47,6 +66,35 @@ export function AvatarPanel(props: Props) {
           </div>
         )}
       />
+
+      {props.townCharacters.length > 0 && (
+        <section class="town-characters">
+          <h3 class="town-characters-title">{t('avatar.townTitle')}</h3>
+          <div class="town-char-list" role="list">
+            {props.townCharacters.map((entry) => {
+              const equippable = isEquippable(entry)
+              return (
+                <div class={equippable ? 'town-char-row' : 'town-char-row is-disabled'} role="listitem" key={entry.id}>
+                  <div class="town-char-info">
+                    <span class="town-char-name">{entry.name}</span>
+                    <span class="town-char-summary">
+                      {equippable ? entry.summary || ' ' : t('avatar.townNoModel')}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={!equippable || props.avatarBusy}
+                    onClick={() => props.onEquipTownCharacter(entry)}
+                  >
+                    {props.avatarBusy ? t('avatar.uploading') : t('avatar.townEquip')}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
     </PanelShell>
   )
 }

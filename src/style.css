@@ -929,6 +929,60 @@ body {
   padding-block-start: var(--sp-3);
   border-block-start: 1px solid var(--border);
 }
+
+/* --- Town characters (tc-town cross-app roster) ---------------------------- */
+
+.town-characters {
+  margin-block-start: var(--sp-4);
+  padding-block-start: var(--sp-4);
+  border-block-start: 1px solid var(--border);
+}
+.town-characters-title {
+  margin: 0 0 var(--sp-3);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.town-char-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-block-size: 14rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.town-char-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 0.55rem 0.8rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--fill-1);
+}
+.town-char-row.is-disabled {
+  opacity: 0.55;
+}
+.town-char-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-inline-size: 0;
+}
+.town-char-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.town-char-summary {
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .objects-footer {
   display: flex;
   align-items: center;
