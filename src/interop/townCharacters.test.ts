@@ -2,7 +2,7 @@
 // The shared bus itself is vendored/tested elsewhere; here we mock it so we
 // can control exactly what "foreign" data listTownCharacters/subscribeTownCharacters
 // have to defend against.
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SharedRecord } from '../lib/sharedBus'
 
 const { readShared, subscribeShared } = vi.hoisted(() => ({
@@ -18,12 +18,16 @@ function record(meta: Record<string, unknown>): SharedRecord {
   return { cid: '', meta, updatedAt: '2026-01-01T00:00:00.000Z', from: 'tc-town' }
 }
 
+// A well-formed sha256 hex digest — 64 lowercase hex chars. Content doesn't
+// matter here, only the shape (sanitizeEntry only format-validates it).
+const VALID_CHECKSUM = '0123456789abcdef'.repeat(4)
+
 const VALID_ENTRY = {
   id: 'char-1',
   name: 'Ada',
   summary: 'A curious explorer.',
   personaPrompt: 'You are Ada, a curious explorer.',
-  vrmChecksum: 'abc123',
+  vrmChecksum: VALID_CHECKSUM,
   vrmFileName: 'ada.vrm',
   updatedAt: '2026-01-01T00:00:00.000Z',
 }
@@ -104,16 +108,94 @@ describe('listTownCharacters', () => {
     expect(entry.summary.length).toBeLessThanOrEqual(2000)
   })
 
+  it('caps an oversized updatedAt instead of storing it verbatim', () => {
+    const huge = { ...VALID_ENTRY, id: 'char-updatedat', updatedAt: '2026-01-01T00:00:00.000Z'.padEnd(500, 'x') }
+    readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [huge] }))
+    const [entry] = listTownCharacters()
+    expect(entry.updatedAt.length).toBeLessThanOrEqual(64)
+  })
+
   it('caps the entry list at a sane maximum instead of accepting unbounded data', () => {
     const many = Array.from({ length: 500 }, (_, i) => ({ ...VALID_ENTRY, id: `char-${i}` }))
     readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: many }))
     expect(listTownCharacters().length).toBeLessThanOrEqual(200)
   })
 
+  it('stops scanning raw entries after a bounded prefix, regardless of how many are valid', () => {
+    // 1000 junk entries exhaust the raw-scan budget before the one valid
+    // entry appended after them is ever reached — this is a distinct guard
+    // from the 200-accepted-entries cap (which a huge *junk* array wouldn't
+    // otherwise trip, since none of it is ever accepted).
+    const junkPrefix = Array.from({ length: 1000 }, () => ({ bogus: true }))
+    readShared.mockReturnValueOnce(
+      record({ v: 1, updatedAt: 'x', entries: [...junkPrefix, { ...VALID_ENTRY, id: 'char-after-prefix' }] }),
+    )
+    expect(listTownCharacters()).toEqual([])
+  })
+
   it('never throws on wildly malformed input', () => {
     readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [null, 42, 'str', [], true] }))
     expect(() => listTownCharacters()).not.toThrow()
     expect(listTownCharacters()).toEqual([])
+  })
+
+  describe('vrmChecksum format validation', () => {
+    it('drops a malformed vrmChecksum but keeps the rest of the entry', () => {
+      const shortChecksum = { ...VALID_ENTRY, id: 'char-short', vrmChecksum: 'abc123' }
+      readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [shortChecksum] }))
+      const [entry] = listTownCharacters()
+      expect(entry.id).toBe('char-short')
+      expect(entry.vrmChecksum).toBeUndefined()
+    })
+
+    it('rejects a checksum with non-hex characters even at the right length', () => {
+      const bad = { ...VALID_ENTRY, id: 'char-nonhex', vrmChecksum: 'zz'.repeat(32) }
+      readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [bad] }))
+      expect(listTownCharacters()[0].vrmChecksum).toBeUndefined()
+    })
+
+    it('normalizes surrounding whitespace and case on an otherwise-valid checksum', () => {
+      const upper = { ...VALID_ENTRY, id: 'char-upper', vrmChecksum: `  ${VALID_CHECKSUM.toUpperCase()}  ` }
+      readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [upper] }))
+      expect(listTownCharacters()[0].vrmChecksum).toBe(VALID_CHECKSUM)
+    })
+
+    it('drops a non-string vrmChecksum without throwing', () => {
+      const bad = { ...VALID_ENTRY, id: 'char-nonstring', vrmChecksum: 12345 }
+      readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [bad] }))
+      expect(listTownCharacters()[0].vrmChecksum).toBeUndefined()
+    })
+  })
+
+  describe('raw record size guard', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('refuses to even call readShared when the raw localStorage value is oversized', () => {
+      const huge = 'x'.repeat(2 * 1024 * 1024 + 1)
+      vi.stubGlobal('localStorage', { getItem: () => huge })
+      readShared.mockClear()
+      readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [VALID_ENTRY] }))
+      expect(listTownCharacters()).toEqual([])
+      expect(readShared).not.toHaveBeenCalled()
+    })
+
+    it('proceeds normally when the raw value is within the size guard', () => {
+      vi.stubGlobal('localStorage', { getItem: () => 'small-value' })
+      readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [VALID_ENTRY] }))
+      expect(listTownCharacters()).toEqual([VALID_ENTRY])
+    })
+
+    it('proceeds (fails open) when localStorage.getItem itself throws', () => {
+      vi.stubGlobal('localStorage', {
+        getItem: () => {
+          throw new Error('storage disabled')
+        },
+      })
+      readShared.mockReturnValueOnce(record({ v: 1, updatedAt: 'x', entries: [VALID_ENTRY] }))
+      expect(listTownCharacters()).toEqual([VALID_ENTRY])
+    })
   })
 })
 

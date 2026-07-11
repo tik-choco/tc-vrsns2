@@ -40,14 +40,49 @@ const NAME_MAX_LEN = 64
 const SUMMARY_MAX_LEN = 2000
 const PERSONA_MAX_LEN = 8000
 const FILENAME_MAX_LEN = 256
-const CHECKSUM_MAX_LEN = 128
 const CID_MAX_LEN = 128
 const VOICE_MAX_LEN = 128
+const UPDATED_AT_MAX_LEN = 64
 const MAX_ENTRIES = 200
+/** Upper bound on how many raw array elements sanitizeMeta will even look at,
+ * independent of MAX_ENTRIES — without this, an adversarial `entries: [garbage, garbage, ...]`
+ * array of unbounded length would make sanitizeMeta scan every element (none
+ * of which ever push to `out`, so the MAX_ENTRIES break never triggers). */
+const MAX_RAW_ENTRIES_SCANNED = 1000
+/** Guards against JSON.parse'ing/processing an adversarially huge localStorage
+ * value. sharedBus.ts's readShared() is a fixed vendored contract we don't
+ * reshape, so we can't intercept its own JSON.parse — this pre-check at least
+ * skips calling it (and the sanitize pass) once the record is clearly beyond
+ * what a legitimate character roster would ever be. */
+const RAW_RECORD_MAX_LEN = 2 * 1024 * 1024
+const RAW_STORAGE_KEY = `tc-shared-${TOPIC}-v1` // mirrors sharedBus.ts's private sharedKey(topic)
+
+/** SHA-256 hex digest: exactly 64 lowercase hex characters. */
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/
 
 function str(value: unknown, maxLen: number): string | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined
   return value.slice(0, maxLen)
+}
+
+/** Validates (and case-normalizes) a vrmChecksum. Anything that isn't a
+ * well-formed sha256 hex digest is dropped rather than trusted — equip flows
+ * treat vrmChecksum as the sole basis for "this character has a verifiable
+ * VRM avatar", so a malformed value must never survive sanitization. */
+function validChecksum(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  return SHA256_HEX_RE.test(normalized) ? normalized : undefined
+}
+
+function rawRecordWithinSizeLimit(): boolean {
+  try {
+    const raw = localStorage.getItem(RAW_STORAGE_KEY)
+    return raw === null || raw.length <= RAW_RECORD_MAX_LEN
+  } catch {
+    // Can't check — don't block the normal (already try/catch-guarded) path.
+    return true
+  }
 }
 
 function sanitizeEntry(raw: unknown): CharacterIndexEntry | null {
@@ -65,9 +100,9 @@ function sanitizeEntry(raw: unknown): CharacterIndexEntry | null {
     name,
     summary: str(r.summary, SUMMARY_MAX_LEN) ?? '',
     personaPrompt: str(r.personaPrompt, PERSONA_MAX_LEN) ?? '',
-    updatedAt: r.updatedAt,
+    updatedAt: r.updatedAt.slice(0, UPDATED_AT_MAX_LEN),
   }
-  const vrmChecksum = str(r.vrmChecksum, CHECKSUM_MAX_LEN)
+  const vrmChecksum = validChecksum(r.vrmChecksum)
   if (vrmChecksum) entry.vrmChecksum = vrmChecksum
   const vrmCid = str(r.vrmCid, CID_MAX_LEN)
   if (vrmCid) entry.vrmCid = vrmCid
@@ -85,9 +120,10 @@ function sanitizeMeta(raw: unknown): CharacterIndexEntry[] {
   const r = raw as Record<string, unknown>
   if (r.v !== 1 || !Array.isArray(r.entries)) return []
   const out: CharacterIndexEntry[] = []
-  for (const rawEntry of r.entries) {
+  const scanLimit = Math.min(r.entries.length, MAX_RAW_ENTRIES_SCANNED)
+  for (let i = 0; i < scanLimit; i += 1) {
     if (out.length >= MAX_ENTRIES) break
-    const entry = sanitizeEntry(rawEntry)
+    const entry = sanitizeEntry(r.entries[i])
     if (entry) out.push(entry)
   }
   return out
@@ -95,9 +131,10 @@ function sanitizeMeta(raw: unknown): CharacterIndexEntry[] {
 
 /**
  * Lists tc-town's published character roster. Never throws — malformed,
- * missing, or adversarial data resolves to an empty list.
+ * missing, oversized, or adversarial data resolves to an empty list.
  */
 export function listTownCharacters(): CharacterIndexEntry[] {
+  if (!rawRecordWithinSizeLimit()) return []
   const record = readShared(TOPIC)
   if (!record) return []
   return sanitizeMeta(record.meta)
@@ -111,6 +148,14 @@ export function listTownCharacters(): CharacterIndexEntry[] {
  */
 export function subscribeTownCharacters(cb: (entries: CharacterIndexEntry[]) => void): () => void {
   return subscribeShared(TOPIC, (record) => {
+    // The raw JSON.parse already happened inside subscribeShared by the time
+    // we're called (see the size-guard comment above) — this still bounds
+    // the sanitize pass against a record that ballooned between our last
+    // check and this notification.
+    if (!rawRecordWithinSizeLimit()) {
+      cb([])
+      return
+    }
     cb(sanitizeMeta(record.meta))
   })
 }
