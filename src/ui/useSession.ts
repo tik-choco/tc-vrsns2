@@ -21,6 +21,7 @@ import {
   removeFromCatalog,
   worldFormatOf,
 } from '../storage/catalog'
+import { vrmBytesFromCid } from '../storage/vrmSource'
 import {
   clampUserName,
   loadLocalProfile,
@@ -28,6 +29,12 @@ import {
   saveLastRoomId,
   saveLocalProfile,
 } from '../profile/localProfile'
+import {
+  listTownCharacters,
+  subscribeTownCharacters,
+  type CharacterIndexEntry,
+} from '../interop/townCharacters'
+import { MAX_VRM_BYTES, sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibrary'
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
@@ -46,6 +53,7 @@ export type SessionApi = {
   avatars: CatalogItem[]
   worlds: CatalogItem[]
   objectModels: CatalogItem[]
+  townCharacters: CharacterIndexEntry[]
   currentAvatarCid: string | null
   currentWorld: WorldEnvironment | null
   placedCount: number
@@ -63,6 +71,7 @@ export type SessionApi = {
   // avatar
   uploadAvatar: (file: File) => Promise<void>
   equipAvatar: (cid: string | null) => Promise<void>
+  equipTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
   removeAvatar: (cid: string) => void
   // world
   uploadWorld: (file: File) => Promise<void>
@@ -121,6 +130,7 @@ export function useSession(): SessionApi {
   const [avatars, setAvatars] = useState<CatalogItem[]>(() => listCatalog('avatar'))
   const [worlds, setWorlds] = useState<CatalogItem[]>(() => listCatalog('world'))
   const [objectModels, setObjectModels] = useState<CatalogItem[]>(() => listCatalog('object'))
+  const [townCharacters, setTownCharacters] = useState<CharacterIndexEntry[]>(() => listTownCharacters())
   const [currentAvatarCid, setCurrentAvatarCid] = useState<string | null>(
     profileRef.current.avatarCid ?? null,
   )
@@ -129,6 +139,10 @@ export function useSession(): SessionApi {
   const [avatarBusy, setAvatarBusy] = useState(false)
   const [worldBusy, setWorldBusy] = useState(false)
   const [objectBusy, setObjectBusy] = useState(false)
+
+  // tc-town's character roster lives on the shared bus, independent of the
+  // room session — subscribe once for the lifetime of the app, not per-join.
+  useEffect(() => subscribeTownCharacters(setTownCharacters), [])
 
   const pushMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev.slice(-(MAX_MESSAGES - 1)), m])
@@ -364,16 +378,62 @@ export function useSession(): SessionApi {
 
   const equipAvatar = useCallback(
     async (cid: string | null) => {
-      if (cid === null) {
-        await equipAvatarBytes(null, null)
-        return
-      }
+      // Busy for the whole call, including the "equip default" (cid === null)
+      // path — otherwise it races with an in-flight upload/equip/town-character
+      // equip that clears it out from under a concurrent click.
       setAvatarBusy(true)
       try {
+        if (cid === null) {
+          await equipAvatarBytes(null, null)
+          return
+        }
         const bytes = await catalogBytes(cid)
         await equipAvatarBytes(bytes, cid)
       } catch (e) {
         console.debug('avatar equip failed', cid, e)
+      } finally {
+        setAvatarBusy(false)
+      }
+    },
+    [equipAvatarBytes],
+  )
+
+  /**
+   * Equips a tc-town character as the local avatar. A character is only
+   * equippable when it carries a well-formed vrmChecksum (validated in
+   * interop/townCharacters.ts) — that's the one thing we can actually verify
+   * bytes against, so an entry with only a vrmCid and no checksum is treated
+   * as not equippable (mirrors AvatarPanel's isEquippable check). Resolves
+   * bytes from the shared tc-vrm-viewer library by checksum first (no
+   * network/mist involved, and vrmLibrary.ts re-verifies the checksum itself
+   * before returning bytes); falls back to the character's mist CID
+   * (best-effort enrichment from tc-town) when no local copy is found,
+   * size-capping and verifying the fetched bytes against the published
+   * checksum before trusting them. Then reuses the normal upload path so the
+   * avatar gets a local CID and profile sync to peers works unchanged.
+   */
+  const equipTownCharacter = useCallback(
+    async (entry: CharacterIndexEntry) => {
+      setAvatarBusy(true)
+      try {
+        if (!entry.vrmChecksum) throw new Error('tc-town character has no verified VRM checksum')
+        let bytes = await vrmBytesByChecksum(entry.vrmChecksum)
+        if (!bytes && entry.vrmCid) {
+          const fetched = await vrmBytesFromCid(entry.vrmCid)
+          if (fetched.byteLength > MAX_VRM_BYTES) {
+            throw new Error('tc-town character VRM exceeds the maximum accepted size')
+          }
+          if ((await sha256Hex(fetched)) !== entry.vrmChecksum) {
+            throw new Error('vrm checksum mismatch for tc-town character')
+          }
+          bytes = fetched
+        }
+        if (!bytes) throw new Error('tc-town character has no equippable VRM avatar')
+        const item = await addToCatalog('avatar', entry.name || entry.vrmFileName || 'Character', bytes)
+        setAvatars(listCatalog('avatar'))
+        await equipAvatarBytes(bytes, item.cid)
+      } catch (e) {
+        console.debug('town character equip failed', entry.id, e)
       } finally {
         setAvatarBusy(false)
       }
@@ -507,6 +567,7 @@ export function useSession(): SessionApi {
     avatars,
     worlds,
     objectModels,
+    townCharacters,
     currentAvatarCid,
     currentWorld,
     placedCount,
@@ -521,6 +582,7 @@ export function useSession(): SessionApi {
     setInputEnabled,
     uploadAvatar,
     equipAvatar,
+    equipTownCharacter,
     removeAvatar,
     uploadWorld,
     applyWorld,

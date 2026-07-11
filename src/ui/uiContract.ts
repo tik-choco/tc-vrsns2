@@ -4,6 +4,7 @@
 // these props and callbacks — it owns no session, world or network state.
 
 import type { ChatMessage, PlayerProfile, WorldEnvironment } from '../shared/types'
+import type { CharacterIndexEntry } from '../interop/townCharacters'
 
 export type MicState = 'off' | 'on' | 'pending' | 'error'
 
@@ -26,6 +27,9 @@ export type GameOverlayProps = {
   onUploadAvatar: (file: File) => void
   onEquipAvatar: (cid: string | null) => void // null equips the default
   onRemoveAvatar: (cid: string) => void
+  // tc-town character roster (cross-app, read-only)
+  townCharacters: CharacterIndexEntry[]
+  onEquipTownCharacter: (entry: CharacterIndexEntry) => void
   // world environment
   worlds: CatalogItem[]
   currentWorld: WorldEnvironment | null // null = default grid
