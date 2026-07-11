@@ -17,9 +17,15 @@ type Props = Pick<
   | 'onEquipTownCharacter'
 > & { onClose: () => void }
 
-/** A town character is only equippable once it carries a way to fetch its VRM bytes. */
+/**
+ * A town character is only equippable once it carries a well-formed
+ * vrmChecksum (already format-validated in interop/townCharacters.ts) —
+ * that's the only thing the equip flow can actually verify bytes against.
+ * A vrmCid alone (with no checksum) is not sufficient, since equipping it
+ * would mean trusting unverified bytes fetched from mist storage.
+ */
 function isEquippable(entry: CharacterIndexEntry): boolean {
-  return Boolean(entry.vrmChecksum || entry.vrmCid)
+  return Boolean(entry.vrmChecksum)
 }
 
 export function AvatarPanel(props: Props) {
