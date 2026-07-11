@@ -1,0 +1,76 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Allow only one Pages deployment at a time, but let an in-progress one
+# finish rather than cancelling it: cancelling a running Pages deployment can
+# leave the github-pages environment in a state where the next run fails with
+# "Deployment failed, try again later" (this matches GitHub's official Pages
+# workflow, which uses cancel-in-progress: false for the same reason).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VITE_BASE_PATH: /tc-vrsns2/
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      # Take the URL from whichever deploy attempt actually succeeded.
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        # src/vendor/mistlib is committed (built wasm output), so this runs
+        # the same steps as `npm run build` minus the `prebuild` lifecycle
+        # hook, which would otherwise try to re-fetch/rebuild mistlib.
+        run: npx tsc -b && npx vite build
+
+      - name: Setup Pages
+        # enablement: true creates the Pages site (source: GitHub Actions) on
+        # first run, so no manual repo-settings step is needed.
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+      # Pages occasionally returns a transient "Deployment failed, try again
+      # later" from its backend even when the uploaded artifact is fine. Try
+      # once (tolerating that failure), then retry a second time before letting
+      # the run fail.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Deploy to GitHub Pages (retry)
+        if: steps.deployment.outcome == 'failure'
+        id: deployment-retry
+        uses: actions/deploy-pages@v4
