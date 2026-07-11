@@ -21,6 +21,7 @@ import {
   removeFromCatalog,
   worldFormatOf,
 } from '../storage/catalog'
+import { vrmBytesFromCid } from '../storage/vrmSource'
 import {
   clampUserName,
   loadLocalProfile,
@@ -28,6 +29,12 @@ import {
   saveLastRoomId,
   saveLocalProfile,
 } from '../profile/localProfile'
+import {
+  listTownCharacters,
+  subscribeTownCharacters,
+  type CharacterIndexEntry,
+} from '../interop/townCharacters'
+import { sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibrary'
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
@@ -46,6 +53,7 @@ export type SessionApi = {
   avatars: CatalogItem[]
   worlds: CatalogItem[]
   objectModels: CatalogItem[]
+  townCharacters: CharacterIndexEntry[]
   currentAvatarCid: string | null
   currentWorld: WorldEnvironment | null
   placedCount: number
@@ -63,6 +71,7 @@ export type SessionApi = {
   // avatar
   uploadAvatar: (file: File) => Promise<void>
   equipAvatar: (cid: string | null) => Promise<void>
+  equipTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
   removeAvatar: (cid: string) => void
   // world
   uploadWorld: (file: File) => Promise<void>
@@ -121,6 +130,7 @@ export function useSession(): SessionApi {
   const [avatars, setAvatars] = useState<CatalogItem[]>(() => listCatalog('avatar'))
   const [worlds, setWorlds] = useState<CatalogItem[]>(() => listCatalog('world'))
   const [objectModels, setObjectModels] = useState<CatalogItem[]>(() => listCatalog('object'))
+  const [townCharacters, setTownCharacters] = useState<CharacterIndexEntry[]>(() => listTownCharacters())
   const [currentAvatarCid, setCurrentAvatarCid] = useState<string | null>(
     profileRef.current.avatarCid ?? null,
   )
@@ -129,6 +139,10 @@ export function useSession(): SessionApi {
   const [avatarBusy, setAvatarBusy] = useState(false)
   const [worldBusy, setWorldBusy] = useState(false)
   const [objectBusy, setObjectBusy] = useState(false)
+
+  // tc-town's character roster lives on the shared bus, independent of the
+  // room session — subscribe once for the lifetime of the app, not per-join.
+  useEffect(() => subscribeTownCharacters(setTownCharacters), [])
 
   const pushMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev.slice(-(MAX_MESSAGES - 1)), m])
@@ -381,6 +395,43 @@ export function useSession(): SessionApi {
     [equipAvatarBytes],
   )
 
+  /**
+   * Equips a tc-town character as the local avatar. Resolves VRM bytes from
+   * the shared tc-vrm-viewer library by checksum first (no network/mist
+   * involved); falls back to the character's mist CID (best-effort
+   * enrichment from tc-town) when no local copy is found, verifying the
+   * fetched bytes against the published checksum before trusting them. Then
+   * reuses the normal upload path so the avatar gets a local CID and profile
+   * sync to peers works unchanged.
+   */
+  const equipTownCharacter = useCallback(
+    async (entry: CharacterIndexEntry) => {
+      setAvatarBusy(true)
+      try {
+        let bytes: Uint8Array | null = null
+        if (entry.vrmChecksum) {
+          bytes = await vrmBytesByChecksum(entry.vrmChecksum)
+        }
+        if (!bytes && entry.vrmCid) {
+          const fetched = await vrmBytesFromCid(entry.vrmCid)
+          if (entry.vrmChecksum && (await sha256Hex(fetched)) !== entry.vrmChecksum) {
+            throw new Error('vrm checksum mismatch for tc-town character')
+          }
+          bytes = fetched
+        }
+        if (!bytes) throw new Error('tc-town character has no equippable VRM avatar')
+        const item = await addToCatalog('avatar', entry.name || entry.vrmFileName || 'Character', bytes)
+        setAvatars(listCatalog('avatar'))
+        await equipAvatarBytes(bytes, item.cid)
+      } catch (e) {
+        console.debug('town character equip failed', entry.id, e)
+      } finally {
+        setAvatarBusy(false)
+      }
+    },
+    [equipAvatarBytes],
+  )
+
   const removeAvatar = useCallback(
     (cid: string) => {
       setAvatars(removeFromCatalog('avatar', cid))
@@ -507,6 +558,7 @@ export function useSession(): SessionApi {
     avatars,
     worlds,
     objectModels,
+    townCharacters,
     currentAvatarCid,
     currentWorld,
     placedCount,
@@ -521,6 +573,7 @@ export function useSession(): SessionApi {
     setInputEnabled,
     uploadAvatar,
     equipAvatar,
+    equipTownCharacter,
     removeAvatar,
     uploadWorld,
     applyWorld,
