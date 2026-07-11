@@ -34,7 +34,7 @@ import {
   subscribeTownCharacters,
   type CharacterIndexEntry,
 } from '../interop/townCharacters'
-import { sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibrary'
+import { MAX_VRM_BYTES, sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibrary'
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
@@ -378,12 +378,15 @@ export function useSession(): SessionApi {
 
   const equipAvatar = useCallback(
     async (cid: string | null) => {
-      if (cid === null) {
-        await equipAvatarBytes(null, null)
-        return
-      }
+      // Busy for the whole call, including the "equip default" (cid === null)
+      // path — otherwise it races with an in-flight upload/equip/town-character
+      // equip that clears it out from under a concurrent click.
       setAvatarBusy(true)
       try {
+        if (cid === null) {
+          await equipAvatarBytes(null, null)
+          return
+        }
         const bytes = await catalogBytes(cid)
         await equipAvatarBytes(bytes, cid)
       } catch (e) {
@@ -396,25 +399,31 @@ export function useSession(): SessionApi {
   )
 
   /**
-   * Equips a tc-town character as the local avatar. Resolves VRM bytes from
-   * the shared tc-vrm-viewer library by checksum first (no network/mist
-   * involved); falls back to the character's mist CID (best-effort
-   * enrichment from tc-town) when no local copy is found, verifying the
-   * fetched bytes against the published checksum before trusting them. Then
-   * reuses the normal upload path so the avatar gets a local CID and profile
-   * sync to peers works unchanged.
+   * Equips a tc-town character as the local avatar. A character is only
+   * equippable when it carries a well-formed vrmChecksum (validated in
+   * interop/townCharacters.ts) — that's the one thing we can actually verify
+   * bytes against, so an entry with only a vrmCid and no checksum is treated
+   * as not equippable (mirrors AvatarPanel's isEquippable check). Resolves
+   * bytes from the shared tc-vrm-viewer library by checksum first (no
+   * network/mist involved, and vrmLibrary.ts re-verifies the checksum itself
+   * before returning bytes); falls back to the character's mist CID
+   * (best-effort enrichment from tc-town) when no local copy is found,
+   * size-capping and verifying the fetched bytes against the published
+   * checksum before trusting them. Then reuses the normal upload path so the
+   * avatar gets a local CID and profile sync to peers works unchanged.
    */
   const equipTownCharacter = useCallback(
     async (entry: CharacterIndexEntry) => {
       setAvatarBusy(true)
       try {
-        let bytes: Uint8Array | null = null
-        if (entry.vrmChecksum) {
-          bytes = await vrmBytesByChecksum(entry.vrmChecksum)
-        }
+        if (!entry.vrmChecksum) throw new Error('tc-town character has no verified VRM checksum')
+        let bytes = await vrmBytesByChecksum(entry.vrmChecksum)
         if (!bytes && entry.vrmCid) {
           const fetched = await vrmBytesFromCid(entry.vrmCid)
-          if (entry.vrmChecksum && (await sha256Hex(fetched)) !== entry.vrmChecksum) {
+          if (fetched.byteLength > MAX_VRM_BYTES) {
+            throw new Error('tc-town character VRM exceeds the maximum accepted size')
+          }
+          if ((await sha256Hex(fetched)) !== entry.vrmChecksum) {
             throw new Error('vrm checksum mismatch for tc-town character')
           }
           bytes = fetched
