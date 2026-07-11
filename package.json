@@ -1,0 +1,34 @@
+{
+  "name": "tc-vrsns2",
+  "private": true,
+  "license": "MPL-2.0",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/fetch-mistlib.mjs",
+    "dev": "vite --host",
+    "prebuild": "node scripts/fetch-mistlib.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "fetch-mistlib": "node scripts/fetch-mistlib.mjs",
+    "test": "vitest run",
+    "test:e2e": "node scripts/e2e-sync.mjs"
+  },
+  "dependencies": {
+    "@mkkellogg/gaussian-splats-3d": "^0.4.7",
+    "@pixiv/three-vrm": "^3.5.1",
+    "lucide-preact": "^0.469.0",
+    "preact": "^10.29.3",
+    "three": "^0.183.2"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.5",
+    "@types/node": "^24.13.2",
+    "@types/three": "^0.183.1",
+    "dotenv": "^16.4.7",
+    "playwright": "^1.61.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1",
+    "vitest": "^4.1.9"
+  }
+}
