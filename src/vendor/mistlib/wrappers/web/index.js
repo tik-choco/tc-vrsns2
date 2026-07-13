@@ -12,6 +12,8 @@ const {
     get_all_nodes: mist_get_all_nodes,
     get_all_nodes_in_room: mist_get_all_nodes_in_room,
     join_room: mist_join_room,
+    join_room_async: mist_join_room_async,
+    is_room_joined: mist_is_room_joined,
     get_config: mist_get_config,
     set_config: mist_set_config,
     get_stats: mist_get_stats,
@@ -40,6 +42,9 @@ export const EVENT_AOI_LEFT = 4;
 export const EVENT_PEER_CONNECTED = 5;
 export const EVENT_PEER_DISCONNECTED = 6;
 export const EVENT_AOI_NODES = 7;
+export const EVENT_ROOM_JOINED = 8;
+export const EVENT_ROOM_JOIN_FAILED = 9;
+export const EVENT_ROOM_LEFT = 10;
 export const MEDIA_EVENT_TRACK_ADDED = 100;
 export const MEDIA_EVENT_TRACK_REMOVED = 101;
 export const DELIVERY_RELIABLE = 0;
@@ -148,8 +153,22 @@ export class MistNode {
 
     joinRoom(roomId) {
         // Safe to call repeatedly with different room ids; re-joining the
-        // same room is an idempotent re-announce.
+        // same room is an idempotent re-announce. Fire-and-forget: the room
+        // isn't necessarily usable yet when this returns. Listen for
+        // EVENT_ROOM_JOINED/EVENT_ROOM_JOIN_FAILED (see onEvent), or use
+        // joinRoomAsync() instead, to know when it is.
         mist_join_room(roomId);
+    }
+
+    // Awaitable counterpart to joinRoom(): resolves once the room is
+    // actually usable (or rejects with the failure reason), instead of
+    // returning before the session has finished building.
+    joinRoomAsync(roomId) {
+        return mist_join_room_async(roomId);
+    }
+
+    isRoomJoined(roomId) {
+        return mist_is_room_joined(roomId);
     }
 
     updatePosition(x, y, z = 0, roomId) {
