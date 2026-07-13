@@ -6,6 +6,9 @@ export const EVENT_AOI_LEFT: number;
 export const EVENT_PEER_CONNECTED: number;
 export const EVENT_PEER_DISCONNECTED: number;
 export const EVENT_AOI_NODES: number;
+export const EVENT_ROOM_JOINED: number;
+export const EVENT_ROOM_JOIN_FAILED: number;
+export const EVENT_ROOM_LEFT: number;
 export const MEDIA_EVENT_TRACK_ADDED: number;
 export const MEDIA_EVENT_TRACK_REMOVED: number;
 export const DELIVERY_RELIABLE: number;
@@ -55,6 +58,8 @@ export class MistNode {
     onRemoteTrack(handler: (payload: MediaEventPayload) => void): void;
 
     joinRoom(roomId: string): void;
+    joinRoomAsync(roomId: string): Promise<void>;
+    isRoomJoined(roomId: string): boolean;
     leaveRoom(roomId?: string): void;
     updatePosition(x: number, y: number, z?: number, roomId?: string): void;
 

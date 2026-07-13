@@ -131,11 +131,19 @@ export async function saveSharedProfile(
     updatedAt,
   }
 
-  storage?.setItem(profileFallbackKey, JSON.stringify(record))
+  try {
+    storage?.setItem(profileFallbackKey, JSON.stringify(record))
+  } catch {
+    // Storage full or unavailable — the localStorage fallback copy just won't persist.
+  }
 
   if (backend && storage) {
     const cid = await backend.store(jsonEncoder.encode(JSON.stringify(record)))
-    storage.setItem(profileCidKey, cid)
+    try {
+      storage.setItem(profileCidKey, cid)
+    } catch {
+      // Storage full or unavailable — the CID pointer just won't persist.
+    }
   }
 
   return { name, did: input.did, avatarMime: record.avatarMime, updatedAt, avatar: downscaled }
