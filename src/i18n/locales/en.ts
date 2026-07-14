@@ -24,6 +24,7 @@ export const en = {
   'join.recent': 'Recent',
   'join.roomInvalid': 'Room name may use letters, digits, hyphen and underscore only (max 64).',
   'join.nameRequired': 'Please enter a display name.',
+  'join.makePublic': 'Join as a public room',
 
   // HUD / heads-up display
   'hud.peers': '{count} online',
@@ -111,6 +112,17 @@ export const en = {
   'room.create': 'Create',
   'room.random': 'Random',
   'room.switchHint': 'Switching rooms disconnects you from the current one.',
+  'room.visibility.label': 'Visibility',
+  'room.visibility.public': 'Public (discoverable by anyone)',
+  'room.visibility.private': 'Private (only people with the ID)',
+
+  // Discover panel
+  'discover.title': 'Public rooms',
+  'discover.empty': 'No public rooms found yet.',
+  'discover.join': 'Join',
+  'discover.peers': '{count} online',
+  'discover.justNow': 'Just now',
+  'discover.secondsAgo': '{count}s ago',
 
   // Settings panel
   'settings.title': 'Settings',

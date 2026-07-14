@@ -1,12 +1,14 @@
 // P2P room session: presence, state sync, chat, profiles, and mic voice over
 // the page's single shared MistNode (src/lib/mistNode.ts).
 //
-// mistlib exposes exactly one onEvent slot, and — per the vendored wrapper —
-// onRemoteTrack()/onMediaEvent() also share a single `_onMediaEvent` slot.
-// While a RoomSession is active it therefore owns BOTH slots: one onEvent
-// handler dispatching on eventType, and one onMediaEvent handler dispatching
-// TRACK_ADDED/TRACK_REMOVED itself (never register onRemoteTrack alongside).
-// Every handler is guarded so events firing after leave() are dropped.
+// mistlib exposes exactly one onEvent slot for the whole node, shared with
+// DiscoverySession's always-on discovery-lobby room — so events are received
+// via mistNode.ts's subscribeRoomEvents(), which fans the one slot out by
+// roomId. Per the vendored wrapper, onRemoteTrack()/onMediaEvent() still
+// share a single `_onMediaEvent` slot, and the discovery room has no media
+// use for it, so RoomSession keeps sole, direct ownership of that one (never
+// register onRemoteTrack alongside). Every handler is guarded so events
+// firing after leave() are dropped.
 
 import {
   DELIVERY_RELIABLE,
@@ -25,7 +27,7 @@ import type {
   MediaEventPayload,
   MistNode,
 } from '../vendor/mistlib/wrappers/web/index.js'
-import { currentNodeId, ensureMistNode } from '../lib/mistNode'
+import { currentNodeId, ensureMistNode, subscribeRoomEvents, toBytes } from '../lib/mistNode'
 import { vrsnsDebug } from '../lib/debugHook'
 import type {
   ChatMessage,
@@ -43,6 +45,7 @@ import {
   MSG_STATE,
   MSG_STATE_REQ,
   MSG_WORLD,
+  ROOM_ID_RE,
   TEXT_MAX_LEN,
   decode,
   encode,
@@ -50,7 +53,6 @@ import {
   unwrapEnvelope,
 } from './protocol'
 
-const ROOM_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 /** App prefix keeps our rooms from colliding with other mistlib apps. */
 const ROOM_PREFIX = 'tc-vrsns2/'
 /** The one local mic track id — registered once, then toggled warm. */
@@ -100,6 +102,10 @@ export class RoomSession {
   private readonly node: MistNode
   private profile: PlayerProfile
   private closed = false
+  /** ROOM_PREFIX-namespaced room id — set in attach(), used to unjoin only our room in leave(). */
+  private fullRoomId: string | null = null
+  /** Unsubscribes us from the shared event dispatcher (see mistNode.ts's subscribeRoomEvents). */
+  private unsubscribeEvents: (() => void) | null = null
   private readonly peers = new Map<string, PeerEntry>()
   /** Peers we currently hold a remote audio track from. */
   private readonly audioPeers = new Set<string>()
@@ -169,7 +175,9 @@ export class RoomSession {
   }
 
   private attach(roomId: string): void {
-    this.node.onEvent((eventType, fromId, payload) => {
+    const fullRoomId = ROOM_PREFIX + roomId
+    this.fullRoomId = fullRoomId
+    this.unsubscribeEvents = subscribeRoomEvents(fullRoomId, (eventType, fromId, payload) => {
       if (this.closed) return
       this.handleEvent(eventType, fromId, payload)
     })
@@ -183,7 +191,7 @@ export class RoomSession {
     } catch (err) {
       console.debug('[net] setConfig failed', err)
     }
-    this.node.joinRoom(ROOM_PREFIX + roomId)
+    this.node.joinRoom(fullRoomId)
     this.presenceTimer = setInterval(() => this.syncPresence(), PRESENCE_INTERVAL_MS)
   }
 
@@ -350,9 +358,12 @@ export class RoomSession {
   // --- teardown --------------------------------------------------------------
 
   /**
-   * Leaves the room and releases the node. Note mistlib's leaveRoom()
-   * decommissions the whole page node — ensureMistNode() re-inits it for the
-   * next consumer.
+   * Leaves this room only. Unlike the vendored wrapper's argument-less
+   * leaveRoom() — which decommissions the WHOLE page node (mist_leave_room(),
+   * clears MistNode.initialized) — leaveRoom(fullRoomId) calls
+   * mist_leave_room_id(roomId) and leaves the node (and any other joined
+   * room, e.g. DiscoverySession's discovery lobby) untouched. Confirmed by
+   * reading src/vendor/mistlib/wrappers/web/index.js's leaveRoom(roomId).
    */
   leave(): void {
     if (this.closed) return
@@ -365,13 +376,15 @@ export class RoomSession {
     this.micStateValue = 'off'
     // Detach our slots before tearing the room down, in case the wasm side
     // still flushes events during/after leaveRoom().
-    this.node.onEvent(() => {})
+    this.unsubscribeEvents?.()
+    this.unsubscribeEvents = null
     this.node.onMediaEvent(() => {})
     try {
-      this.node.leaveRoom()
+      if (this.fullRoomId) this.node.leaveRoom(this.fullRoomId)
     } catch (err) {
       console.debug('[net] leaveRoom failed', err)
     }
+    this.fullRoomId = null
     this.peers.clear()
     this.audioPeers.clear()
     this.lastGreetAt.clear()
@@ -624,24 +637,6 @@ export class RoomSession {
       console.debug('[net] sendMessage failed', err)
     }
   }
-}
-
-/**
- * Coerces an EVENT_RAW payload into bytes. The wasm bridge does not
- * guarantee a Uint8Array — the vendored wrapper's own onRawMessage falls
- * back to `new Uint8Array(payload)`, i.e. payloads can arrive as plain
- * number arrays (or other views) depending on the build.
- */
-function toBytes(payload: unknown): Uint8Array | null {
-  if (payload instanceof Uint8Array) return payload
-  if (payload instanceof ArrayBuffer) return new Uint8Array(payload)
-  if (ArrayBuffer.isView(payload)) {
-    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
-  }
-  if (Array.isArray(payload) && payload.every((v) => typeof v === 'number')) {
-    return Uint8Array.from(payload)
-  }
-  return null
 }
 
 /**

@@ -5,8 +5,12 @@
 
 import type { ChatMessage, PlayerProfile, WorldEnvironment } from '../shared/types'
 import type { CharacterIndexEntry } from '../interop/townCharacters'
+import type { DiscoveredRoom } from '../net/DiscoverySession'
+
+export type { DiscoveredRoom }
 
 export type MicState = 'off' | 'on' | 'pending' | 'error'
+export type RoomVisibility = 'public' | 'private'
 
 /** A saved item in the user's local catalog (avatar / world / object model). */
 export type CatalogItem = { cid: string; name: string; thumb?: string }
@@ -49,6 +53,11 @@ export type GameOverlayProps = {
   inviteUrl: string
   onSwitchRoom: (roomId: string) => void
   onLeave: () => void
+  // discovery (public room gossip lobby)
+  discoveredRooms: DiscoveredRoom[]
+  roomVisibility: RoomVisibility
+  onSetRoomVisibility: (v: RoomVisibility) => void
+  onJoinDiscoveredRoom: (roomId: string) => void
   // camera + mobile controls (feed the 3D character controller)
   onToggleView: () => void
   onMobileMove: (x: number, y: number) => void // normalized, -1..1, y+ = forward

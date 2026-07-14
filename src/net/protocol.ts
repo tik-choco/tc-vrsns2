@@ -27,6 +27,18 @@ export const MSG_STATE_REQ = 0x04
 export const MSG_WORLD = 0x05
 /** Sender's owned set of placed objects, body { objects } (DELIVERY_RELIABLE). */
 export const MSG_OBJECTS = 0x06
+/** Gossip room-discovery announce, body { rooms } (DELIVERY_UNRELIABLE). See DiscoverySession. */
+export const MSG_ROOM_ANNOUNCE = 0x07
+
+/** A room the announcer knows about, carried inside a MSG_ROOM_ANNOUNCE. */
+export interface RoomAnnounceEntry {
+  /** User-facing roomId (no ROOM_PREFIX). Must match ROOM_ID_RE. */
+  id: string
+  /** Peer count the announcer observed for that room (self included). Clamped 0..PEER_COUNT_MAX. */
+  count: number
+  /** 0 = announcer is in the room itself. 1 = relay (hearsay) — never re-relayed. */
+  hops: 0 | 1
+}
 
 export type NetMessage =
   | { kind: typeof MSG_STATE; state: PlayerState }
@@ -35,6 +47,7 @@ export type NetMessage =
   | { kind: typeof MSG_STATE_REQ }
   | { kind: typeof MSG_WORLD; env: WorldEnvironment | null }
   | { kind: typeof MSG_OBJECTS; objects: PlacedObject[] }
+  | { kind: typeof MSG_ROOM_ANNOUNCE; rooms: RoomAnnounceEntry[] }
 
 // Defensive limits applied to peer-supplied data.
 export const POS_LIMIT = 1000
@@ -50,6 +63,18 @@ export const SCALE_MIN = 0.01
 export const SCALE_MAX = 100
 /** Largest frame we bother decoding — bigger than a full object set could need. */
 const FRAME_MAX_BYTES = 256 * 1024
+
+/**
+ * User-facing room id shape (no ROOM_PREFIX). Shared by RoomSession's own
+ * join validation and MSG_ROOM_ANNOUNCE entry validation — kept here (not in
+ * RoomSession.ts) so protocol.ts's decode() can enforce it without importing
+ * from the net layer above it.
+ */
+export const ROOM_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+/** Max entries accepted per MSG_ROOM_ANNOUNCE frame — over this, the whole frame is dropped. */
+export const ANNOUNCE_ROOMS_MAX = 16
+/** peerCount clamp ceiling for a MSG_ROOM_ANNOUNCE entry. */
+export const PEER_COUNT_MAX = 999
 
 const WORLD_FORMATS: ReadonlySet<string> = new Set<WorldFormat>([
   'glb',
@@ -119,12 +144,20 @@ export function encode(msg: NetMessage): Uint8Array {
     case MSG_OBJECTS:
       body = { objects: msg.objects }
       break
+    case MSG_ROOM_ANNOUNCE:
+      body = { rooms: msg.rooms }
+      break
   }
   const json = body === undefined ? new Uint8Array(0) : textEncoder.encode(JSON.stringify(body))
   const frame = new Uint8Array(1 + json.length)
   frame[0] = msg.kind
   frame.set(json, 1)
   return frame
+}
+
+/** Convenience wrapper around encode() for DiscoverySession's gossip broadcasts. */
+export function encodeRoomAnnounce(rooms: RoomAnnounceEntry[]): Uint8Array {
+  return encode({ kind: MSG_ROOM_ANNOUNCE, rooms })
 }
 
 function clampPos(v: unknown): number | null {
@@ -161,6 +194,21 @@ function parsePlacedObject(raw: unknown): PlacedObject | null {
   if (x === null || y === null || z === null || rotationY === null || scale === null) return null
   const name = typeof o.name === 'string' ? o.name.trim().slice(0, OBJECT_NAME_MAX_LEN) : ''
   return { id: o.id, cid: o.cid, name, x, y, z, rotationY, scale }
+}
+
+/**
+ * Validates one peer-supplied gossip entry. Returns null to drop it (the
+ * caller keeps decoding the rest of the array — one bad entry doesn't sink
+ * the whole announce).
+ */
+function parseRoomAnnounceEntry(raw: unknown): RoomAnnounceEntry | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.id !== 'string' || !ROOM_ID_RE.test(o.id)) return null
+  const count = clampNumber(o.count, 0, PEER_COUNT_MAX)
+  if (count === null) return null
+  if (o.hops !== 0 && o.hops !== 1) return null
+  return { id: o.id, count: Math.round(count), hops: o.hops }
 }
 
 function parseBody(data: Uint8Array): Record<string, unknown> | null {
@@ -303,6 +351,20 @@ export function decode(data: Uint8Array): NetMessage | null {
         if (obj) objects.push(obj)
       }
       return { kind: MSG_OBJECTS, objects }
+    }
+    case MSG_ROOM_ANNOUNCE: {
+      if (!Array.isArray(body.rooms)) return null
+      if (body.rooms.length > ANNOUNCE_ROOMS_MAX) return null
+      // Dedupe by id, later entry wins — Map.set() on an existing key keeps
+      // its original iteration position, so this is a stable "last write wins".
+      const byId = new Map<string, RoomAnnounceEntry>()
+      for (const raw of body.rooms) {
+        const entry = parseRoomAnnounceEntry(raw)
+        if (entry) byId.set(entry.id, entry)
+      }
+      // An announce with zero valid entries is still a valid message (empty
+      // keepalive) — only the outer shape checks above return null.
+      return { kind: MSG_ROOM_ANNOUNCE, rooms: [...byId.values()] }
     }
     default:
       return null

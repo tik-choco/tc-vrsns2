@@ -22,6 +22,7 @@ export const id: Dict = {
   'join.recent': 'Terbaru',
   'join.roomInvalid': 'Nama ruang hanya boleh berisi huruf, angka, tanda hubung, dan garis bawah (maks. 64).',
   'join.nameRequired': 'Masukkan nama tampilan.',
+  'join.makePublic': 'Gabung sebagai ruang publik',
 
   // HUD
   'hud.peers': '{count} online',
@@ -106,6 +107,17 @@ export const id: Dict = {
   'room.create': 'Buat',
   'room.random': 'Acak',
   'room.switchHint': 'Berpindah ruang akan memutus koneksimu dari ruang saat ini.',
+  'room.visibility.label': 'Visibilitas',
+  'room.visibility.public': 'Publik (dapat ditemukan siapa saja)',
+  'room.visibility.private': 'Privat (hanya yang tahu ID)',
+
+  // Discover panel
+  'discover.title': 'Ruang publik',
+  'discover.empty': 'Belum ada ruang publik yang ditemukan.',
+  'discover.join': 'Gabung',
+  'discover.peers': '{count} online',
+  'discover.justNow': 'Baru saja',
+  'discover.secondsAgo': '{count} detik lalu',
 
   // Settings panel
   'settings.title': 'Pengaturan',

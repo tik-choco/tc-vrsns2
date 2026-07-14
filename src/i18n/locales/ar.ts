@@ -22,6 +22,7 @@ export const ar: Dict = {
   'join.recent': 'الأخيرة',
   'join.roomInvalid': 'يمكن أن يحتوي اسم الغرفة على حروف وأرقام وشرطة وشرطة سفلية فقط (بحد أقصى 64).',
   'join.nameRequired': 'يرجى إدخال اسم معروض.',
+  'join.makePublic': 'الانضمام كغرفة عامة',
 
   // HUD
   'hud.peers': '{count} متصل',
@@ -106,6 +107,17 @@ export const ar: Dict = {
   'room.create': 'إنشاء',
   'room.random': 'عشوائية',
   'room.switchHint': 'تبديل الغرف يفصلك عن الغرفة الحالية.',
+  'room.visibility.label': 'الظهور',
+  'room.visibility.public': 'عامة (يمكن لأي شخص اكتشافها)',
+  'room.visibility.private': 'خاصة (فقط لمن يعرف المعرف)',
+
+  // Discover panel
+  'discover.title': 'الغرف العامة',
+  'discover.empty': 'لم يتم العثور على أي غرف عامة بعد.',
+  'discover.join': 'انضمام',
+  'discover.peers': '{count} متصل',
+  'discover.justNow': 'الآن',
+  'discover.secondsAgo': 'منذ {count} ثانية',
 
   // Settings panel
   'settings.title': 'الإعدادات',

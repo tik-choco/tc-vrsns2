@@ -22,6 +22,7 @@ export const ko: Dict = {
   'join.recent': '최근',
   'join.roomInvalid': '방 이름은 영문, 숫자, 하이픈, 밑줄만 사용할 수 있어요 (최대 64자).',
   'join.nameRequired': '표시 이름을 입력해 주세요.',
+  'join.makePublic': '공개 방으로 참가',
 
   // HUD
   'hud.peers': '{count}명 접속 중',
@@ -106,6 +107,17 @@ export const ko: Dict = {
   'room.create': '만들기',
   'room.random': '랜덤',
   'room.switchHint': '방을 옮기면 현재 방에서 연결이 끊겨요.',
+  'room.visibility.label': '공개 설정',
+  'room.visibility.public': '공개 (누구나 찾을 수 있음)',
+  'room.visibility.private': '비공개 (ID를 아는 사람만)',
+
+  // Discover panel
+  'discover.title': '공개 방',
+  'discover.empty': '아직 발견된 공개 방이 없습니다.',
+  'discover.join': '참가',
+  'discover.peers': '{count}명',
+  'discover.justNow': '방금 전',
+  'discover.secondsAgo': '{count}초 전',
 
   // Settings panel
   'settings.title': '설정',

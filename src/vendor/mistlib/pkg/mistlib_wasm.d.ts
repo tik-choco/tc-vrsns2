@@ -56,7 +56,36 @@ export function storage_add(name: string, data: Uint8Array): Promise<string>;
  */
 export function storage_add_at(name: string, data: Uint8Array, x: number, y: number, z: number): Promise<string>;
 
+/**
+ * `storage_add` + `storage_pin` with no gap between them for a concurrent
+ * eviction to exploit (SPEC-18). See `StorageEngine::add_pinned`.
+ */
+export function storage_add_pinned(name: string, data: Uint8Array): Promise<string>;
+
 export function storage_get(root_cid: string): Promise<Uint8Array>;
+
+/**
+ * Whether `root_cid` is currently pinned (SPEC-18). See
+ * `StorageEngine::is_pinned`.
+ */
+export function storage_is_pinned(root_cid: string): Promise<boolean>;
+
+export function storage_kv_delete(key: string): Promise<void>;
+
+export function storage_kv_get(key: string): Promise<Uint8Array | undefined>;
+
+export function storage_kv_set(key: string, data: Uint8Array): Promise<void>;
+
+/**
+ * Pins `root_cid` so it (and every chunk its manifest references) is
+ * exempt from eviction/decay (SPEC-18). See `StorageEngine::pin`.
+ */
+export function storage_pin(root_cid: string): Promise<void>;
+
+/**
+ * Removes `root_cid`'s pin (SPEC-18). See `StorageEngine::unpin`.
+ */
+export function storage_unpin(root_cid: string): Promise<void>;
 
 export function unpublish_local_track(track_id: string): void;
 
@@ -96,18 +125,25 @@ export interface InitOutput {
     readonly update_position: (a: number, b: number, c: number) => void;
     readonly storage_add: (a: number, b: number, c: number, d: number) => any;
     readonly storage_add_at: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly storage_add_pinned: (a: number, b: number, c: number, d: number) => any;
     readonly storage_get: (a: number, b: number) => any;
-    readonly wasm_bindgen__closure__destroy__h19326926141fe941: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__hf1eac46c7b14bbfe: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__hd9b9648ddf6074bf: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hd6780872556661f6: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__h592d43f707b8155b: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h1328fcfde3f039f3: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h1328fcfde3f039f3_1: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h1328fcfde3f039f3_2: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h1328fcfde3f039f3_3: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h1328fcfde3f039f3_4: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h56de3da8990075a8: (a: number, b: number) => void;
+    readonly storage_is_pinned: (a: number, b: number) => any;
+    readonly storage_kv_delete: (a: number, b: number) => any;
+    readonly storage_kv_get: (a: number, b: number) => any;
+    readonly storage_kv_set: (a: number, b: number, c: any) => any;
+    readonly storage_pin: (a: number, b: number) => any;
+    readonly storage_unpin: (a: number, b: number) => any;
+    readonly wasm_bindgen__closure__destroy__h0709964b7b16cdd3: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__h3636025321064955: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__h4340dadbabf754e2: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h48d2807af935e70e: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen__convert__closures_____invoke__hba59b3cff6ad6c60: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3528255c64a080d4: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3528255c64a080d4_1: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3528255c64a080d4_2: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3528255c64a080d4_3: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3528255c64a080d4_4: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h64d76144fe58f412: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
