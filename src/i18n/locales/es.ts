@@ -24,6 +24,9 @@ export const es: Dict = {
   'join.nameRequired': 'Escribe un nombre visible.',
   'join.makePublic': 'Unirse como sala pública',
 
+  // Resume
+  'resume.message': 'Reanudando tu última sala "{roomId}"…',
+
   // HUD
   'hud.peers': '{count} en línea',
   'hud.you': 'Tú',

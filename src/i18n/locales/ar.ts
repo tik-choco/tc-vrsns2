@@ -24,6 +24,9 @@ export const ar: Dict = {
   'join.nameRequired': 'يرجى إدخال اسم معروض.',
   'join.makePublic': 'الانضمام كغرفة عامة',
 
+  // Resume
+  'resume.message': 'جارٍ استئناف غرفتك الأخيرة "{roomId}"…',
+
   // HUD
   'hud.peers': '{count} متصل',
   'hud.you': 'أنت',

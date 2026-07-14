@@ -26,6 +26,9 @@ export const en = {
   'join.nameRequired': 'Please enter a display name.',
   'join.makePublic': 'Join as a public room',
 
+  // Resume (auto-rejoin the last room on startup)
+  'resume.message': 'Resuming your last room "{roomId}"…',
+
   // HUD / heads-up display
   'hud.peers': '{count} online',
   'hud.you': 'You',

@@ -1,7 +1,18 @@
 import { useRef, useState } from 'preact/hooks'
-import { Check, Plus } from 'lucide-preact'
+import { Check, Plus, RotateCcw } from 'lucide-preact'
 import type { ComponentChildren } from 'preact'
 import type { CatalogItem } from '../uiContract'
+
+/** Uppercase file-extension badge (e.g. "world.glb" -> "GLB"), or null when
+ * the name has no extension worth showing. Derived client-side since
+ * CatalogItem carries only cid/name/thumb. */
+function formatBadge(name: string): string | null {
+  const dot = name.lastIndexOf('.')
+  if (dot < 0 || dot === name.length - 1) return null
+  const ext = name.slice(dot + 1)
+  if (ext.length > 8) return null
+  return ext.toUpperCase()
+}
 
 /** The always-present "revert to built-in" card (default avatar / default grid). */
 type DefaultCard = { label: string; active: boolean; onSelect: () => void }
@@ -63,8 +74,14 @@ export function CatalogPanel({
             onClick={defaultCard.onSelect}
             disabled={busy}
           >
-            <span class="cat-thumb cat-thumb-default" aria-hidden="true" />
-            <span class="cat-name">{defaultCard.label}</span>
+            <span class="cat-card-media">
+              <span class="cat-thumb cat-thumb-default" aria-hidden="true">
+                <RotateCcw size={22} />
+              </span>
+            </span>
+            <span class="cat-card-body">
+              <span class="cat-name">{defaultCard.label}</span>
+            </span>
             {defaultCard.active && (
               <span class="cat-badge" aria-hidden="true">
                 <Check size={13} />
@@ -79,6 +96,7 @@ export function CatalogPanel({
           const cls = ['cat-card', isCurrent ? 'is-current' : '', isSelected ? 'is-selected' : '']
             .filter(Boolean)
             .join(' ')
+          const badge = formatBadge(item.name)
           return (
             <button
               type="button"
@@ -87,14 +105,19 @@ export function CatalogPanel({
               role="listitem"
               onClick={() => setSelected(item.cid)}
             >
-              {item.thumb ? (
-                <img class="cat-thumb" src={item.thumb} alt="" loading="lazy" />
-              ) : (
-                <span class="cat-thumb cat-thumb-blank" aria-hidden="true">
-                  {item.name.slice(0, 1).toUpperCase()}
-                </span>
-              )}
-              <span class="cat-name">{item.name}</span>
+              <span class="cat-card-media">
+                {item.thumb ? (
+                  <img class="cat-thumb" src={item.thumb} alt="" loading="lazy" />
+                ) : (
+                  <span class="cat-thumb-blank" aria-hidden="true">
+                    {item.name.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+              </span>
+              <span class="cat-card-body">
+                <span class="cat-name">{item.name}</span>
+                {badge && <span class="cat-format">{badge}</span>}
+              </span>
               {isCurrent && (
                 <span class="cat-badge" aria-hidden="true">
                   <Check size={13} />
@@ -110,10 +133,14 @@ export function CatalogPanel({
           onClick={() => fileRef.current?.click()}
           disabled={busy}
         >
-          <span class="cat-thumb cat-thumb-upload" aria-hidden="true">
-            <Plus size={26} />
+          <span class="cat-card-media">
+            <span class="cat-thumb-upload" aria-hidden="true">
+              <Plus size={26} />
+            </span>
           </span>
-          <span class="cat-name">{busy ? uploadingLabel : uploadLabel}</span>
+          <span class="cat-card-body">
+            <span class="cat-name">{busy ? uploadingLabel : uploadLabel}</span>
+          </span>
         </button>
         <input ref={fileRef} type="file" accept={accept} hidden onChange={pickFile} />
       </div>
@@ -129,6 +156,11 @@ export function CatalogPanel({
               </div>
             )}
             <p class="preview-name">{selectedItem.name}</p>
+            {formatBadge(selectedItem.name) && (
+              <span class="cat-format" style="align-self: center;">
+                {formatBadge(selectedItem.name)}
+              </span>
+            )}
             {renderActions(selectedItem, selectedItem.cid === currentCid)}
           </>
         ) : (

@@ -24,6 +24,9 @@ export const ko: Dict = {
   'join.nameRequired': '표시 이름을 입력해 주세요.',
   'join.makePublic': '공개 방으로 참가',
 
+  // Resume
+  'resume.message': '마지막 방 "{roomId}"에 재접속하는 중…',
+
   // HUD
   'hud.peers': '{count}명 접속 중',
   'hud.you': '나',

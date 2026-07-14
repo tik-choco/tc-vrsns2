@@ -162,6 +162,98 @@ export class World {
     this.stateListeners.push(cb)
   }
 
+  /** Local player's raw transform (position + heading), without the anim/PlayerState wrapper. Null once disposed. */
+  getLocalPose(): { x: number; y: number; z: number; ry: number } | null {
+    if (this.disposed) return null
+    return {
+      x: this.localRoot.position.x,
+      y: this.localRoot.position.y,
+      z: this.localRoot.position.z,
+      ry: this.characterController.heading,
+    }
+  }
+
+  /**
+   * Force the local player to a given transform (e.g. restoring a saved spot
+   * or a host-directed teleport). Moves the root position/rotation, the
+   * character controller's internal heading + velocity, and the camera's
+   * smoothed follow target together so nothing snaps back or lags behind on
+   * the next tick.
+   */
+  setLocalPose(pose: { x: number; y: number; z: number; ry: number }): void {
+    if (this.disposed) return
+    this.localRoot.position.set(pose.x, pose.y, pose.z)
+    this.localRoot.rotation.set(0, pose.ry, 0)
+    // CharacterController re-applies its own internal heading/velocity every
+    // tick and exposes no setter for either, so reach into its private state
+    // directly (same "as unknown as" pattern as lib/mistNode.ts) — otherwise
+    // the next update() would overwrite our rotation with the stale heading.
+    const controllerState = this.characterController as unknown as {
+      yaw: number
+      velocity: THREE.Vector3
+      grounded: boolean
+    }
+    controllerState.yaw = pose.ry
+    controllerState.velocity.set(0, 0, 0)
+    // Ground plane is flat at y = 0 (see CharacterController); treat the
+    // pose as standing when it's at/below that, airborne (falls naturally)
+    // otherwise.
+    controllerState.grounded = pose.y <= 0
+    // A large delta collapses the camera's exponential follow smoothing to
+    // its converged end state in one call, snapping it to the new spot
+    // instead of panning in from the old one over the next few frames.
+    this.cameraController.update(1)
+  }
+
+  /**
+   * Capture the current frame as a small JPEG data-URL thumbnail (catalog
+   * cards). Renders one frame directly into the canvas, then downsamples
+   * with a center-cropped cover fit straight from the renderer's canvas —
+   * cheaper and safer than round-tripping through a full-resolution data URL
+   * first, which would need an async image decode to downscale and break
+   * this method's synchronous contract. If no custom environment has loaded
+   * yet, this just captures the default grid, which is an acceptable shot.
+   * Returns null on any failure (e.g. a zero-sized canvas before the first
+   * resize).
+   */
+  captureThumbnail(width = 320, height = 180): string | null {
+    try {
+      this.renderer.render(this.scene, this.camera)
+      const source = this.renderer.domElement
+      if (source.width <= 0 || source.height <= 0) return null
+
+      // Cover-fit crop: fill width x height exactly, cropping whichever axis
+      // overhangs, instead of letterboxing.
+      const targetAspect = width / height
+      const sourceAspect = source.width / source.height
+      let sx: number
+      let sy: number
+      let sw: number
+      let sh: number
+      if (sourceAspect > targetAspect) {
+        sh = source.height
+        sw = sh * targetAspect
+        sx = (source.width - sw) / 2
+        sy = 0
+      } else {
+        sw = source.width
+        sh = sw / targetAspect
+        sx = 0
+        sy = (source.height - sh) / 2
+      }
+
+      const out = document.createElement('canvas')
+      out.width = width
+      out.height = height
+      const ctx = out.getContext('2d')
+      if (!ctx) return null
+      ctx.drawImage(source, sx, sy, sw, sh, 0, 0, width, height)
+      return out.toDataURL('image/jpeg', 0.7)
+    } catch {
+      return null
+    }
+  }
+
   upsertRemotePlayer(id: string, profile: PlayerProfile): void {
     const existing = this.remotes.get(id)
     if (existing) {

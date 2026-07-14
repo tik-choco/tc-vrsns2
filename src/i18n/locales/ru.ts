@@ -24,6 +24,9 @@ export const ru: Dict = {
   'join.nameRequired': 'Введите отображаемое имя.',
   'join.makePublic': 'Войти как в публичную комнату',
 
+  // Resume
+  'resume.message': 'Возобновление последней комнаты «{roomId}»…',
+
   // HUD
   'hud.peers': '{count} в сети',
   'hud.you': 'Вы',

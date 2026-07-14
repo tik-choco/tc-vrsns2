@@ -24,6 +24,9 @@ export const ja: Dict = {
   'join.nameRequired': '表示名を入力してください。',
   'join.makePublic': '公開ルームとして参加',
 
+  // Resume（前回のルームへの自動再参加）
+  'resume.message': '前回のルーム「{roomId}」に再開中…',
+
   // HUD
   'hud.peers': '{count}人がオンライン',
   'hud.you': 'あなた',

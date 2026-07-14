@@ -24,6 +24,9 @@ export const hi: Dict = {
   'join.nameRequired': 'कृपया एक प्रदर्शित नाम दर्ज करें।',
   'join.makePublic': 'सार्वजनिक रूम के रूप में शामिल हों',
 
+  // Resume
+  'resume.message': 'आपका पिछला रूम "{roomId}" फिर से शुरू हो रहा है…',
+
   // HUD
   'hud.peers': '{count} ऑनलाइन',
   'hud.you': 'आप',

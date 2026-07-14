@@ -24,6 +24,9 @@ export const id: Dict = {
   'join.nameRequired': 'Masukkan nama tampilan.',
   'join.makePublic': 'Gabung sebagai ruang publik',
 
+  // Resume
+  'resume.message': 'Melanjutkan ruang terakhirmu "{roomId}"…',
+
   // HUD
   'hud.peers': '{count} online',
   'hud.you': 'Kamu',
