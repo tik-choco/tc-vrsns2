@@ -3,6 +3,13 @@ import { App } from './app'
 import './style.css'
 import { writeAppManifest } from './lib/appManifest.js'
 import { BUS_VERSION } from './lib/sharedBus.js'
+import { applyTheme, loadTheme } from './ui/theme.js'
+
+// Applied synchronously before the first paint so there's no flash of the
+// wrong theme while waiting for any component to mount and react to the
+// stored preference — this is just to win the race against the initial
+// render (see ui/theme.ts).
+applyTheme(loadTheme())
 
 render(<App />, document.getElementById('app')!)
 writeAppManifest({

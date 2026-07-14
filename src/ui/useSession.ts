@@ -42,6 +42,7 @@ import {
   type CharacterIndexEntry,
 } from '../interop/townCharacters'
 import { MAX_VRM_BYTES, sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibrary'
+import { syncLocationToUrl, withoutRoomParam, withRoomParam } from './roomUrl'
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
@@ -128,11 +129,7 @@ function scheduleNextFrame(cb: () => void): void {
 }
 
 function computeInviteUrl(roomId: string): string {
-  if (typeof location === 'undefined') return ''
-  const url = new URL(location.href)
-  url.searchParams.set('room', roomId)
-  url.hash = ''
-  return url.toString()
+  return withRoomParam(roomId)?.toString() ?? ''
 }
 
 async function resolveBytes(cid: string): Promise<Uint8Array | null> {
@@ -867,6 +864,23 @@ export function useSession(): SessionApi {
       window.removeEventListener('pagehide', saveOnExit)
     }
   }, [])
+
+  // Keep the address bar's `?room=` in sync with whatever room is actually
+  // joined. Driven off phase/roomId alone (not called from join/leave/
+  // switchRoom directly) so every path that lands there — deep-link join,
+  // auto-resume, manual join, discovery click, switchRoom's leave-then-join —
+  // is covered by this one effect instead of needing its own URL-sync call.
+  // replaceState (not pushState) so joining/leaving a room never grows
+  // browser history.
+  useEffect(() => {
+    if (phase === 'joined' && roomId) {
+      const url = withRoomParam(roomId)
+      if (url) syncLocationToUrl(url)
+    } else if (phase === 'idle') {
+      const url = withoutRoomParam()
+      if (url) syncLocationToUrl(url)
+    }
+  }, [phase, roomId])
 
   const inviteUrl = useMemo(() => computeInviteUrl(roomId), [roomId])
 

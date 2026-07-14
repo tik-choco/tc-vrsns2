@@ -1,17 +1,26 @@
 import { useState } from 'preact/hooks'
+import { Sun, Moon, Monitor } from 'lucide-preact'
 import { useTranslation } from '../../i18n'
 import type { GameOverlayProps } from '../uiContract'
 import { PanelShell } from './PanelShell'
 import { LanguageSelect } from '../LanguageSelect'
 import { AccentColor } from '../AccentColor'
+import { useTheme, type Theme } from '../theme'
 
 type Props = Pick<GameOverlayProps, 'profile' | 'onUpdateProfile'> & { onClose: () => void }
 
 type Quality = 'settings.qualityLow' | 'settings.qualityMedium' | 'settings.qualityHigh'
 const QUALITIES: Quality[] = ['settings.qualityLow', 'settings.qualityMedium', 'settings.qualityHigh']
 
+const THEMES: { value: Theme; labelKey: 'settings.themeLight' | 'settings.themeDark' | 'settings.themeSystem'; Icon: typeof Sun }[] = [
+  { value: 'light', labelKey: 'settings.themeLight', Icon: Sun },
+  { value: 'dark', labelKey: 'settings.themeDark', Icon: Moon },
+  { value: 'system', labelKey: 'settings.themeSystem', Icon: Monitor },
+]
+
 export function SettingsPanel({ profile, onUpdateProfile, onClose }: Props) {
   const { t } = useTranslation()
+  const [theme, setTheme] = useTheme()
   const [name, setName] = useState(profile.name)
   const [color, setColor] = useState(profile.color)
   // Graphics quality is cosmetic here — surfaced for completeness, not wired to
@@ -51,6 +60,25 @@ export function SettingsPanel({ profile, onUpdateProfile, onClose }: Props) {
         <div class="field">
           <span class="field-label">{t('settings.language')}</span>
           <LanguageSelect />
+        </div>
+
+        <div class="field">
+          <span class="field-label">{t('settings.theme')}</span>
+          <div class="seg" role="group" aria-label={t('settings.theme')}>
+            {THEMES.map(({ value, labelKey, Icon }) => (
+              <button
+                key={value}
+                type="button"
+                class={value === theme ? 'seg-btn is-active' : 'seg-btn'}
+                aria-pressed={value === theme}
+                onClick={() => setTheme(value)}
+                title={t(labelKey)}
+              >
+                <Icon size={16} aria-hidden="true" />
+                <span class="btn-text-collapse">{t(labelKey)}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         <div class="field">
