@@ -24,6 +24,9 @@ export const zh: Dict = {
   'join.nameRequired': '请输入昵称。',
   'join.makePublic': '以公开房间加入',
 
+  // Resume
+  'resume.message': '正在重新加入上次的房间「{roomId}」…',
+
   // HUD
   'hud.peers': '{count} 人在线',
   'hud.you': '你',

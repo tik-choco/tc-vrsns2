@@ -24,6 +24,9 @@ export const de: Dict = {
   'join.nameRequired': 'Bitte gib einen Anzeigenamen ein.',
   'join.makePublic': 'Als öffentlichen Raum beitreten',
 
+  // Resume
+  'resume.message': 'Dein letzter Raum „{roomId}“ wird wieder aufgenommen…',
+
   // HUD
   'hud.peers': '{count} online',
   'hud.you': 'Du',

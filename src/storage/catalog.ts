@@ -98,19 +98,36 @@ async function migrateLegacyThumbs(kind: CatalogKind, items: StoredItem[]): Prom
     const migrated = await Promise.all(
       items.map(async (item) => {
         if (!item.thumb || item.thumbCid) return item
-        try {
-          const thumbCid = await publishVrmBytes(`${item.name || item.cid}:thumb`, dataUrlToBytes(item.thumb))
-          changed = true
-          const { thumb: _legacyThumb, ...rest } = item
-          return { ...rest, thumbCid } satisfies StoredItem
-        } catch {
-          return item
-        }
+        const thumbCid = await publishThumbCid(item.name || item.cid, item.thumb)
+        if (!thumbCid) return item
+        changed = true
+        const { thumb: _legacyThumb, ...rest } = item
+        return { ...rest, thumbCid } satisfies StoredItem
       }),
     )
     if (changed) write(kind, migrated)
   } catch {
     // Best-effort background migration — never throw into the caller.
+  }
+}
+
+/** True for a data-URL thumbnail within the inline-size cap accepted for publishing. */
+function isValidThumb(thumb: unknown): thumb is string {
+  return typeof thumb === 'string' && thumb.startsWith('data:') && thumb.length <= THUMB_MAX_LEN
+}
+
+/**
+ * Publishes a data-URL thumbnail's bytes to the shared mistlib content store
+ * and returns its CID, or undefined if the publish fails — shared by
+ * addToCatalog, migrateLegacyThumbs and setCatalogThumb so the "how" of
+ * getting a thumbCid lives in one place. Caller validates the data-URL
+ * (isValidThumb) first.
+ */
+async function publishThumbCid(labelBase: string, thumbDataUrl: string): Promise<string | undefined> {
+  try {
+    return await publishVrmBytes(`${labelBase}:thumb`, dataUrlToBytes(thumbDataUrl))
+  } catch {
+    return undefined
   }
 }
 
@@ -123,6 +140,23 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
   return bytes
 }
 
+/**
+ * Inverse of dataUrlToBytes. Thumbnails are always published from JPEG
+ * data-URLs (see World.captureThumbnail), and the content store keeps only
+ * raw bytes — not the original mime — so image/jpeg is the correct assumption
+ * when rehydrating a thumbCid back into a displayable data-URL.
+ */
+function bytesToDataUrl(bytes: Uint8Array, mime = 'image/jpeg'): string {
+  let binary = ''
+  for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index])
+  return `data:${mime};base64,${btoa(binary)}`
+}
+
+/** In-memory cache of thumbCid -> data-URL, so repeated hydrations across
+ * renders/kinds never re-fetch the same thumbnail bytes from the content
+ * store. Deliberately never written to localStorage (see file header). */
+const thumbUrlCache = new Map<string, string>()
+
 /** Lists saved items of a kind (most-recent first). Never throws. */
 export function listCatalog(kind: CatalogKind): CatalogItem[] {
   return read(kind)
@@ -132,6 +166,54 @@ export function listCatalog(kind: CatalogKind): CatalogItem[] {
 export function worldFormatOf(cid: string): WorldFormat | null {
   const item = read('world').find((i) => i.cid === cid)
   return item?.format ?? null
+}
+
+/**
+ * True if the catalog item already has a thumbnail — inline (legacy) or as a
+ * thumbCid pointer awaiting hydration. Lets callers (e.g. applyWorld's
+ * auto-capture) skip re-capturing a thumbnail that exists but just hasn't
+ * been resolved to a data-URL yet.
+ */
+export function catalogHasThumb(kind: CatalogKind, cid: string): boolean {
+  const item = read(kind).find((i) => i.cid === cid)
+  return Boolean(item?.thumb || item?.thumbCid)
+}
+
+/**
+ * Resolves each item's thumbCid pointer (if any, and if it doesn't already
+ * carry an inline thumb) into a displayable data-URL by fetching the bytes
+ * from the shared content store — in memory only; the result is never written
+ * back to localStorage (see file header on why thumbCid stays a pointer
+ * there). Thumbnails were published from JPEG data-URLs (World.captureThumbnail),
+ * so image/jpeg is assumed on the way back. Resolved data-URLs are cached
+ * module-wide by thumbCid so repeated hydrations (re-renders, multiple
+ * catalogs) don't re-fetch. An item whose fetch fails is returned unchanged.
+ */
+export async function hydrateCatalogThumbs(kind: CatalogKind, items: CatalogItem[]): Promise<CatalogItem[]> {
+  const thumbCidByCid = new Map(read(kind).map((i) => [i.cid, i.thumbCid]))
+  let changed = false
+  const hydrated = await Promise.all(
+    items.map(async (item) => {
+      if (item.thumb) return item
+      const thumbCid = thumbCidByCid.get(item.cid)
+      if (!thumbCid) return item
+      const cached = thumbUrlCache.get(thumbCid)
+      if (cached) {
+        changed = true
+        return { ...item, thumb: cached }
+      }
+      try {
+        const bytes = await catalogThumbBytes(thumbCid)
+        const dataUrl = bytesToDataUrl(bytes)
+        thumbUrlCache.set(thumbCid, dataUrl)
+        changed = true
+        return { ...item, thumb: dataUrl }
+      } catch {
+        return item
+      }
+    }),
+  )
+  return changed ? hydrated : items
 }
 
 /**
@@ -154,19 +236,38 @@ export async function addToCatalog(
   if (extra?.format) item.format = extra.format
 
   let displayThumb: string | undefined
-  if (extra?.thumb && extra.thumb.startsWith('data:') && extra.thumb.length <= THUMB_MAX_LEN) {
+  if (extra?.thumb && isValidThumb(extra.thumb)) {
     displayThumb = extra.thumb
-    try {
-      item.thumbCid = await publishVrmBytes(`${trimmedName || cid}:thumb`, dataUrlToBytes(extra.thumb))
-    } catch {
-      // Thumbnail publish failed — keep the item without a thumbnail rather
-      // than falling back to inlining it into localStorage.
-    }
+    // Thumbnail publish failure just leaves the item without a thumbnail
+    // rather than falling back to inlining it into localStorage.
+    item.thumbCid = await publishThumbCid(trimmedName || cid, extra.thumb)
   }
 
   const rest = read(kind).filter((i) => i.cid !== cid)
   write(kind, [item, ...rest])
   return displayThumb ? { ...item, thumb: displayThumb } : item
+}
+
+/**
+ * Publishes a new thumbnail for an already-catalogued item (matched by cid)
+ * the same way addToCatalog's extra.thumb path does, then updates the item's
+ * thumbCid pointer in place and persists — never inlining the data-URL into
+ * localStorage. Silently no-ops if the item isn't in the catalog, or if the
+ * thumbnail is invalid/oversized/fails to publish (the existing entry, and
+ * whatever thumbnail it already had, is left untouched).
+ */
+export async function setCatalogThumb(kind: CatalogKind, cid: string, thumbDataUrl: string): Promise<void> {
+  if (!isValidThumb(thumbDataUrl)) return
+  const items = read(kind)
+  const index = items.findIndex((i) => i.cid === cid)
+  if (index === -1) return
+  const item = items[index]
+  const thumbCid = await publishThumbCid(item.name || item.cid, thumbDataUrl)
+  if (!thumbCid) return
+  // Drop any legacy inline thumb now that a fresh thumbCid pointer exists.
+  const { thumb: _legacyThumb, ...rest } = item
+  items[index] = { ...rest, thumbCid }
+  write(kind, items)
 }
 
 /** Removes an item from a catalog (bytes stay in the content store). */
