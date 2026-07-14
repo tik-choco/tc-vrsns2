@@ -9,6 +9,7 @@ import {
   Globe,
   Boxes,
   Home,
+  Compass,
   Settings as SettingsIcon,
   LogOut,
 } from 'lucide-preact'
@@ -21,9 +22,10 @@ import { AvatarPanel } from './panels/AvatarPanel'
 import { WorldPanel } from './panels/WorldPanel'
 import { ObjectsPanel } from './panels/ObjectsPanel'
 import { RoomPanel } from './panels/RoomPanel'
+import { DiscoveryPanel } from './panels/DiscoveryPanel'
 import { SettingsPanel } from './panels/SettingsPanel'
 
-type PanelId = 'avatar' | 'world' | 'objects' | 'room' | 'settings'
+type PanelId = 'avatar' | 'world' | 'objects' | 'room' | 'discover' | 'settings'
 
 // All lucide-preact icons share one component type; borrow it from any import.
 type IconComponent = typeof Menu
@@ -34,6 +36,7 @@ const MENU: MenuEntry[] = [
   { id: 'world', icon: Globe, labelKey: 'menu.world' },
   { id: 'objects', icon: Boxes, labelKey: 'menu.objects' },
   { id: 'room', icon: Home, labelKey: 'menu.room' },
+  { id: 'discover', icon: Compass, labelKey: 'discover.title' },
   { id: 'settings', icon: SettingsIcon, labelKey: 'menu.settings' },
   { id: 'leave', icon: LogOut, labelKey: 'menu.leave' },
 ]
@@ -245,6 +248,7 @@ export function GameOverlay(props: GameOverlayProps) {
       {panel === 'world' && <WorldPanel {...props} onClose={closePanel} />}
       {panel === 'objects' && <ObjectsPanel {...props} onClose={closePanel} />}
       {panel === 'room' && <RoomPanel {...props} onClose={closePanel} />}
+      {panel === 'discover' && <DiscoveryPanel {...props} onClose={closePanel} />}
       {panel === 'settings' && <SettingsPanel {...props} onClose={closePanel} />}
     </div>
   )

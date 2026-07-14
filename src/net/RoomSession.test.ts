@@ -28,7 +28,13 @@ const SELF_ID = 'self-node'
 type Sent = { toId: string | null; kind: number; delivery: number; bytes: Uint8Array }
 
 class FakeNode {
-  eventHandler: ((eventType: number, fromId: string, payload: unknown) => void) | null = null
+  // Real signature is (eventType, fromId, payload, roomId) — see
+  // src/vendor/mistlib/wrappers/web/index.js's register_event_callback.
+  // Tests that call this directly with 3 args leave roomId undefined, which
+  // the fake dispatcher below (mirroring mistNode.ts's real one) forwards to
+  // every subscribed room — fine here since each test only joins one room.
+  eventHandler: ((eventType: number, fromId: string, payload: unknown, roomId?: string) => void) | null =
+    null
   mediaHandler: ((eventType: number, payload: unknown) => void) | null = null
   sent: Sent[] = []
   positions: Array<[number, number, number]> = []
@@ -36,8 +42,10 @@ class FakeNode {
   joinedRooms: string[] = []
   neighbors: unknown[] = []
   leftRoom = false
+  /** roomId leaveRoom() was last called with — verifies room-scoped (not whole-node) leave. */
+  leftRoomId: string | null = null
 
-  onEvent(h: (eventType: number, fromId: string, payload: unknown) => void): void {
+  onEvent(h: (eventType: number, fromId: string, payload: unknown, roomId?: string) => void): void {
     this.eventHandler = h
   }
   onMediaEvent(h: (eventType: number, payload: unknown) => void): void {
@@ -50,8 +58,9 @@ class FakeNode {
   joinRoom(roomId: string): void {
     this.joinedRooms.push(roomId)
   }
-  leaveRoom(): void {
+  leaveRoom(roomId?: string): void {
     this.leftRoom = true
+    this.leftRoomId = roomId ?? null
   }
   updatePosition(x: number, y: number, z: number): void {
     this.positions.push([x, y, z])
@@ -74,9 +83,64 @@ class FakeNode {
 
 const fakeNode = new FakeNode()
 
+// Mirrors mistNode.ts's real subscribeRoomEvents: one dispatcher installed on
+// the node, fanned out by roomId, with events lacking a roomId forwarded to
+// every subscriber. Kept minimal here since these tests only ever join one
+// room at a time; RoomSession.test.ts's job is to verify RoomSession itself,
+// not the dispatcher (that's DiscoverySession.test.ts / a dedicated
+// mistNode dispatcher test, if ever added).
+const roomSubscribers = new Map<
+  string,
+  Set<(eventType: number, fromId: string, payload: unknown) => void>
+>()
+
+function dispatchRoomEvent(eventType: number, fromId: string, payload: unknown, roomId?: string): void {
+  if (roomId) {
+    for (const handler of roomSubscribers.get(roomId) ?? []) handler(eventType, fromId, payload)
+    return
+  }
+  for (const subs of roomSubscribers.values()) {
+    for (const handler of subs) handler(eventType, fromId, payload)
+  }
+}
+
+function fakeToBytes(payload: unknown): Uint8Array | null {
+  if (payload instanceof Uint8Array) return payload
+  if (payload instanceof ArrayBuffer) return new Uint8Array(payload)
+  if (ArrayBuffer.isView(payload)) {
+    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
+  }
+  if (Array.isArray(payload) && payload.every((v) => typeof v === 'number')) {
+    return Uint8Array.from(payload)
+  }
+  return null
+}
+
 vi.mock('../lib/mistNode', () => ({
   ensureMistNode: async () => fakeNode,
   currentNodeId: () => SELF_ID,
+  subscribeRoomEvents: (
+    fullRoomId: string,
+    handler: (eventType: number, fromId: string, payload: unknown) => void,
+  ) => {
+    // Reassigned every call (not gated by an "already installed" flag) so a
+    // fresh session in the next test — after beforeEach resets
+    // fakeNode.eventHandler to null — still gets wired up.
+    fakeNode.onEvent(dispatchRoomEvent)
+    let subs = roomSubscribers.get(fullRoomId)
+    if (!subs) {
+      subs = new Set()
+      roomSubscribers.set(fullRoomId, subs)
+    }
+    subs.add(handler)
+    return () => {
+      const current = roomSubscribers.get(fullRoomId)
+      if (!current) return
+      current.delete(handler)
+      if (current.size === 0) roomSubscribers.delete(fullRoomId)
+    }
+  },
+  toBytes: fakeToBytes,
 }))
 
 // Import AFTER the mocks so RoomSession binds to them.
@@ -272,6 +336,9 @@ describe('leave', () => {
     fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
     session.leave()
     expect(fakeNode.leftRoom).toBe(true)
+    // Room-scoped leave (mist_leave_room_id), not the argument-less
+    // leaveRoom() that decommissions the whole node — see leave()'s doc.
+    expect(fakeNode.leftRoomId).toBe('tc-vrsns2/lobby')
     fakeNode.sent = []
     vi.advanceTimersByTime(5000) // presence loop must not fire again
     expect(fakeNode.sent).toEqual([])

@@ -22,6 +22,7 @@ export const hi: Dict = {
   'join.recent': 'हाल के',
   'join.roomInvalid': 'रूम नाम में केवल अक्षर, अंक, हाइफ़न और अंडरस्कोर हो सकते हैं (अधिकतम 64)।',
   'join.nameRequired': 'कृपया एक प्रदर्शित नाम दर्ज करें।',
+  'join.makePublic': 'सार्वजनिक रूम के रूप में शामिल हों',
 
   // HUD
   'hud.peers': '{count} ऑनलाइन',
@@ -106,6 +107,17 @@ export const hi: Dict = {
   'room.create': 'बनाएं',
   'room.random': 'रैंडम',
   'room.switchHint': 'रूम बदलने पर आप वर्तमान रूम से डिस्कनेक्ट हो जाएंगे।',
+  'room.visibility.label': 'दृश्यता',
+  'room.visibility.public': 'सार्वजनिक (कोई भी खोज सकता है)',
+  'room.visibility.private': 'निजी (केवल आईडी जानने वाले)',
+
+  // Discover panel
+  'discover.title': 'सार्वजनिक रूम',
+  'discover.empty': 'अभी तक कोई सार्वजनिक रूम नहीं मिला।',
+  'discover.join': 'शामिल हों',
+  'discover.peers': '{count} ऑनलाइन',
+  'discover.justNow': 'अभी अभी',
+  'discover.secondsAgo': '{count} सेकंड पहले',
 
   // Settings panel
   'settings.title': 'सेटिंग्स',

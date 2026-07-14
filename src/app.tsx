@@ -21,7 +21,7 @@ export function App() {
   }, [])
 
   const handleJoin = useCallback(
-    (roomId: string, input: { name: string; color: string }) => {
+    (roomId: string, input: { name: string; color: string }, visibility: 'public' | 'private') => {
       // JoinScreen only edits name/color — carry over the stored avatar CID.
       const profile: PlayerProfile = {
         name: input.name,
@@ -30,7 +30,7 @@ export function App() {
       }
       saveLocalProfile(profile)
       saveLastRoomId(roomId)
-      void session.join(roomId, profile)
+      void session.join(roomId, profile, visibility)
     },
     [initialProfile, session],
   )
@@ -46,6 +46,7 @@ export function App() {
           error={session.error}
           initialProfile={initialProfile}
           initialRoomId={initialRoomId}
+          discoveredRooms={session.discoveredRooms}
           onJoin={handleJoin}
         />
       )}
@@ -83,6 +84,10 @@ export function App() {
           inviteUrl={session.inviteUrl}
           onSwitchRoom={(nextRoom) => void session.switchRoom(nextRoom)}
           onLeave={session.leave}
+          discoveredRooms={session.discoveredRooms}
+          roomVisibility={session.roomVisibility}
+          onSetRoomVisibility={session.setRoomVisibility}
+          onJoinDiscoveredRoom={session.joinDiscoveredRoom}
           onToggleView={session.toggleView}
           onMobileMove={session.setMobileMove}
           onMobileJump={session.setMobileJump}

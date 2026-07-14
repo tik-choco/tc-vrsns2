@@ -22,6 +22,7 @@ export const ja: Dict = {
   'join.recent': '最近',
   'join.roomInvalid': 'ルーム名は英数字・ハイフン・アンダースコアのみ使えます（最大64文字）。',
   'join.nameRequired': '表示名を入力してください。',
+  'join.makePublic': '公開ルームとして参加',
 
   // HUD
   'hud.peers': '{count}人がオンライン',
@@ -109,6 +110,17 @@ export const ja: Dict = {
   'room.create': '作成',
   'room.random': 'ランダム',
   'room.switchHint': 'ルームを切り替えると現在のルームから切断されます。',
+  'room.visibility.label': '公開設定',
+  'room.visibility.public': '公開（だれでも発見できます）',
+  'room.visibility.private': '非公開（IDを知っている人のみ）',
+
+  // Discover panel
+  'discover.title': '公開ルーム',
+  'discover.empty': '公開ルームはまだ見つかっていません',
+  'discover.join': '参加',
+  'discover.peers': '{count}人',
+  'discover.justNow': 'たった今',
+  'discover.secondsAgo': '{count}秒前',
 
   // Settings panel
   'settings.title': '設定',

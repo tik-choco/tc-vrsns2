@@ -22,6 +22,7 @@ export const fr: Dict = {
   'join.recent': 'Récents',
   'join.roomInvalid': 'Le nom du salon n\'accepte que lettres, chiffres, tiret et tiret bas (max. 64).',
   'join.nameRequired': 'Saisissez un nom affiché.',
+  'join.makePublic': 'Rejoindre en tant que salon public',
 
   // HUD
   'hud.peers': '{count} en ligne',
@@ -106,6 +107,17 @@ export const fr: Dict = {
   'room.create': 'Créer',
   'room.random': 'Aléatoire',
   'room.switchHint': 'Changer de salon vous déconnecte du salon actuel.',
+  'room.visibility.label': 'Visibilité',
+  'room.visibility.public': 'Public (découvrable par tous)',
+  'room.visibility.private': 'Privé (réservé à qui connaît l\'ID)',
+
+  // Discover panel
+  'discover.title': 'Salons publics',
+  'discover.empty': 'Aucun salon public trouvé pour l\'instant.',
+  'discover.join': 'Rejoindre',
+  'discover.peers': '{count} en ligne',
+  'discover.justNow': 'À l\'instant',
+  'discover.secondsAgo': 'Il y a {count} s',
 
   // Settings panel
   'settings.title': 'Paramètres',

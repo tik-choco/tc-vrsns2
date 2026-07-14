@@ -2,15 +2,20 @@
 import { describe, expect, it } from 'vitest'
 import type { PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
 import {
+  ANNOUNCE_ROOMS_MAX,
   FALLBACK_NAME,
   MSG_CHAT,
   MSG_OBJECTS,
   MSG_PROFILE,
+  MSG_ROOM_ANNOUNCE,
   MSG_STATE,
   MSG_STATE_REQ,
   MSG_WORLD,
+  PEER_COUNT_MAX,
+  type RoomAnnounceEntry,
   decode,
   encode,
+  encodeRoomAnnounce,
   sanitizeProfile,
   unwrapEnvelope,
 } from './protocol'
@@ -66,6 +71,127 @@ describe('encode/decode round trip', () => {
       { id: 'b', cid: 'bafy2', name: '', x: 0, y: 0.5, z: 0, rotationY: 0, scale: 1 },
     ]
     expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('round-trips a room-announce message, including an empty keepalive', () => {
+    const rooms: RoomAnnounceEntry[] = [
+      { id: 'lobby', count: 3, hops: 0 },
+      { id: 'other-room', count: 1, hops: 1 },
+    ]
+    expect(decode(encodeRoomAnnounce(rooms))).toEqual({ kind: MSG_ROOM_ANNOUNCE, rooms })
+    expect(decode(encode({ kind: MSG_ROOM_ANNOUNCE, rooms: [] }))).toEqual({
+      kind: MSG_ROOM_ANNOUNCE,
+      rooms: [],
+    })
+  })
+})
+
+describe('MSG_ROOM_ANNOUNCE validation', () => {
+  it('drops the whole frame when rooms is missing or not an array', () => {
+    expect(decode(frame(MSG_ROOM_ANNOUNCE, {}))).toBeNull()
+    expect(decode(frame(MSG_ROOM_ANNOUNCE, { rooms: 'nope' }))).toBeNull()
+    expect(decode(frame(MSG_ROOM_ANNOUNCE, { rooms: { id: 'a' } }))).toBeNull()
+  })
+
+  it('drops the whole frame when rooms exceeds ANNOUNCE_ROOMS_MAX', () => {
+    const rooms = Array.from({ length: ANNOUNCE_ROOMS_MAX + 1 }, (_, i) => ({
+      id: 'room' + i,
+      count: 1,
+      hops: 0,
+    }))
+    expect(decode(frame(MSG_ROOM_ANNOUNCE, { rooms }))).toBeNull()
+  })
+
+  it('accepts exactly ANNOUNCE_ROOMS_MAX entries', () => {
+    const rooms = Array.from({ length: ANNOUNCE_ROOMS_MAX }, (_, i) => ({
+      id: 'room' + i,
+      count: 1,
+      hops: 0,
+    }))
+    const msg = decode(frame(MSG_ROOM_ANNOUNCE, { rooms }))
+    expect(msg?.kind).toBe(MSG_ROOM_ANNOUNCE)
+    if (msg?.kind === MSG_ROOM_ANNOUNCE) expect(msg.rooms).toHaveLength(ANNOUNCE_ROOMS_MAX)
+  })
+
+  it('drops individual malformed entries but keeps the rest', () => {
+    const msg = decode(
+      frame(MSG_ROOM_ANNOUNCE, {
+        rooms: [
+          { id: 'ok', count: 2, hops: 0 },
+          { id: 'bad id with space', count: 1, hops: 0 },
+          { id: 'no-count', hops: 0 },
+          { id: 'not-finite', count: 'nope', hops: 0 },
+          { id: 'bad-hops', count: 1, hops: 2 },
+          { count: 1, hops: 0 },
+          'not-an-object',
+        ],
+      }),
+    )
+    expect(msg?.kind).toBe(MSG_ROOM_ANNOUNCE)
+    if (msg?.kind === MSG_ROOM_ANNOUNCE) {
+      expect(msg.rooms).toEqual([{ id: 'ok', count: 2, hops: 0 }])
+    }
+  })
+
+  it('clamps and rounds count into 0..PEER_COUNT_MAX', () => {
+    const msg = decode(
+      frame(MSG_ROOM_ANNOUNCE, {
+        rooms: [
+          { id: 'over', count: 999999, hops: 0 },
+          { id: 'under', count: -50, hops: 0 },
+          { id: 'fractional', count: 2.6, hops: 1 },
+        ],
+      }),
+    )
+    if (msg?.kind === MSG_ROOM_ANNOUNCE) {
+      expect(msg.rooms).toEqual([
+        { id: 'over', count: PEER_COUNT_MAX, hops: 0 },
+        { id: 'under', count: 0, hops: 0 },
+        { id: 'fractional', count: 3, hops: 1 },
+      ])
+    }
+  })
+
+  it('rejects a hops value other than 0 or 1', () => {
+    const msg = decode(
+      frame(MSG_ROOM_ANNOUNCE, { rooms: [{ id: 'a', count: 1, hops: '0' }] }),
+    )
+    if (msg?.kind === MSG_ROOM_ANNOUNCE) expect(msg.rooms).toEqual([])
+  })
+
+  it('drops ids that violate ROOM_ID_RE, including the discovery room id itself', () => {
+    const msg = decode(
+      frame(MSG_ROOM_ANNOUNCE, {
+        rooms: [
+          { id: 'tc-vrsns2/discovery#v1', count: 1, hops: 0 }, // '#' not allowed
+          { id: '', count: 1, hops: 0 },
+          { id: 'x'.repeat(65), count: 1, hops: 0 },
+          { id: 'valid_room-1', count: 1, hops: 0 },
+        ],
+      }),
+    )
+    if (msg?.kind === MSG_ROOM_ANNOUNCE) {
+      expect(msg.rooms).toEqual([{ id: 'valid_room-1', count: 1, hops: 0 }])
+    }
+  })
+
+  it('dedupes duplicate ids, later entry winning', () => {
+    const msg = decode(
+      frame(MSG_ROOM_ANNOUNCE, {
+        rooms: [
+          { id: 'lobby', count: 1, hops: 0 },
+          { id: 'lobby', count: 9, hops: 1 },
+        ],
+      }),
+    )
+    if (msg?.kind === MSG_ROOM_ANNOUNCE) {
+      expect(msg.rooms).toEqual([{ id: 'lobby', count: 9, hops: 1 }])
+    }
+  })
+
+  it('accepts zero valid entries as a valid keepalive message', () => {
+    const msg = decode(frame(MSG_ROOM_ANNOUNCE, { rooms: [{ id: 'bad id', count: 1, hops: 0 }] }))
+    expect(msg).toEqual({ kind: MSG_ROOM_ANNOUNCE, rooms: [] })
   })
 })
 

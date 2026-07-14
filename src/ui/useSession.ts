@@ -12,8 +12,10 @@ import type {
 import { World } from '../world/World'
 import { detectWorldFormat } from '../world/worldFormat'
 import { RoomSession } from '../net/RoomSession'
+import { DiscoverySession, type DiscoveredRoom } from '../net/DiscoverySession'
 import { RemoteAudioSink } from './remoteAudio'
 import { vrsnsDebug } from '../lib/debugHook'
+import { loadRoomVisibility, saveRoomVisibility } from './roomVisibility'
 import {
   addToCatalog,
   catalogBytes,
@@ -38,6 +40,7 @@ import { MAX_VRM_BYTES, sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibr
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
+export type RoomVisibility = 'public' | 'private'
 
 export type SessionApi = {
   phase: SessionPhase
@@ -49,6 +52,11 @@ export type SessionApi = {
   micState: MicState
   profile: PlayerProfile
   inviteUrl: string
+  // discovery (public room gossip lobby)
+  discoveredRooms: DiscoveredRoom[]
+  roomVisibility: RoomVisibility
+  setRoomVisibility: (v: RoomVisibility) => void
+  joinDiscoveredRoom: (roomId: string) => void
   // content catalogs + current selections
   avatars: CatalogItem[]
   worlds: CatalogItem[]
@@ -61,8 +69,8 @@ export type SessionApi = {
   worldBusy: boolean
   objectBusy: boolean
   // lifecycle
-  join: (roomId: string, profile: PlayerProfile) => Promise<void>
-  switchRoom: (roomId: string) => Promise<void>
+  join: (roomId: string, profile: PlayerProfile, visibility?: RoomVisibility) => Promise<void>
+  switchRoom: (roomId: string, visibility?: RoomVisibility) => Promise<void>
   leave: () => void
   // chat + voice
   sendChat: (text: string) => void
@@ -140,9 +148,72 @@ export function useSession(): SessionApi {
   const [worldBusy, setWorldBusy] = useState(false)
   const [objectBusy, setObjectBusy] = useState(false)
 
+  // --- discovery (public room gossip lobby) -----------------------------------
+  const discoverySessionRef = useRef<DiscoverySession | null>(null)
+  const [discoveredRooms, setDiscoveredRooms] = useState<DiscoveredRoom[]>([])
+  const [roomVisibility, setRoomVisibilityState] = useState<RoomVisibility>('private')
+  // Latest-value mirrors so the async DiscoverySession.start().then() below can
+  // sync setOwnRoom() correctly even if the session already joined a public
+  // room before discovery finished connecting (avoids a stale-closure race).
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+  const roomIdRef = useRef(roomId)
+  roomIdRef.current = roomId
+  const peerCountRef = useRef(peerCount)
+  peerCountRef.current = peerCount
+  const roomVisibilityRef = useRef(roomVisibility)
+  roomVisibilityRef.current = roomVisibility
+
   // tc-town's character roster lives on the shared bus, independent of the
   // room session — subscribe once for the lifetime of the app, not per-join.
   useEffect(() => subscribeTownCharacters(setTownCharacters), [])
+
+  // Discovery lobby: joined once for the app's lifetime, independent of which
+  // (if any) user room is currently joined. Failure is non-fatal — the app
+  // works normally without room discovery, just without the public-room list.
+  useEffect(() => {
+    let disposed = false
+    DiscoverySession.start()
+      .then((ds) => {
+        if (disposed) {
+          void ds.stop()
+          return
+        }
+        discoverySessionRef.current = ds
+        ds.onRoomsChange = (rooms) => setDiscoveredRooms(rooms)
+        setDiscoveredRooms(ds.rooms())
+        // We may already be joined to a public room by the time discovery
+        // finishes connecting — sync immediately instead of waiting for the
+        // next phase/roomId/peerCount/visibility change below.
+        if (phaseRef.current === 'joined' && roomVisibilityRef.current === 'public' && roomIdRef.current) {
+          ds.setOwnRoom({ roomId: roomIdRef.current, peerCount: peerCountRef.current + 1 })
+        }
+      })
+      .catch((e) => {
+        console.warn('discovery session failed to start', e)
+      })
+    return () => {
+      disposed = true
+      const ds = discoverySessionRef.current
+      discoverySessionRef.current = null
+      if (ds) void ds.stop()
+    }
+  }, [])
+
+  // The single gate that decides whether the current room's roomId is ever
+  // handed to DiscoverySession: only when joined AND the user opted this room
+  // into 'public'. Every other state (idle, joining, error, private) forces
+  // setOwnRoom(null) — including on leave() and on a visibility flip back to
+  // private, since those just change phase/roomVisibility and land here too.
+  useEffect(() => {
+    const ds = discoverySessionRef.current
+    if (!ds) return
+    if (phase === 'joined' && roomVisibility === 'public' && roomId) {
+      ds.setOwnRoom({ roomId, peerCount: peerCount + 1 })
+    } else {
+      ds.setOwnRoom(null)
+    }
+  }, [phase, roomId, peerCount, roomVisibility])
 
   const pushMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev.slice(-(MAX_MESSAGES - 1)), m])
@@ -236,12 +307,17 @@ export function useSession(): SessionApi {
   }, [])
 
   const join = useCallback(
-    async (nextRoomId: string, nextProfile: PlayerProfile) => {
+    async (nextRoomId: string, nextProfile: PlayerProfile, visibility?: RoomVisibility) => {
       const world = worldRef.current
       if (!world || sessionRef.current) return
+      // No explicit choice (e.g. a plain switchRoom()) restores whatever this
+      // room was last set to — private for a never-seen room.
+      const resolvedVisibility = visibility ?? loadRoomVisibility(nextRoomId)
       setPhase('joining')
       setError(null)
       setRoomId(nextRoomId)
+      setRoomVisibilityState(resolvedVisibility)
+      saveRoomVisibility(nextRoomId, resolvedVisibility)
       profileRef.current = nextProfile
       setProfileState(nextProfile)
       setCurrentAvatarCid(nextProfile.avatarCid ?? null)
@@ -284,16 +360,39 @@ export function useSession(): SessionApi {
     setPeerCount(0)
     setMessages([])
     setPhase('idle')
+    // Reset to the safe default; the phase flip to 'idle' above already makes
+    // the setOwnRoom(null) effect fire regardless, but this keeps state tidy
+    // for whatever room is joined next.
+    setRoomVisibilityState('private')
   }, [])
 
   const switchRoom = useCallback(
-    async (nextRoomId: string) => {
+    async (nextRoomId: string, visibility?: RoomVisibility) => {
       const profile = profileRef.current
       leave()
       saveLastRoomId(nextRoomId)
-      await join(nextRoomId, profile)
+      await join(nextRoomId, profile, visibility)
     },
     [join, leave],
+  )
+
+  /** Current room's public/private setting — flips announcing on/off. */
+  const setRoomVisibility = useCallback(
+    (v: RoomVisibility) => {
+      setRoomVisibilityState(v)
+      if (roomId) saveRoomVisibility(roomId, v)
+    },
+    [roomId],
+  )
+
+  /** Click-to-join from the discovery list: always marks the room public. */
+  const joinDiscoveredRoom = useCallback(
+    (nextRoomId: string) => {
+      saveRoomVisibility(nextRoomId, 'public')
+      if (sessionRef.current) void switchRoom(nextRoomId, 'public')
+      else void join(nextRoomId, profileRef.current, 'public')
+    },
+    [switchRoom, join],
   )
 
   const sendChat = useCallback(
@@ -564,6 +663,10 @@ export function useSession(): SessionApi {
     micState,
     profile,
     inviteUrl,
+    discoveredRooms,
+    roomVisibility,
+    setRoomVisibility,
+    joinDiscoveredRoom,
     avatars,
     worlds,
     objectModels,

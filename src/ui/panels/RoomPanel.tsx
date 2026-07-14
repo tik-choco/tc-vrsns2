@@ -4,10 +4,21 @@ import { useTranslation } from '../../i18n'
 import type { GameOverlayProps } from '../uiContract'
 import { isValidRoomId, randomRoomId } from '../roomId'
 import { PanelShell } from './PanelShell'
+import { RoomVisibilityToggle } from './DiscoveryPanel'
 
-type Props = Pick<GameOverlayProps, 'roomId' | 'inviteUrl' | 'onSwitchRoom'> & { onClose: () => void }
+type Props = Pick<
+  GameOverlayProps,
+  'roomId' | 'inviteUrl' | 'onSwitchRoom' | 'roomVisibility' | 'onSetRoomVisibility'
+> & { onClose: () => void }
 
-export function RoomPanel({ roomId, inviteUrl, onSwitchRoom, onClose }: Props) {
+export function RoomPanel({
+  roomId,
+  inviteUrl,
+  onSwitchRoom,
+  roomVisibility,
+  onSetRoomVisibility,
+  onClose,
+}: Props) {
   const { t } = useTranslation()
   const [next, setNext] = useState('')
   const [copied, setCopied] = useState(false)
@@ -36,6 +47,8 @@ export function RoomPanel({ roomId, inviteUrl, onSwitchRoom, onClose }: Props) {
           <span class="field-label">{t('room.current')}</span>
           <div class="room-current">{roomId}</div>
         </div>
+
+        <RoomVisibilityToggle value={roomVisibility} onChange={onSetRoomVisibility} />
 
         <div class="room-field">
           <span class="field-label">{t('room.inviteUrl')}</span>

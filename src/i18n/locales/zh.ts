@@ -22,6 +22,7 @@ export const zh: Dict = {
   'join.recent': '最近',
   'join.roomInvalid': '房间名只能包含字母、数字、连字符和下划线（最多 64 个字符）。',
   'join.nameRequired': '请输入昵称。',
+  'join.makePublic': '以公开房间加入',
 
   // HUD
   'hud.peers': '{count} 人在线',
@@ -106,6 +107,17 @@ export const zh: Dict = {
   'room.create': '创建',
   'room.random': '随机',
   'room.switchHint': '切换房间会断开你与当前房间的连接。',
+  'room.visibility.label': '可见性',
+  'room.visibility.public': '公开（任何人都可以发现）',
+  'room.visibility.private': '私密（仅知道 ID 的人可加入）',
+
+  // Discover panel
+  'discover.title': '公开房间',
+  'discover.empty': '暂未发现公开房间。',
+  'discover.join': '加入',
+  'discover.peers': '{count} 人',
+  'discover.justNow': '刚刚',
+  'discover.secondsAgo': '{count} 秒前',
 
   // Settings panel
   'settings.title': '设置',

@@ -22,6 +22,7 @@ export const ru: Dict = {
   'join.recent': 'Недавние',
   'join.roomInvalid': 'В имени комнаты можно использовать только буквы, цифры, дефис и подчёркивание (не более 64).',
   'join.nameRequired': 'Введите отображаемое имя.',
+  'join.makePublic': 'Войти как в публичную комнату',
 
   // HUD
   'hud.peers': '{count} в сети',
@@ -106,6 +107,17 @@ export const ru: Dict = {
   'room.create': 'Создать',
   'room.random': 'Случайная',
   'room.switchHint': 'При смене комнаты вы отключитесь от текущей.',
+  'room.visibility.label': 'Видимость',
+  'room.visibility.public': 'Публичная (доступна для обнаружения всем)',
+  'room.visibility.private': 'Приватная (только по известному ID)',
+
+  // Discover panel
+  'discover.title': 'Публичные комнаты',
+  'discover.empty': 'Публичные комнаты пока не найдены.',
+  'discover.join': 'Войти',
+  'discover.peers': '{count} в сети',
+  'discover.justNow': 'Только что',
+  'discover.secondsAgo': '{count} с назад',
 
   // Settings panel
   'settings.title': 'Настройки',

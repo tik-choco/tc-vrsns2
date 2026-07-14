@@ -22,6 +22,7 @@ export const de: Dict = {
   'join.recent': 'Zuletzt',
   'join.roomInvalid': 'Der Raumname darf nur Buchstaben, Ziffern, Bindestrich und Unterstrich enthalten (max. 64).',
   'join.nameRequired': 'Bitte gib einen Anzeigenamen ein.',
+  'join.makePublic': 'Als öffentlichen Raum beitreten',
 
   // HUD
   'hud.peers': '{count} online',
@@ -106,6 +107,17 @@ export const de: Dict = {
   'room.create': 'Erstellen',
   'room.random': 'Zufällig',
   'room.switchHint': 'Beim Raumwechsel wirst du vom aktuellen Raum getrennt.',
+  'room.visibility.label': 'Sichtbarkeit',
+  'room.visibility.public': 'Öffentlich (für alle auffindbar)',
+  'room.visibility.private': 'Privat (nur mit bekannter ID)',
+
+  // Discover panel
+  'discover.title': 'Öffentliche Räume',
+  'discover.empty': 'Noch keine öffentlichen Räume gefunden.',
+  'discover.join': 'Beitreten',
+  'discover.peers': '{count} online',
+  'discover.justNow': 'Gerade eben',
+  'discover.secondsAgo': 'Vor {count} s',
 
   // Settings panel
   'settings.title': 'Einstellungen',

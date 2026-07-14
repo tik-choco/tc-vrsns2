@@ -85,3 +85,84 @@ export async function ensureMistNode(): Promise<InstanceType<typeof MistNode>> {
 export function currentNodeId(): string {
   return getPageNodeId();
 }
+
+// --- room-scoped event dispatch --------------------------------------------
+//
+// mistlib's node.onEvent() is ONE slot for the whole node (see the module
+// docblock above), but tc-vrsns2 now keeps two rooms joined at once: the
+// user's current room (RoomSession) and the always-on discovery lobby
+// (DiscoverySession). Both need their own event stream, so this module owns
+// the single onEvent slot and fans events out by roomId — the wasm bridge's
+// register_event_callback passes it as the 4th argument (confirmed in
+// src/vendor/mistlib/wrappers/web/index.js: `(eventType, fromId, payload,
+// roomId) => this._onEvent(...)`, and typed as such in index.d.ts).
+//
+// Not every event carries a roomId (e.g. some topology hints arrive before a
+// roomId is attributable). Those are forwarded to EVERY subscriber — each
+// session already ignores fromIds/messages it doesn't recognize, so an
+// unrelated room's stray broadcast is harmless noise, not a correctness bug.
+
+export type RoomEventHandler = (eventType: number, fromId: string, payload: unknown) => void;
+
+const roomSubscribers = new Map<string, Set<RoomEventHandler>>();
+/** The node instance dispatch is currently installed on — reinstalled if ensureMistNode() hands back a fresh instance. */
+let dispatchInstalledOn: InstanceType<typeof MistNode> | null = null;
+
+function dispatchRoomEvent(eventType: number, fromId: string, payload: unknown, roomId: string): void {
+  if (roomId) {
+    const subs = roomSubscribers.get(roomId);
+    if (!subs) return;
+    for (const handler of subs) handler(eventType, fromId, payload);
+    return;
+  }
+  for (const subs of roomSubscribers.values()) {
+    for (const handler of subs) handler(eventType, fromId, payload);
+  }
+}
+
+/**
+ * Subscribes to events for one fullRoomId (ROOM_PREFIX-namespaced, or the
+ * discovery room's raw id). Installs the shared node.onEvent(dispatch) on
+ * first use. Returns an unsubscribe function.
+ */
+export function subscribeRoomEvents(fullRoomId: string, handler: RoomEventHandler): () => void {
+  if (!node) {
+    throw new Error("subscribeRoomEvents() called before ensureMistNode() resolved");
+  }
+  if (dispatchInstalledOn !== node) {
+    node.onEvent(dispatchRoomEvent);
+    dispatchInstalledOn = node;
+  }
+  let subs = roomSubscribers.get(fullRoomId);
+  if (!subs) {
+    subs = new Set();
+    roomSubscribers.set(fullRoomId, subs);
+  }
+  subs.add(handler);
+  return () => {
+    const current = roomSubscribers.get(fullRoomId);
+    if (!current) return;
+    current.delete(handler);
+    if (current.size === 0) roomSubscribers.delete(fullRoomId);
+  };
+}
+
+/**
+ * Coerces an EVENT_RAW (or other opaque wasm) payload into bytes. The wasm
+ * bridge does not guarantee a Uint8Array — the vendored wrapper's own
+ * onRawMessage falls back to `new Uint8Array(payload)`, i.e. payloads can
+ * arrive as plain number arrays (or other views) depending on the build.
+ * Shared by RoomSession and DiscoverySession so both apply the same
+ * defensive coercion to untrusted wasm-boundary data.
+ */
+export function toBytes(payload: unknown): Uint8Array | null {
+  if (payload instanceof Uint8Array) return payload;
+  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
+  if (ArrayBuffer.isView(payload)) {
+    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+  if (Array.isArray(payload) && payload.every((v) => typeof v === "number")) {
+    return Uint8Array.from(payload);
+  }
+  return null;
+}
