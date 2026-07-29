@@ -5,6 +5,7 @@
 // second throws. Every consumer (net layer, shared profile storage, VRM
 // distribution) must go through this one shared instance.
 import { MistNode } from "../vendor/mistlib/wrappers/web/index.js";
+import { mistSignalingConfig } from "./mistSignaling";
 
 // Per-TAB node id, deliberately in sessionStorage (not localStorage): the
 // node id is this tab's identity toward peers, and localStorage is shared
@@ -13,28 +14,16 @@ import { MistNode } from "../vendor/mistlib/wrappers/web/index.js";
 // id in sessionStorage for the same reason). Survives reloads of the tab.
 const NODE_ID_KEY = "tc-vrsns2:node-id";
 
-// Nostr signaling with an app-specific invite namespace. Relays are left
-// empty on purpose: mistlib then fetches the default relay list URL
-// (https://data.tik-choco.com/server/relays.json). The library's built-in
-// defaultConfig() ships the DEV invite ("dev-invite-001"), which the
-// signaling spec reserves for local-relay development — production apps on
-// public relays must use their own inviteSalt/inviteCode. These values are
-// shared constants (not secrets): they just keep tc-vrsns2's discovery
-// traffic in its own namespace. discoveryKind/messageKind/ttlSeconds mirror
-// the library defaults.
-const SIGNALING_CONFIG = {
-  signaling: {
-    mode: "nostr",
-    nostr: {
-      relays: [],
-      discoveryKind: 25049,
-      messageKind: 25050,
-      ttlSeconds: 600,
-      inviteSalt: "tc-vrsns2-v1",
-      inviteCode: "tc-vrsns2-public-v1",
-    },
-  },
-} as const;
+// Signaling config comes from the shared `./mistSignaling.ts` (vendored from
+// protocol's reference copy) rather than a local constant: inviteSalt/
+// inviteCode define the discovery namespace, and only peers whose values match
+// can find each other. tc-vrsns2 used to carry its own pair
+// ("tc-vrsns2-v1"/"tc-vrsns2-public-v1"), which kept it invisible to every
+// other tc-* app; it now joins the family namespace so cross-app rooms work.
+//
+// Migration note: this moves existing tc-vrsns2 peers to a different namespace.
+// Anyone still running a build from before this change won't see peers on the
+// new one (and vice versa) — a deliberate one-time break, not a bug to chase.
 
 function loadOrCreateNodeId(): string {
   let id = sessionStorage.getItem(NODE_ID_KEY);
@@ -69,7 +58,7 @@ export async function ensureMistNode(): Promise<InstanceType<typeof MistNode>> {
   if (node && (node as unknown as { initialized: boolean }).initialized) return node;
   if (!initPromise) {
     initPromise = (async () => {
-      if (!node) node = new MistNode(getPageNodeId(), { config: SIGNALING_CONFIG });
+      if (!node) node = new MistNode(getPageNodeId(), mistSignalingConfig());
       await node.init();
       return node;
     })();

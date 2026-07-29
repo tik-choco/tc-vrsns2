@@ -17,6 +17,7 @@
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
     "@pixiv/three-vrm": "^3.5.1",
+    "@tik-choco/mistlib": "0.6.0",
     "lucide-preact": "^0.469.0",
     "preact": "^10.29.3",
     "three": "^0.183.2"
