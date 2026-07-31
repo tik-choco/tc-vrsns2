@@ -930,6 +930,12 @@ body {
   overflow-y: auto;
   scrollbar-width: thin;
 }
+/* Inline rejection notice above a panel's content (e.g. an oversized upload). */
+.panel-error {
+  margin: 0 0 var(--sp-3);
+  font-size: 0.82rem;
+  color: var(--danger);
+}
 
 /* --- Catalog (avatar/world/objects) ----------------------------------------
    Gallery cards: a 16:9 thumbnail on top (image or a gradient letter tile

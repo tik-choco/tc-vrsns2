@@ -11,6 +11,8 @@ import type {
 } from '../shared/types'
 import { World } from '../world/World'
 import { detectWorldFormat } from '../world/worldFormat'
+import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat'
+import { captureMediaThumbnail } from '../world/mediaThumbnail'
 import { RoomSession } from '../net/RoomSession'
 import { DiscoverySession, type DiscoveredRoom } from '../net/DiscoverySession'
 import { RemoteAudioSink } from './remoteAudio'
@@ -22,6 +24,7 @@ import {
   catalogHasThumb,
   hydrateCatalogThumbs,
   listCatalog,
+  placeableAssetOf,
   removeFromCatalog,
   setCatalogThumb,
   worldFormatOf,
@@ -47,6 +50,8 @@ import { syncLocationToUrl, withoutRoomParam, withRoomParam } from './roomUrl'
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
 export type RoomVisibility = 'public' | 'private'
+/** Why an attempted placeable upload was rejected (the panel localizes it). */
+export type ObjectUploadError = 'tooLarge' | 'invalid'
 
 export type SessionApi = {
   phase: SessionPhase
@@ -74,6 +79,8 @@ export type SessionApi = {
   avatarBusy: boolean
   worldBusy: boolean
   objectBusy: boolean
+  /** Last placeable upload rejection, cleared when the next upload starts. */
+  objectError: ObjectUploadError | null
   // lifecycle
   join: (roomId: string, profile: PlayerProfile, visibility?: RoomVisibility) => Promise<void>
   /**
@@ -191,6 +198,7 @@ export function useSession(): SessionApi {
   const [avatarBusy, setAvatarBusy] = useState(false)
   const [worldBusy, setWorldBusy] = useState(false)
   const [objectBusy, setObjectBusy] = useState(false)
+  const [objectError, setObjectError] = useState<ObjectUploadError | null>(null)
 
   // Guards catalog-thumb hydration (below) against setting state after unmount.
   const mountedRef = useRef(true)
@@ -776,16 +784,41 @@ export function useSession(): SessionApi {
 
   // --- objects ---------------------------------------------------------------
 
+  /**
+   * Saves a placeable asset — a glTF/GLB prop or a piece of media (image,
+   * video, audio). What it is decides how it renders once placed, so the
+   * detected kind and MIME are stored alongside the bytes: the content store
+   * keeps raw bytes only, and media needs its type back to decode. Images and
+   * videos also get a real thumbnail for the catalog card instead of the
+   * letter-badge fallback.
+   */
   const uploadObject = useCallback(async (file: File) => {
     setObjectBusy(true)
+    setObjectError(null)
     try {
+      if (file.size > MAX_PLACEABLE_BYTES) {
+        setObjectError('tooLarge')
+        return
+      }
       const bytes = new Uint8Array(await file.arrayBuffer())
-      await addToCatalog('object', file.name, bytes)
+      if (bytes.byteLength > MAX_PLACEABLE_BYTES) {
+        setObjectError('tooLarge')
+        return
+      }
+      const asset = detectPlacedAsset(file.name, bytes, file.type)
+      // Best-effort: a thumbnail that fails to render never blocks the upload.
+      const thumb = (await captureMediaThumbnail(bytes, asset.kind, asset.mime)) ?? undefined
+      await addToCatalog('object', file.name, bytes, {
+        asset: asset.kind,
+        mime: asset.mime,
+        thumb,
+      })
       const list = listCatalog('object')
       setObjectModels(list)
       hydrateThumbs('object', list, setObjectModels)
     } catch (e) {
       console.debug('object upload failed', e)
+      setObjectError('invalid')
     } finally {
       setObjectBusy(false)
     }
@@ -798,8 +831,14 @@ export function useSession(): SessionApi {
       setObjectBusy(true)
       try {
         const item = listCatalog('object').find((o) => o.cid === cid)
+        const asset = placeableAssetOf(cid)
         const bytes = await catalogBytes(cid)
-        const state = await world.placeObject(bytes, { cid, name: item?.name ?? 'Object' })
+        const state = await world.placeObject(bytes, {
+          cid,
+          name: item?.name ?? 'Object',
+          kind: asset.kind,
+          mime: asset.mime,
+        })
         const mine = [...(objectsByOwner.current.get(SELF_OWNER) ?? []), state]
         objectsByOwner.current.set(SELF_OWNER, mine)
         sessionRef.current?.setObjects(mine)
@@ -908,6 +947,7 @@ export function useSession(): SessionApi {
     avatarBusy,
     worldBusy,
     objectBusy,
+    objectError,
     join,
     resumeJoin,
     cancelResumeJoin,

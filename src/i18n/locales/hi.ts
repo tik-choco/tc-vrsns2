@@ -85,17 +85,19 @@ export const hi: Dict = {
 
   // Objects panel
   'objects.title': 'ऑब्जेक्ट',
-  'objects.subtitle': 'दुनिया में साझा 3D प्रॉप्स रखें।',
-  'objects.upload': 'मॉडल अपलोड करें',
-  'objects.uploading': 'मॉडल लोड हो रहा है…',
+  'objects.subtitle': 'दुनिया में साझा प्रॉप्स, तस्वीरें, वीडियो और ऑडियो रखें।',
+  'objects.upload': 'फ़ाइल अपलोड करें',
+  'objects.uploading': 'फ़ाइल लोड हो रही है…',
   'objects.place': 'मेरे सामने रखें',
   'objects.placed': 'रखा गया',
   'objects.remove': 'हटाएं',
   'objects.clear': 'सभी हटाएं',
-  'objects.selectPrompt': 'रखने के लिए कोई मॉडल चुनें।',
+  'objects.selectPrompt': 'रखने के लिए कुछ चुनें।',
   'objects.count': '{count} रखे गए',
   'objects.empty': 'अभी तक कोई ऑब्जेक्ट नहीं रखा गया।',
-  'objects.invalid': 'यह फ़ाइल एक मान्य GLTF / GLB मॉडल नहीं है।',
+  'objects.hint': 'GLB / GLTF मॉडल, तस्वीरें, वीडियो और ऑडियो समर्थित हैं। वीडियो और ऑडियो पोज़िशनल बजते हैं, इसलिए दूरी के साथ आवाज़ कम होती जाती है।',
+  'objects.invalid': 'इस फ़ाइल को मॉडल, तस्वीर, वीडियो या ऑडियो के रूप में नहीं पढ़ा जा सका।',
+  'objects.tooLarge': 'यह फ़ाइल बहुत बड़ी है। सीमा {size} MB है।',
 
   // Room panel
   'room.title': 'रूम',

@@ -139,6 +139,7 @@ export function App() {
           objectModels={session.objectModels}
           placedCount={session.placedCount}
           objectBusy={session.objectBusy}
+          objectError={session.objectError}
           onUploadObject={(file) => void session.uploadObject(file)}
           onPlaceObject={(cid) => void session.placeObject(cid)}
           onClearObjects={session.clearObjects}

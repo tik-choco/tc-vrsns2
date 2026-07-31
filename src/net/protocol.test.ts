@@ -220,6 +220,49 @@ describe('world + object validation', () => {
     }
   })
 
+  it('keeps a media placement kind and mime, and treats their absence as a model', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { id: 'a', cid: 'c', name: 'clip', x: 0, y: 1, z: 0, rotationY: 0, scale: 1, kind: 'video', mime: 'video/mp4' },
+          { id: 'b', cid: 'c', name: 'prop', x: 0, y: 0, z: 0, rotationY: 0, scale: 1 },
+          { id: 'c', cid: 'c', name: 'prop', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, kind: 'model' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].kind).toBe('video')
+    expect(msg.objects[0].mime).toBe('video/mp4')
+    // 'model' is the default, so it is normalized away rather than carried.
+    expect(msg.objects[1].kind).toBeUndefined()
+    expect(msg.objects[2].kind).toBeUndefined()
+  })
+
+  it('drops a placement with an unknown kind, but only the field for a bad mime', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { id: 'a', cid: 'c', name: '', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, kind: 'executable' },
+          { id: 'b', cid: 'c', name: '', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, kind: 42 },
+          { id: 'c', cid: 'c', name: '', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, kind: 'image', mime: 'not a mime' },
+          { id: 'd', cid: 'c', name: '', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, kind: 'image', mime: 'x'.repeat(200) },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects.map((o) => o.id)).toEqual(['c', 'd'])
+    expect(msg.objects[0].mime).toBeUndefined()
+    expect(msg.objects[1].mime).toBeUndefined()
+  })
+
+  it('round-trips a media placement', () => {
+    const objects = [
+      { id: 'p1', cid: 'cid1', name: 'poster.png', x: 1, y: 1, z: 2, rotationY: 0.5, scale: 1, kind: 'image' as const, mime: 'image/png' },
+      { id: 'p2', cid: 'cid2', name: 'track.mp3', x: 0, y: 0.3, z: 0, rotationY: 0, scale: 1, kind: 'audio' as const, mime: 'audio/mpeg' },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
   it('caps an object set at OBJECTS_MAX entries', () => {
     const objects = Array.from({ length: 200 }, (_, i) => ({
       id: 'id' + i,

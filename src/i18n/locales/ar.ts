@@ -85,17 +85,19 @@ export const ar: Dict = {
 
   // Objects panel
   'objects.title': 'العناصر',
-  'objects.subtitle': 'ضع عناصر ثلاثية الأبعاد مشتركة في العالم.',
-  'objects.upload': 'رفع نموذج',
-  'objects.uploading': 'جارٍ تحميل النموذج…',
+  'objects.subtitle': 'ضع عناصر وصورًا وفيديو وصوتًا مشتركة في العالم.',
+  'objects.upload': 'رفع ملف',
+  'objects.uploading': 'جارٍ تحميل الملف…',
   'objects.place': 'ضعه أمامي',
   'objects.placed': 'تم الوضع',
   'objects.remove': 'إزالة',
   'objects.clear': 'مسح الكل',
-  'objects.selectPrompt': 'اختر نموذجًا لوضعه.',
+  'objects.selectPrompt': 'اختر عنصرًا لوضعه.',
   'objects.count': '{count} موضوعة',
   'objects.empty': 'لا توجد عناصر موضوعة بعد.',
-  'objects.invalid': 'هذا الملف ليس نموذج GLTF / GLB صالحًا.',
+  'objects.hint': 'يدعم نماذج GLB / GLTF والصور والفيديو والصوت. يُشغَّل الفيديو والصوت مكانيًا، فيخفت الصوت مع المسافة.',
+  'objects.invalid': 'تعذّرت قراءة هذا الملف كنموذج أو صورة أو فيديو أو صوت.',
+  'objects.tooLarge': 'هذا الملف كبير جدًا. الحد هو {size} ميغابايت.',
 
   // Room panel
   'room.title': 'الغرفة',

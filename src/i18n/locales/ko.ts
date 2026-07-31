@@ -85,17 +85,19 @@ export const ko: Dict = {
 
   // Objects panel
   'objects.title': '오브젝트',
-  'objects.subtitle': '공유되는 3D 소품을 월드에 배치하세요.',
-  'objects.upload': '모델 업로드',
-  'objects.uploading': '모델 불러오는 중…',
+  'objects.subtitle': '공유되는 소품, 이미지, 영상, 소리를 월드에 배치하세요.',
+  'objects.upload': '파일 업로드',
+  'objects.uploading': '파일 불러오는 중…',
   'objects.place': '내 앞에 배치',
   'objects.placed': '배치됨',
   'objects.remove': '삭제',
   'objects.clear': '전체 삭제',
-  'objects.selectPrompt': '배치할 모델을 선택하세요.',
+  'objects.selectPrompt': '배치할 항목을 선택하세요.',
   'objects.count': '{count}개 배치됨',
   'objects.empty': '아직 배치된 오브젝트가 없어요.',
-  'objects.invalid': '유효한 GLTF / GLB 모델이 아니에요.',
+  'objects.hint': 'GLB / GLTF 모델, 이미지, 영상, 오디오를 지원해요. 영상과 오디오는 거리에 따라 소리가 줄어드는 공간 음향으로 재생돼요.',
+  'objects.invalid': '이 파일은 모델·이미지·영상·오디오로 읽을 수 없어요.',
+  'objects.tooLarge': '파일이 너무 커요. 최대 {size} MB예요.',
 
   // Room panel
   'room.title': '방',

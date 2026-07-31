@@ -90,17 +90,19 @@ export const en = {
 
   // Objects panel
   'objects.title': 'Objects',
-  'objects.subtitle': 'Place shared 3D props in the world.',
-  'objects.upload': 'Upload model',
-  'objects.uploading': 'Loading model…',
+  'objects.subtitle': 'Place shared props, pictures, video and sound in the world.',
+  'objects.upload': 'Upload file',
+  'objects.uploading': 'Loading file…',
   'objects.place': 'Place in front of me',
   'objects.placed': 'Placed',
   'objects.remove': 'Remove',
   'objects.clear': 'Clear all',
-  'objects.selectPrompt': 'Select a model to place.',
+  'objects.selectPrompt': 'Select something to place.',
   'objects.count': '{count} placed',
   'objects.empty': 'No objects placed yet.',
-  'objects.invalid': 'That file is not a valid GLTF/GLB model.',
+  'objects.hint': 'GLB / GLTF models, images, video and audio are supported. Video and audio play positionally, so sound fades with distance.',
+  'objects.invalid': 'That file could not be read as a model, image, video or audio file.',
+  'objects.tooLarge': 'That file is too large. The limit is {size} MB.',
 
   // Room panel
   'room.title': 'Room',

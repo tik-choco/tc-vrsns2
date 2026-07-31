@@ -85,17 +85,19 @@ export const ru: Dict = {
 
   // Objects panel
   'objects.title': 'Объекты',
-  'objects.subtitle': 'Размещайте общие 3D-объекты в мире.',
-  'objects.upload': 'Загрузить модель',
-  'objects.uploading': 'Загрузка модели…',
+  'objects.subtitle': 'Размещайте общие объекты, изображения, видео и звук в мире.',
+  'objects.upload': 'Загрузить файл',
+  'objects.uploading': 'Загрузка файла…',
   'objects.place': 'Поставить передо мной',
   'objects.placed': 'Размещено',
   'objects.remove': 'Удалить',
   'objects.clear': 'Очистить всё',
-  'objects.selectPrompt': 'Выберите модель для размещения.',
+  'objects.selectPrompt': 'Выберите, что разместить.',
   'objects.count': 'Размещено: {count}',
   'objects.empty': 'Пока нет размещённых объектов.',
-  'objects.invalid': 'Этот файл не является корректной моделью GLTF / GLB.',
+  'objects.hint': 'Поддерживаются модели GLB / GLTF, изображения, видео и аудио. Видео и аудио звучат позиционно — громкость убывает с расстоянием.',
+  'objects.invalid': 'Не удалось прочитать этот файл как модель, изображение, видео или аудио.',
+  'objects.tooLarge': 'Файл слишком большой. Ограничение — {size} МБ.',
 
   // Room panel
   'room.title': 'Комната',

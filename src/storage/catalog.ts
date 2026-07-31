@@ -8,18 +8,29 @@
 //
 // Everything here is defensive: a corrupt or adversarial localStorage value
 // resolves to an empty list rather than throwing.
-import type { CatalogItem, WorldFormat } from '../shared/types'
+import type { CatalogItem, PlacedKind, WorldFormat } from '../shared/types'
 import { publishVrmBytes, vrmBytesFromCid } from './vrmSource.js'
 
 export type CatalogKind = 'avatar' | 'world' | 'object'
 
 /**
  * Stored record — a CatalogItem plus a world's container format when
- * relevant. `thumbCid` points at the thumbnail bytes in the shared mistlib
- * content store (current format). `thumb` is the legacy inline data-URL
- * thumbnail, kept readable for dual-read; see migrateLegacyThumbs.
+ * relevant, and for a placeable item what it is (`asset`: model / image /
+ * video / audio) and the `mime` its bytes need to decode from a blob URL (the
+ * content store keeps raw bytes only, so the type has to be remembered here).
+ * `thumbCid` points at the thumbnail bytes in the shared mistlib content store
+ * (current format). `thumb` is the legacy inline data-URL thumbnail, kept
+ * readable for dual-read; see migrateLegacyThumbs.
  */
-type StoredItem = CatalogItem & { format?: WorldFormat; thumbCid?: string }
+type StoredItem = CatalogItem & {
+  format?: WorldFormat
+  asset?: PlacedKind
+  mime?: string
+  thumbCid?: string
+}
+
+const ASSET_KINDS: ReadonlySet<string> = new Set<PlacedKind>(['model', 'image', 'video', 'audio'])
+const MIME_MAX_LEN = 100
 
 const KEYS: Record<CatalogKind, string> = {
   avatar: 'tc-vrsns2:catalog:avatars-v1',
@@ -51,6 +62,8 @@ function sanitize(raw: unknown): StoredItem | null {
     item.thumb = r.thumb
   }
   if (typeof r.format === 'string') item.format = r.format as WorldFormat
+  if (typeof r.asset === 'string' && ASSET_KINDS.has(r.asset)) item.asset = r.asset as PlacedKind
+  if (typeof r.mime === 'string' && r.mime.length > 0 && r.mime.length <= MIME_MAX_LEN) item.mime = r.mime
   return item
 }
 
@@ -169,6 +182,15 @@ export function worldFormatOf(cid: string): WorldFormat | null {
 }
 
 /**
+ * What a placeable CID is and how to type its bytes. Entries saved before
+ * media support carry neither field and are models, which is what they were.
+ */
+export function placeableAssetOf(cid: string): { kind: PlacedKind; mime?: string } {
+  const item = read('object').find((i) => i.cid === cid)
+  return { kind: item?.asset ?? 'model', mime: item?.mime }
+}
+
+/**
  * True if the catalog item already has a thumbnail — inline (legacy) or as a
  * thumbCid pointer awaiting hydration. Lets callers (e.g. applyWorld's
  * auto-capture) skip re-capturing a thumbnail that exists but just hasn't
@@ -228,12 +250,14 @@ export async function addToCatalog(
   kind: CatalogKind,
   name: string,
   bytes: Uint8Array,
-  extra?: { format?: WorldFormat; thumb?: string },
+  extra?: { format?: WorldFormat; asset?: PlacedKind; mime?: string; thumb?: string },
 ): Promise<CatalogItem> {
   const cid = await publishVrmBytes(name, bytes)
   const trimmedName = name.trim().slice(0, NAME_MAX_LEN)
   const item: StoredItem = { cid, name: trimmedName }
   if (extra?.format) item.format = extra.format
+  if (extra?.asset) item.asset = extra.asset
+  if (extra?.mime) item.mime = extra.mime
 
   let displayThumb: string | undefined
   if (extra?.thumb && isValidThumb(extra.thumb)) {

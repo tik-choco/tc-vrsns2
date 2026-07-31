@@ -85,17 +85,19 @@ export const pt: Dict = {
 
   // Objects panel
   'objects.title': 'Objetos',
-  'objects.subtitle': 'Coloque objetos 3D compartilhados no mundo.',
-  'objects.upload': 'Enviar modelo',
-  'objects.uploading': 'Carregando modelo…',
+  'objects.subtitle': 'Coloque objetos, imagens, vídeo e som compartilhados no mundo.',
+  'objects.upload': 'Enviar arquivo',
+  'objects.uploading': 'Carregando arquivo…',
   'objects.place': 'Colocar à minha frente',
   'objects.placed': 'Colocado',
   'objects.remove': 'Remover',
   'objects.clear': 'Limpar tudo',
-  'objects.selectPrompt': 'Selecione um modelo para colocar.',
+  'objects.selectPrompt': 'Selecione algo para colocar.',
   'objects.count': '{count} colocados',
   'objects.empty': 'Nenhum objeto colocado ainda.',
-  'objects.invalid': 'Esse arquivo não é um modelo GLTF / GLB válido.',
+  'objects.hint': 'São aceitos modelos GLB / GLTF, imagens, vídeo e áudio. Vídeo e áudio tocam de forma posicional: o som diminui com a distância.',
+  'objects.invalid': 'Não foi possível ler esse arquivo como modelo, imagem, vídeo ou áudio.',
+  'objects.tooLarge': 'Esse arquivo é muito grande. O limite é {size} MB.',
 
   // Room panel
   'room.title': 'Sala',

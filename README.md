@@ -9,6 +9,20 @@ A P2P metaverse built only from assets that are safe to release publicly (succes
 - VRM / profile / DID follow the data-contracts spec (`protocol/docs/data-contracts`) and interoperate with tc-storage, tc-pdf-viewer, tc-translate, tc-note, tc-chat, and tc-vrm-viewer (shared OPFS/mistlib store on the same origin)
 - Render loop uses `renderer.setAnimationLoop` — designed for future WebXR (VR) support
 
+## Role
+
+tc-vrsns2 is the shared space, not a character runtime.
+
+- It reads tc-town's `character-index` shared-bus topic **read-only**
+  (`src/interop/townCharacters.ts`) and never writes back to it — tc-town
+  alone is the character source of record.
+- From that roster it only equips the VRM as an avatar (`src/ui/panels/AvatarPanel.tsx`,
+  `session.equipTownCharacter`); persona/voice fields carried in the topic are
+  not consumed.
+- **No AI runtime lives here.** There is no LLM/inference call in this
+  repository; holding a conversation as a character is out of scope for
+  tc-vrsns2.
+
 ## Architecture
 
 | Layer | Path | Role |
