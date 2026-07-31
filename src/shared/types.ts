@@ -43,6 +43,13 @@ export type CatalogItem = {
 export type WorldFormat = 'glb' | 'gltf' | 'splat' | 'ply' | 'ksplat'
 
 /**
+ * What a placeable catalog item actually is. 'model' is a glTF/GLB prop;
+ * the media kinds are rendered as a flat panel ('image'/'video') or a small
+ * emitter marker with positional audio ('audio').
+ */
+export type PlacedKind = 'model' | 'image' | 'video' | 'audio'
+
+/**
  * A shared world environment: the surrounding 3D scene loaded for everyone in
  * the room. Referenced by CID in the shared mistlib store. A null environment
  * (no MSG_WORLD active) means the default procedural grid.
@@ -55,10 +62,14 @@ export type WorldEnvironment = {
 
 /**
  * A decorative object placed in the world by a participant. `id` is a unique
- * per-placement identifier (so two copies of the same model coexist and are
- * addressable); `cid` points at the GLTF/GLB bytes in the shared store.
+ * per-placement identifier (so two copies of the same asset coexist and are
+ * addressable); `cid` points at the model or media bytes in the shared store.
  * Transform is a position + Y rotation + uniform scale — all peers reproduce it
  * exactly (untrusted — clamp on receipt).
+ *
+ * `kind`/`mime` describe how to build the object from those bytes. Both are
+ * optional on the wire: a frame without them (an older peer) means a glTF/GLB
+ * model, which is what every placement used to be.
  */
 export type PlacedObject = {
   id: string
@@ -69,4 +80,8 @@ export type PlacedObject = {
   z: number
   rotationY: number
   scale: number
+  /** Asset kind; absent means 'model'. */
+  kind?: PlacedKind
+  /** MIME type of the bytes, so media decodes correctly from a blob URL. */
+  mime?: string
 }

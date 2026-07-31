@@ -85,17 +85,19 @@ export const zh: Dict = {
 
   // Objects panel
   'objects.title': '物体',
-  'objects.subtitle': '在世界中放置共享的 3D 道具。',
-  'objects.upload': '上传模型',
-  'objects.uploading': '正在加载模型…',
+  'objects.subtitle': '在世界中放置共享的道具、图片、视频和音频。',
+  'objects.upload': '上传文件',
+  'objects.uploading': '正在加载文件…',
   'objects.place': '放到我面前',
   'objects.placed': '已放置',
   'objects.remove': '删除',
   'objects.clear': '全部清除',
-  'objects.selectPrompt': '选择要放置的模型。',
+  'objects.selectPrompt': '选择要放置的内容。',
   'objects.count': '已放置 {count} 个',
   'objects.empty': '还没有放置任何物体。',
-  'objects.invalid': '该文件不是有效的 GLTF / GLB 模型。',
+  'objects.hint': '支持 GLB / GLTF 模型、图片、视频和音频。视频和音频以空间音效播放，音量随距离衰减。',
+  'objects.invalid': '无法将该文件读取为模型、图片、视频或音频。',
+  'objects.tooLarge': '文件太大，上限为 {size} MB。',
 
   // Room panel
   'room.title': '房间',

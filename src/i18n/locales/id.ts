@@ -85,17 +85,19 @@ export const id: Dict = {
 
   // Objects panel
   'objects.title': 'Objek',
-  'objects.subtitle': 'Tempatkan objek 3D bersama di dunia.',
-  'objects.upload': 'Unggah model',
-  'objects.uploading': 'Memuat model…',
+  'objects.subtitle': 'Tempatkan objek, gambar, video, dan suara bersama di dunia.',
+  'objects.upload': 'Unggah berkas',
+  'objects.uploading': 'Memuat berkas…',
   'objects.place': 'Tempatkan di depanku',
   'objects.placed': 'Ditempatkan',
   'objects.remove': 'Hapus',
   'objects.clear': 'Hapus semua',
-  'objects.selectPrompt': 'Pilih model untuk ditempatkan.',
+  'objects.selectPrompt': 'Pilih sesuatu untuk ditempatkan.',
   'objects.count': '{count} ditempatkan',
   'objects.empty': 'Belum ada objek yang ditempatkan.',
-  'objects.invalid': 'File itu bukan model GLTF / GLB yang valid.',
+  'objects.hint': 'Mendukung model GLB / GLTF, gambar, video, dan audio. Video dan audio diputar secara posisional, jadi suaranya meredup seiring jarak.',
+  'objects.invalid': 'Berkas itu tidak bisa dibaca sebagai model, gambar, video, atau audio.',
+  'objects.tooLarge': 'Berkas itu terlalu besar. Batasnya {size} MB.',
 
   // Room panel
   'room.title': 'Ruang',

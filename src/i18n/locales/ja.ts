@@ -88,17 +88,19 @@ export const ja: Dict = {
 
   // Objects panel
   'objects.title': 'オブジェクト',
-  'objects.subtitle': '共有できる3Dオブジェクトをワールドに配置します。',
-  'objects.upload': 'モデルをアップロード',
-  'objects.uploading': 'モデルを読み込み中…',
+  'objects.subtitle': '共有できる3Dモデル・画像・動画・音声をワールドに配置します。',
+  'objects.upload': 'ファイルをアップロード',
+  'objects.uploading': 'ファイルを読み込み中…',
   'objects.place': '目の前に配置',
   'objects.placed': '配置済み',
   'objects.remove': '削除',
   'objects.clear': 'すべて削除',
-  'objects.selectPrompt': '配置するモデルを選択してください。',
+  'objects.selectPrompt': '配置するアイテムを選択してください。',
   'objects.count': '{count}個を配置中',
   'objects.empty': 'まだオブジェクトがありません。',
-  'objects.invalid': '有効なGLTF／GLBモデルではありません。',
+  'objects.hint': 'GLB／GLTFモデル、画像、動画、音声に対応。動画と音声は距離に応じて音量が変わる立体音響で再生されます。',
+  'objects.invalid': 'このファイルはモデル・画像・動画・音声として読み込めませんでした。',
+  'objects.tooLarge': 'ファイルが大きすぎます。上限は{size}MBです。',
 
   // Room panel
   'room.title': 'ルーム',

@@ -16,7 +16,7 @@ import { ChatBubble, NameTag } from './overheadSprites'
 import { RemotePlayerView } from './RemotePlayerView'
 import { disposeVrm, loadVrmFromBytes, vrmMetaSummary, type VrmMeta } from './vrmLoader'
 import { WorldManager } from './WorldManager'
-import { WorldObjects } from './WorldObjects'
+import { WorldObjects, type PlacementSource } from './WorldObjects'
 
 // Light-theme scene palette, matching the light UI. Grid tones follow
 // ../tc-vrm-viewer's light theme (soft grey lines on a near-white ground).
@@ -52,6 +52,8 @@ export class World {
   // Shared world environment + placeable objects.
   private worldManager: WorldManager
   private worldObjects: WorldObjects
+  /** Ears for positional audio from placed video/audio objects; rides the camera. */
+  private audioListener: THREE.AudioListener
   private grid!: THREE.GridHelper
   private ground!: THREE.Mesh
 
@@ -92,7 +94,12 @@ export class World {
     this.characterController = new CharacterController(this.localRoot, this.cameraController, this.localStateMachine)
 
     this.worldManager = new WorldManager(this.scene, this.camera, this.renderer)
-    this.worldObjects = new WorldObjects(this.scene)
+    // Mounted on the camera so placed sound pans and attenuates from the
+    // player's point of view. Its AudioContext starts suspended until the
+    // first user gesture — WorldObjects handles that resume.
+    this.audioListener = new THREE.AudioListener()
+    this.camera.add(this.audioListener)
+    this.worldObjects = new WorldObjects(this.scene, this.audioListener)
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize())
     this.resizeObserver.observe(canvas.parentElement ?? canvas)
@@ -321,18 +328,20 @@ export class World {
   }
 
   /**
-   * Place a model on the ground in front of the local player, facing the same
-   * way, and return its PlacedObject state for the caller to broadcast.
+   * Place an asset on the ground in front of the local player and return its
+   * PlacedObject state for the caller to broadcast. Models face the same way
+   * the player does; image/video panels turn back to face them. The drop
+   * distance is left to WorldObjects, which spaces media further out than
+   * props.
    */
-  placeObject(bytes: Uint8Array, meta: { cid: string; name: string }): Promise<PlacedObject> {
+  placeObject(bytes: Uint8Array, source: PlacementSource): Promise<PlacedObject> {
     const p = this.localRoot.position
     const h = this.characterController.heading
     const anchor = {
       position: [p.x, 0, p.z] as [number, number, number],
       forward: [Math.sin(h), 0, Math.cos(h)] as [number, number, number],
-      distance: 1.5,
     }
-    return this.worldObjects.place(bytes, meta, anchor)
+    return this.worldObjects.place(bytes, source, anchor)
   }
 
   /**
@@ -385,6 +394,7 @@ export class World {
     this.cameraController.dispose()
     this.worldManager.dispose()
     this.worldObjects.dispose()
+    this.camera.remove(this.audioListener)
 
     for (const id of [...this.remotes.keys()]) this.removeRemotePlayer(id)
 
@@ -466,6 +476,7 @@ export class World {
     this.cameraController.update(delta)
 
     this.worldManager.update(delta)
+    this.worldObjects.update(delta)
     this.emitLocalState()
     this.renderer.render(this.scene, this.camera)
   }

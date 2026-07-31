@@ -11,6 +11,8 @@ export type { DiscoveredRoom }
 
 export type MicState = 'off' | 'on' | 'pending' | 'error'
 export type RoomVisibility = 'public' | 'private'
+/** Why a placeable upload was rejected; the Objects panel localizes it. */
+export type ObjectUploadError = 'tooLarge' | 'invalid'
 
 /** A saved item in the user's local catalog (avatar / world / object model). */
 export type CatalogItem = { cid: string; name: string; thumb?: string }
@@ -41,10 +43,11 @@ export type GameOverlayProps = {
   onUploadWorld: (file: File) => void
   onApplyWorld: (cid: string) => void
   onResetWorld: () => void
-  // placeable objects
+  // placeable objects (glTF props + image / video / audio media)
   objectModels: CatalogItem[]
   placedCount: number
   objectBusy: boolean
+  objectError: ObjectUploadError | null
   onUploadObject: (file: File) => void
   onPlaceObject: (cid: string) => void
   onClearObjects: () => void

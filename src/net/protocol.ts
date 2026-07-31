@@ -8,6 +8,7 @@
 
 import type {
   AnimState,
+  PlacedKind,
   PlacedObject,
   PlayerProfile,
   PlayerState,
@@ -61,6 +62,8 @@ export const OBJECTS_MAX = 64
 /** Uniform-scale bounds for a placed object. */
 export const SCALE_MIN = 0.01
 export const SCALE_MAX = 100
+/** Cap on a placed object's MIME string (RFC 6838 names are far shorter). */
+export const MIME_MAX_LEN = 100
 /** Largest frame we bother decoding — bigger than a full object set could need. */
 const FRAME_MAX_BYTES = 256 * 1024
 
@@ -83,6 +86,11 @@ const WORLD_FORMATS: ReadonlySet<string> = new Set<WorldFormat>([
   'ply',
   'ksplat',
 ])
+
+const PLACED_KINDS: ReadonlySet<string> = new Set<PlacedKind>(['model', 'image', 'video', 'audio'])
+
+/** type/subtype, no parameters — peers never need to send a charset or codecs list. */
+const MIME_RE = /^[a-z]+\/[a-z0-9][a-z0-9.+-]*$/i
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/
 export const FALLBACK_NAME = 'Anonymous'
@@ -180,7 +188,13 @@ function parseWorldEnv(raw: unknown): WorldEnvironment | null {
   return { cid: o.cid, name, format: o.format as WorldFormat }
 }
 
-/** Validates a peer-supplied PlacedObject, clamping transform fields. */
+/**
+ * Validates a peer-supplied PlacedObject, clamping transform fields. `kind` is
+ * optional (an older peer only ever placed models, so its absence means
+ * 'model'), but an unrecognized one drops the whole placement: we cannot build
+ * something we don't understand, and quietly treating it as a model would try
+ * to parse arbitrary bytes as glTF. A malformed `mime` only drops that field.
+ */
 function parsePlacedObject(raw: unknown): PlacedObject | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
@@ -193,7 +207,15 @@ function parsePlacedObject(raw: unknown): PlacedObject | null {
   const scale = clampNumber(o.scale, SCALE_MIN, SCALE_MAX)
   if (x === null || y === null || z === null || rotationY === null || scale === null) return null
   const name = typeof o.name === 'string' ? o.name.trim().slice(0, OBJECT_NAME_MAX_LEN) : ''
-  return { id: o.id, cid: o.cid, name, x, y, z, rotationY, scale }
+  const object: PlacedObject = { id: o.id, cid: o.cid, name, x, y, z, rotationY, scale }
+  if (o.kind !== undefined) {
+    if (typeof o.kind !== 'string' || !PLACED_KINDS.has(o.kind)) return null
+    if (o.kind !== 'model') object.kind = o.kind as PlacedKind
+  }
+  if (typeof o.mime === 'string' && o.mime.length <= MIME_MAX_LEN && MIME_RE.test(o.mime)) {
+    object.mime = o.mime
+  }
+  return object
 }
 
 /**
