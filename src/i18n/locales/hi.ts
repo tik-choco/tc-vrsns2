@@ -41,6 +41,8 @@ export const hi: Dict = {
   'hud.hintJump': 'कूदें',
   'hud.hintSprint': 'दौड़ें',
   'hud.hintMenu': 'मेन्यू',
+  'hud.locked': 'दुनिया लॉक है',
+  'hud.openEditing': 'सभी संपादित कर सकते हैं',
 
   // Main menu
   'menu.title': 'मेन्यू',
@@ -82,6 +84,15 @@ export const hi: Dict = {
   'world.format': 'फ़ॉर्मैट',
   'world.invalid': 'असमर्थित दुनिया फ़ॉर्मैट। GLB, GLTF, PLY, SPLAT या KSPLAT का उपयोग करें।',
   'world.hint': 'GLB / GLTF मेश और Gaussian-splat सीन समर्थित हैं।',
+  'world.autosaveHint': 'यह रूम इस डिवाइस पर अपने आप सेव होता है और लौटने पर वापस आ जाता है।',
+  'world.policyLabel': 'इस दुनिया को कौन संपादित कर सकता है',
+  'world.policyOwner': 'सिर्फ़ रखने वाला',
+  'world.policyEveryone': 'सभी',
+  'world.policyLocked': 'लॉक',
+  'world.policyOwnerHint': 'कोई भी चीज़ें जोड़ सकता है, पर हटाना या खिसकाना सिर्फ़ रखने वाला कर सकता है।',
+  'world.policyEveryoneHint': 'रूम में कोई भी रखी हुई चीज़ों को खिसका, आकार बदल या हटा सकता है।',
+  'world.policyLockedHint': 'न माहौल बदला जा सकता है, न रखी हुई चीज़ों को छुआ जा सकता है।',
+  'world.lockedNotice': 'यह दुनिया लॉक है। संपादित करने के लिए ऊपर की सेटिंग बदलें।',
 
   // Objects panel
   'objects.title': 'ऑब्जेक्ट',
@@ -98,6 +109,16 @@ export const hi: Dict = {
   'objects.hint': 'GLB / GLTF मॉडल, तस्वीरें, वीडियो और ऑडियो समर्थित हैं। वीडियो और ऑडियो पोज़िशनल बजते हैं, इसलिए दूरी के साथ आवाज़ कम होती जाती है।',
   'objects.invalid': 'इस फ़ाइल को मॉडल, तस्वीर, वीडियो या ऑडियो के रूप में नहीं पढ़ा जा सका।',
   'objects.tooLarge': 'यह फ़ाइल बहुत बड़ी है। सीमा {size} MB है।',
+  'objects.edit': 'रखी चीज़ें संपादित करें',
+  'objects.editing': 'रखी हुई वस्तुएँ संपादित की जा रही हैं',
+  'objects.editHint': 'अपनी रखी हुई चीज़ पर क्लिक करें। चारों ओर देखने के लिए दायाँ बटन दबाए रखें।',
+  'objects.editDone': 'हो गया',
+  'objects.deleteOne': 'हटाएँ',
+  'objects.move': 'खिसकाएँ',
+  'objects.rotate': 'घुमाएँ',
+  'objects.scale': 'आकार',
+  'objects.placedBy': '{name} ने रखा',
+  'objects.orphans': '{count} चीज़ें जा चुके लोगों की हैं। रूम छोड़ने तक दिखती रहेंगी, पर इन्हें कोई संपादित नहीं कर सकता।',
 
   // Room panel
   'room.title': 'रूम',

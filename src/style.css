@@ -678,6 +678,78 @@ body {
   font-family: inherit;
 }
 
+/* --- Object edit mode ------------------------------------------------------
+   The gizmo itself lives in the 3D scene; this is the bar that chooses which
+   transform it offers and gets you back out. It takes the bottom-centre spot
+   the keyboard hints normally occupy — those are hidden while editing, since
+   both bars want the same strip and the hints are decorative. */
+
+.lock-pill {
+  background: var(--accent-tint-strong);
+  border-color: var(--accent-line);
+  color: var(--accent-strong);
+}
+.edit-bar {
+  position: absolute;
+  inset-block-end: calc(var(--sp-4) + var(--sa-b));
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-inline-size: calc(100vw - 2rem);
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--r-pill);
+  background: var(--glass-2);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(var(--blur));
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  z-index: 6;
+}
+.edit-bar-credit {
+  margin-inline-start: 0.4rem;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.edit-bar-target {
+  max-inline-size: 16rem;
+  padding-inline: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overlay.is-editing .controls-hint {
+  display: none;
+}
+
+/* Narrow desktop: same collision with the bottom-left chat bar the hint pill
+   has — bias to the bottom-right corner instead of the centre. */
+@media (max-width: 1200px) and (pointer: fine) {
+  .edit-bar {
+    inset-inline-start: auto;
+    inset-inline-end: calc(var(--sp-4) + var(--sa-r));
+    transform: none;
+  }
+}
+
+/* Touch: the bottom belt is the joystick and action buttons, so dock the bar
+   under the HUD at the top instead. */
+@media (pointer: coarse) {
+  .edit-bar {
+    inset-block-start: calc(4.25rem + var(--sa-t));
+    inset-block-end: auto;
+    inset-inline-start: 50%;
+    inset-inline-end: auto;
+    transform: translateX(-50%);
+  }
+}
+
 /* --- Chat ----------------------------------------------------------------- */
 
 .chat {
@@ -935,6 +1007,22 @@ body {
   margin: 0 0 var(--sp-3);
   font-size: 0.82rem;
   color: var(--danger);
+}
+/* Neutral counterpart: a state the user should know about, not an error
+   (e.g. the world is locked, so the actions below are unavailable). */
+.panel-note.is-muted {
+  background: var(--fill-1);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.panel-note {
+  margin: 0 0 var(--sp-3);
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--r-sm);
+  background: var(--accent-tint);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-strong);
 }
 
 /* --- Catalog (avatar/world/objects) ----------------------------------------
@@ -1212,6 +1300,22 @@ body {
   font-size: 0.82rem;
   color: var(--text-dim);
   font-weight: 600;
+  margin-inline-end: auto;
+}
+
+/* Who may edit: the three-way choice plus what the current one means. */
+.world-policy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-block-end: var(--sp-3);
+  padding-block-end: var(--sp-3);
+  border-block-end: 1px solid var(--border);
+}
+.world-policy .seg {
+  max-inline-size: 100%;
+  flex-wrap: wrap;
 }
 
 /* --- Room & Settings panels ---------------------------------------------- */

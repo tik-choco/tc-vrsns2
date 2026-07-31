@@ -34,12 +34,14 @@ import type {
   PlacedObject,
   PlayerProfile,
   PlayerState,
+  WorldEditPolicy,
   WorldEnvironment,
 } from '../shared/types'
 import {
   FALLBACK_COLOR,
   FALLBACK_NAME,
   MSG_CHAT,
+  MSG_LOCK,
   MSG_OBJECTS,
   MSG_PROFILE,
   MSG_STATE,
@@ -98,6 +100,8 @@ export class RoomSession {
   onWorldChange: ((fromId: string, env: WorldEnvironment | null) => void) | null = null
   /** A peer's owned set of placed objects changed (full replace for that owner). */
   onObjectsChange: ((fromId: string, objects: PlacedObject[]) => void) | null = null
+  /** A peer changed who may edit the room's world (advisory — see setWorldPolicy). */
+  onWorldPolicyChange: ((fromId: string, policy: WorldEditPolicy) => void) | null = null
 
   private readonly node: MistNode
   private profile: PlayerProfile
@@ -115,6 +119,8 @@ export class RoomSession {
   private lastWorld: WorldEnvironment | null = null
   /** Objects WE placed (our owned set) — rebroadcast on change, replayed to newcomers. */
   private ownedObjects: PlacedObject[] = []
+  /** Room-wide edit policy as we last knew it — replayed to newcomers unless default. */
+  private worldPolicy: WorldEditPolicy = 'owner'
   /** 500 ms presence loop: discovers neighbors, re-greets, reaps silent peers. */
   private presenceTimer: ReturnType<typeof setInterval> | null = null
   /** Rate limit for hello re-sends, per peer. */
@@ -265,6 +271,20 @@ export class RoomSession {
   }
 
   /**
+   * Announces who may edit the room's world (last-writer-wins, and anyone may
+   * change it). Nothing here can *enforce* it — a P2P room has no authority —
+   * so the policy is an announced intent that every well-behaved client
+   * applies to its own editing UI. Replayed to newcomers unless it is the
+   * default, so a late joiner doesn't start editing a world the room
+   * considers finished.
+   */
+  setWorldPolicy(policy: WorldEditPolicy): void {
+    this.worldPolicy = policy
+    if (this.closed) return
+    this.broadcast(encode({ kind: MSG_LOCK, policy }), DELIVERY_RELIABLE)
+  }
+
+  /**
    * Room-wide send via mistlib's empty broadcast target. Deliberately NOT
    * per-peer unicast: builds before mistlib-dev#16's fix assign per-destination
    * sequence numbers to RELIABLE unicast envelopes, and their double-wrap bug
@@ -390,6 +410,7 @@ export class RoomSession {
     this.lastGreetAt.clear()
     this.lastWorld = null
     this.ownedObjects = []
+    this.worldPolicy = 'owner'
     this.onPeerJoined = null
     this.onPeerLeft = null
     this.onRemoteState = null
@@ -398,6 +419,7 @@ export class RoomSession {
     this.onRemoteAudio = null
     this.onWorldChange = null
     this.onObjectsChange = null
+    this.onWorldPolicyChange = null
   }
 
   // --- inbound ---------------------------------------------------------------
@@ -495,6 +517,12 @@ export class RoomSession {
         this.onObjectsChange?.(fromId, msg.objects)
         break
       }
+      case MSG_LOCK: {
+        this.touchPeer(fromId)
+        this.worldPolicy = msg.policy
+        this.onWorldPolicyChange?.(fromId, msg.policy)
+        break
+      }
       case MSG_STATE_REQ: {
         this.touchPeer(fromId)
         // A newcomer wants an immediate snapshot; also (re)send our profile in
@@ -512,6 +540,12 @@ export class RoomSession {
         }
         if (this.ownedObjects.length > 0) {
           this.send(fromId, encode({ kind: MSG_OBJECTS, objects: this.ownedObjects }), DELIVERY_RELIABLE)
+        }
+        // Only a non-default policy is worth replaying: 'owner' is what a
+        // newcomer already starts in, so replaying it would just race another
+        // peer's genuine setting for no benefit.
+        if (this.worldPolicy !== 'owner') {
+          this.send(fromId, encode({ kind: MSG_LOCK, policy: this.worldPolicy }), DELIVERY_RELIABLE)
         }
         break
       }

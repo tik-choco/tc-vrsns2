@@ -41,6 +41,8 @@ export const de: Dict = {
   'hud.hintJump': 'Springen',
   'hud.hintSprint': 'Rennen',
   'hud.hintMenu': 'Menü',
+  'hud.locked': 'Welt gesperrt',
+  'hud.openEditing': 'Alle dürfen bearbeiten',
 
   // Main menu
   'menu.title': 'Menü',
@@ -82,6 +84,15 @@ export const de: Dict = {
   'world.format': 'Format',
   'world.invalid': 'Nicht unterstütztes Weltformat. Verwende GLB, GLTF, PLY, SPLAT oder KSPLAT.',
   'world.hint': 'GLB-/GLTF-Meshes und Gaussian-Splat-Szenen werden unterstützt.',
+  'world.autosaveHint': 'Dieser Raum wird automatisch auf diesem Gerät gespeichert und ist bei deiner Rückkehr wieder da.',
+  'world.policyLabel': 'Wer diese Welt bearbeiten darf',
+  'world.policyOwner': 'Nur wer platziert hat',
+  'world.policyEveryone': 'Alle',
+  'world.policyLocked': 'Gesperrt',
+  'world.policyOwnerHint': 'Alle dürfen etwas hinzufügen, aber nur wer etwas platziert hat, darf es bewegen oder löschen.',
+  'world.policyEveryoneHint': 'Alle im Raum dürfen Platziertes bewegen, skalieren oder löschen.',
+  'world.policyLockedHint': 'Niemand darf die Umgebung ändern oder Platziertes anfassen.',
+  'world.lockedNotice': 'Diese Welt ist gesperrt. Ändere die Einstellung oben, um sie zu bearbeiten.',
 
   // Objects panel
   'objects.title': 'Objekte',
@@ -98,6 +109,16 @@ export const de: Dict = {
   'objects.hint': 'GLB-/GLTF-Modelle, Bilder, Video und Audio werden unterstützt. Video und Audio klingen positionsabhängig – der Ton wird mit der Entfernung leiser.',
   'objects.invalid': 'Diese Datei ließ sich nicht als Modell, Bild, Video oder Audio lesen.',
   'objects.tooLarge': 'Diese Datei ist zu groß. Das Limit liegt bei {size} MB.',
+  'objects.edit': 'Platzierte bearbeiten',
+  'objects.editing': 'Platzierte Objekte bearbeiten',
+  'objects.editHint': 'Klicke etwas an, das du platziert hast. Rechte Taste halten, um dich umzusehen.',
+  'objects.editDone': 'Fertig',
+  'objects.deleteOne': 'Löschen',
+  'objects.move': 'Bewegen',
+  'objects.rotate': 'Drehen',
+  'objects.scale': 'Skalieren',
+  'objects.placedBy': 'platziert von {name}',
+  'objects.orphans': '{count} stammen von Leuten, die gegangen sind. Sie bleiben, bis du den Raum verlässt, und niemand kann sie bearbeiten.',
 
   // Room panel
   'room.title': 'Raum',

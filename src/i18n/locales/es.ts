@@ -41,6 +41,8 @@ export const es: Dict = {
   'hud.hintJump': 'Saltar',
   'hud.hintSprint': 'Correr',
   'hud.hintMenu': 'Menú',
+  'hud.locked': 'Mundo bloqueado',
+  'hud.openEditing': 'Todos pueden editar',
 
   // Main menu
   'menu.title': 'Menú',
@@ -82,6 +84,15 @@ export const es: Dict = {
   'world.format': 'Formato',
   'world.invalid': 'Formato de mundo no compatible. Usa GLB, GLTF, PLY, SPLAT o KSPLAT.',
   'world.hint': 'Se admiten mallas GLB / GLTF y escenas Gaussian-splat.',
+  'world.autosaveHint': 'Esta sala se guarda automáticamente en este dispositivo y vuelve cuando regreses.',
+  'world.policyLabel': 'Quién puede editar este mundo',
+  'world.policyOwner': 'Solo quien lo colocó',
+  'world.policyEveryone': 'Todos',
+  'world.policyLocked': 'Bloqueado',
+  'world.policyOwnerHint': 'Cualquiera puede añadir cosas, pero solo quien colocó algo puede moverlo o borrarlo.',
+  'world.policyEveryoneHint': 'Cualquiera en la sala puede mover, redimensionar o borrar lo que se haya colocado.',
+  'world.policyLockedHint': 'Nadie puede cambiar el entorno ni tocar lo que se ha colocado.',
+  'world.lockedNotice': 'Este mundo está bloqueado. Cambia el ajuste de arriba para editarlo.',
 
   // Objects panel
   'objects.title': 'Objetos',
@@ -98,6 +109,16 @@ export const es: Dict = {
   'objects.hint': 'Se admiten modelos GLB / GLTF, imágenes, vídeo y audio. El vídeo y el audio suenan de forma posicional: el volumen baja con la distancia.',
   'objects.invalid': 'No se pudo leer ese archivo como modelo, imagen, vídeo ni audio.',
   'objects.tooLarge': 'Ese archivo es demasiado grande. El límite es {size} MB.',
+  'objects.edit': 'Editar colocados',
+  'objects.editing': 'Editando objetos colocados',
+  'objects.editHint': 'Haz clic en algo que hayas colocado. Mantén el botón derecho para mirar alrededor.',
+  'objects.editDone': 'Listo',
+  'objects.deleteOne': 'Eliminar',
+  'objects.move': 'Mover',
+  'objects.rotate': 'Girar',
+  'objects.scale': 'Redimensionar',
+  'objects.placedBy': 'colocado por {name}',
+  'objects.orphans': '{count} quedaron de personas que se fueron. Permanecen hasta que salgas de la sala y nadie puede editarlas.',
 
   // Room panel
   'room.title': 'Sala',

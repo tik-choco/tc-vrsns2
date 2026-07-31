@@ -41,6 +41,8 @@ export const id: Dict = {
   'hud.hintJump': 'Lompat',
   'hud.hintSprint': 'Lari',
   'hud.hintMenu': 'Menu',
+  'hud.locked': 'Dunia terkunci',
+  'hud.openEditing': 'Semua boleh mengedit',
 
   // Main menu
   'menu.title': 'Menu',
@@ -82,6 +84,15 @@ export const id: Dict = {
   'world.format': 'Format',
   'world.invalid': 'Format dunia tidak didukung. Gunakan GLB, GLTF, PLY, SPLAT, atau KSPLAT.',
   'world.hint': 'Mesh GLB / GLTF dan scene Gaussian-splat didukung.',
+  'world.autosaveHint': 'Ruang ini tersimpan otomatis di perangkat ini dan kembali saat kamu datang lagi.',
+  'world.policyLabel': 'Siapa yang boleh mengedit dunia ini',
+  'world.policyOwner': 'Hanya yang menempatkan',
+  'world.policyEveryone': 'Semua orang',
+  'world.policyLocked': 'Terkunci',
+  'world.policyOwnerHint': 'Siapa pun boleh menambah, tetapi hanya yang menempatkan boleh memindah atau menghapus.',
+  'world.policyEveryoneHint': 'Siapa pun di ruang ini boleh memindah, mengubah ukuran, atau menghapus yang sudah ditempatkan.',
+  'world.policyLockedHint': 'Tidak ada yang boleh mengubah lingkungan atau menyentuh yang sudah ditempatkan.',
+  'world.lockedNotice': 'Dunia ini terkunci. Ubah pengaturan di atas untuk mengedit.',
 
   // Objects panel
   'objects.title': 'Objek',
@@ -98,6 +109,16 @@ export const id: Dict = {
   'objects.hint': 'Mendukung model GLB / GLTF, gambar, video, dan audio. Video dan audio diputar secara posisional, jadi suaranya meredup seiring jarak.',
   'objects.invalid': 'Berkas itu tidak bisa dibaca sebagai model, gambar, video, atau audio.',
   'objects.tooLarge': 'Berkas itu terlalu besar. Batasnya {size} MB.',
+  'objects.edit': 'Edit yang ditempatkan',
+  'objects.editing': 'Mengedit objek yang ditempatkan',
+  'objects.editHint': 'Klik sesuatu yang kamu tempatkan. Tahan tombol kanan untuk melihat sekeliling.',
+  'objects.editDone': 'Selesai',
+  'objects.deleteOne': 'Hapus',
+  'objects.move': 'Pindah',
+  'objects.rotate': 'Putar',
+  'objects.scale': 'Ubah ukuran',
+  'objects.placedBy': 'ditempatkan oleh {name}',
+  'objects.orphans': '{count} ditinggalkan orang yang sudah pergi. Tetap ada sampai kamu keluar dari ruang, dan tidak ada yang bisa mengeditnya.',
 
   // Room panel
   'room.title': 'Ruang',

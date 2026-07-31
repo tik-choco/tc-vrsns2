@@ -5,6 +5,7 @@ import {
   ANNOUNCE_ROOMS_MAX,
   FALLBACK_NAME,
   MSG_CHAT,
+  MSG_LOCK,
   MSG_OBJECTS,
   MSG_PROFILE,
   MSG_ROOM_ANNOUNCE,
@@ -71,6 +72,51 @@ describe('encode/decode round trip', () => {
       { id: 'b', cid: 'bafy2', name: '', x: 0, y: 0.5, z: 0, rotationY: 0, scale: 1 },
     ]
     expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('round-trips every edit policy', () => {
+    for (const policy of ['owner', 'everyone', 'locked'] as const) {
+      expect(decode(encode({ kind: MSG_LOCK, policy }))).toEqual({ kind: MSG_LOCK, policy })
+    }
+  })
+
+  it('reads the boolean-only form a peer without the policy field sends', () => {
+    expect(decode(frame(MSG_LOCK, { locked: true }))).toEqual({ kind: MSG_LOCK, policy: 'locked' })
+    expect(decode(frame(MSG_LOCK, { locked: false }))).toEqual({ kind: MSG_LOCK, policy: 'owner' })
+  })
+
+  it('still sends the boolean form alongside the policy, for those peers', () => {
+    const body = JSON.parse(new TextDecoder().decode(encode({ kind: MSG_LOCK, policy: 'locked' }).subarray(1)))
+    expect(body).toEqual({ locked: true, policy: 'locked' })
+    const open = JSON.parse(new TextDecoder().decode(encode({ kind: MSG_LOCK, policy: 'everyone' }).subarray(1)))
+    expect(open).toEqual({ locked: false, policy: 'everyone' })
+  })
+
+  it('drops a policy frame that is malformed', () => {
+    expect(decode(frame(MSG_LOCK, {}))).toBeNull()
+    expect(decode(frame(MSG_LOCK, { locked: 'yes' }))).toBeNull()
+    expect(decode(frame(MSG_LOCK, { locked: false, policy: 'anarchy' }))).toBeNull()
+  })
+
+  it('keeps the placer credit on a placement, trimmed and capped', () => {
+    const objects: PlacedObject[] = [
+      { id: 'a', cid: 'c', name: 'Lamp', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, placedBy: 'Rin' },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+    const decoded = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { id: 'a', cid: 'c', name: 'n', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, placedBy: '  ' },
+          { id: 'b', cid: 'c', name: 'n', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, placedBy: 'x'.repeat(200) },
+          { id: 'd', cid: 'c', name: 'n', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, placedBy: 42 },
+        ],
+      }),
+    )
+    const placed = decoded?.kind === MSG_OBJECTS ? decoded.objects : []
+    expect(placed).toHaveLength(3)
+    expect(placed[0].placedBy).toBeUndefined() // blank is no credit, not a rejection
+    expect(placed[1].placedBy).toHaveLength(40)
+    expect(placed[2].placedBy).toBeUndefined()
   })
 
   it('round-trips a room-announce message, including an empty keepalive', () => {

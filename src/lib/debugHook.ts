@@ -3,7 +3,7 @@
 // (scripts/e2e-sync.mjs) can assert on peer discovery, remote state arrival,
 // and chat delivery. Without the flag this module is inert (vrsnsDebug is
 // null and every call site is a no-op) — it never touches gameplay state.
-import type { PlayerState } from '../shared/types'
+import type { PlacedObject, PlayerState } from '../shared/types'
 
 export type VrsnsDebug = {
   selfId: string | null
@@ -20,6 +20,15 @@ export type VrsnsDebug = {
   sendErrors: number
   /** Snapshot of the node's transport stats (wired up by useSession). */
   stats: (() => unknown) | null
+  /**
+   * Every object currently placed in the scene, with its live transform —
+   * lets a test assert that an edit (or a peer's edit) actually landed.
+   */
+  objects: (() => PlacedObject[]) | null
+  /** The subset we publish: how a test sees ownership move between peers. */
+  owned: (() => PlacedObject[]) | null
+  /** Ids the local player may currently select and edit, per the room policy. */
+  editable: (() => string[]) | null
 }
 
 export const vrsnsDebug: VrsnsDebug | null = createBag()
@@ -41,6 +50,9 @@ function createBag(): VrsnsDebug | null {
     events: {},
     sendErrors: 0,
     stats: null,
+    objects: null,
+    owned: null,
+    editable: null,
   }
   ;(window as unknown as { __vrsnsDebug?: VrsnsDebug }).__vrsnsDebug = bag
   return bag

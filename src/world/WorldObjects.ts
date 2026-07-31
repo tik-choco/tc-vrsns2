@@ -28,6 +28,8 @@ export type PlacementSource = {
   /** Defaults to 'model'. */
   kind?: PlacedKind
   mime?: string
+  /** Display name credited as the placer; travels with the object thereafter. */
+  placedBy?: string
 }
 
 // Auto-scale clamp: the largest model dimension is mapped into this size range.
@@ -48,6 +50,15 @@ const SPEAKER_DEPTH = 0.26
 /** Distance (world units) over which positional audio stays at full volume. */
 const AUDIO_REF_DISTANCE = 4
 const AUDIO_ROLLOFF = 1.4
+/**
+ * Bounds an interactive edit may drive a placement to. Deliberately tighter
+ * than the wire clamps in net/protocol.ts (POS_LIMIT / SCALE_MIN / SCALE_MAX),
+ * which only exist to stop a hostile peer: these are what a person dragging a
+ * gizmo should be able to reach.
+ */
+const EDIT_POS_LIMIT = 500
+const EDIT_SCALE_MIN = 0.05
+const EDIT_SCALE_MAX = 20
 
 type Entry = {
   state: PlacedObject
@@ -117,6 +128,7 @@ export class WorldObjects {
     }
     if (kind !== 'model') state.kind = kind
     if (source.mime) state.mime = source.mime
+    if (source.placedBy) state.placedBy = source.placedBy
     this.track(state, built)
     return { ...state }
   }
@@ -157,8 +169,11 @@ export class WorldObjects {
 
   /**
    * Reconcile the tracked set to exactly `states`: drop ids no longer present,
-   * and load+add any new ids (resolving their bytes via resolveBytes). Cheap
-   * and idempotent when unchanged — existing ids are left untouched.
+   * load+add any new ids (resolving their bytes via resolveBytes), and move
+   * ids that are already here but have been transformed since — that last case
+   * is how an owner's edit of an existing placement reaches everyone else,
+   * without rebuilding an asset that hasn't changed. Cheap and idempotent when
+   * nothing differs.
    */
   async syncRemote(states: PlacedObject[], resolveBytes: (cid: string) => Promise<Uint8Array | null>): Promise<void> {
     const wanted = new Set(states.map((s) => s.id))
@@ -166,12 +181,94 @@ export class WorldObjects {
       if (!wanted.has(id)) this.remove(id)
     }
     for (const state of states) {
-      if (this.objects.has(state.id)) continue
+      const existing = this.objects.get(state.id)
+      if (existing) {
+        if (transformDiffers(existing.state, state)) this.applyTransform(state)
+        continue
+      }
       const bytes = await resolveBytes(state.cid)
       // Re-check: a concurrent sync may have added this id while we awaited.
       if (!bytes || this.objects.has(state.id)) continue
       await this.addFromState(bytes, state)
     }
+  }
+
+  // --- interactive editing ---------------------------------------------------
+
+  /** The scene object backing a placement, for an editor to attach a gizmo to. */
+  objectFor(id: string): THREE.Object3D | null {
+    return this.objects.get(id)?.object ?? null
+  }
+
+  /** Current state of one placement (a copy), or null if it isn't tracked. */
+  stateOf(id: string): PlacedObject | null {
+    const entry = this.objects.get(id)
+    return entry ? { ...entry.state } : null
+  }
+
+  /**
+   * Id of the frontmost placement under `raycaster`, or null for a miss.
+   * `allowed` restricts the hit test to a subset (the editor passes the ids
+   * the local player owns, so peers' placements are not selectable).
+   */
+  raycast(raycaster: THREE.Raycaster, allowed?: ReadonlySet<string>): string | null {
+    const roots: THREE.Object3D[] = []
+    const idByRoot = new Map<THREE.Object3D, string>()
+    for (const [id, entry] of this.objects) {
+      if (allowed && !allowed.has(id)) continue
+      roots.push(entry.object)
+      idByRoot.set(entry.object, id)
+    }
+    if (roots.length === 0) return null
+    const hits = raycaster.intersectObjects(roots, true)
+    for (const hit of hits) {
+      // Walk back up to whichever tracked root owns the hit mesh.
+      for (let node: THREE.Object3D | null = hit.object; node; node = node.parent) {
+        const id = idByRoot.get(node)
+        if (id) return id
+      }
+    }
+    return null
+  }
+
+  /**
+   * Reads a placement's scene transform back into its state after an edit,
+   * normalizing it to what a PlacedObject can actually express and every peer
+   * can reproduce: position clamped, rotation reduced to a heading, scale made
+   * uniform. The scene object is corrected to match, so what the editor left
+   * behind and what goes on the wire are never different things. Returns the
+   * new state (to broadcast), or null if the id is gone.
+   */
+  commitTransform(id: string): PlacedObject | null {
+    const entry = this.objects.get(id)
+    if (!entry) return null
+    const object = entry.object
+
+    const x = clamp(object.position.x, -EDIT_POS_LIMIT, EDIT_POS_LIMIT)
+    const y = clamp(object.position.y, -EDIT_POS_LIMIT, EDIT_POS_LIMIT)
+    const z = clamp(object.position.z, -EDIT_POS_LIMIT, EDIT_POS_LIMIT)
+    // A gizmo can tilt an object on any axis; only the heading survives.
+    const rotationY = wrapAngle(new THREE.Euler().setFromQuaternion(object.quaternion, 'YXZ').y)
+    // Non-uniform scaling is likewise not representable — the axis the user
+    // actually dragged (the one furthest from the old scale) wins for all three.
+    const scale = clamp(dominantScale(object.scale, entry.state.scale), EDIT_SCALE_MIN, EDIT_SCALE_MAX)
+
+    object.position.set(x, y, z)
+    object.rotation.set(0, rotationY, 0)
+    object.scale.setScalar(scale)
+
+    entry.state = { ...entry.state, x, y, z, rotationY, scale }
+    return { ...entry.state }
+  }
+
+  /** Applies an exact transform to a tracked placement (peer edits, undo of a drag). */
+  applyTransform(state: PlacedObject): void {
+    const entry = this.objects.get(state.id)
+    if (!entry) return
+    entry.object.position.set(state.x, state.y, state.z)
+    entry.object.rotation.set(0, state.rotationY, 0)
+    entry.object.scale.setScalar(state.scale)
+    entry.state = { ...entry.state, ...state }
   }
 
   /** Animates the "now playing" pulse on audio markers. Safe to call every frame. */
@@ -567,6 +664,39 @@ function whenUserGesture(cb: () => void): void {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+/** True when two states describe different transforms (ignores identity/asset fields). */
+function transformDiffers(a: PlacedObject, b: PlacedObject): boolean {
+  return (
+    a.x !== b.x || a.y !== b.y || a.z !== b.z || a.rotationY !== b.rotationY || a.scale !== b.scale
+  )
+}
+
+/** Normalizes a heading into (-π, π] so a dragged rotation never drifts unbounded. */
+function wrapAngle(radians: number): number {
+  const wrapped = radians % (Math.PI * 2)
+  if (wrapped > Math.PI) return wrapped - Math.PI * 2
+  if (wrapped <= -Math.PI) return wrapped + Math.PI * 2
+  return wrapped
+}
+
+/**
+ * Collapses a possibly non-uniform scale to the single factor a PlacedObject
+ * carries: whichever axis moved furthest from `previous` is the one the user
+ * dragged, so it decides all three.
+ */
+function dominantScale(scale: THREE.Vector3, previous: number): number {
+  let best = scale.x
+  let bestDelta = Math.abs(scale.x - previous)
+  for (const value of [scale.y, scale.z]) {
+    const delta = Math.abs(value - previous)
+    if (delta > bestDelta) {
+      best = value
+      bestDelta = delta
+    }
+  }
+  return best
 }
 
 function disposeObject(object: THREE.Object3D): void {

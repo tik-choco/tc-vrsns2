@@ -50,6 +50,16 @@ export type WorldFormat = 'glb' | 'gltf' | 'splat' | 'ply' | 'ksplat'
 export type PlacedKind = 'model' | 'image' | 'video' | 'audio'
 
 /**
+ * Who may edit the objects placed in a room — a room-wide, advisory setting
+ * (a P2P room has no authority, so every client applies it to its own UI).
+ *
+ *  - 'owner'    — you may only edit what you placed. The default.
+ *  - 'everyone' — anyone may move, resize or delete anyone's placement.
+ *  - 'locked'   — nobody edits anything, and the environment is fixed too.
+ */
+export type WorldEditPolicy = 'owner' | 'everyone' | 'locked'
+
+/**
  * A shared world environment: the surrounding 3D scene loaded for everyone in
  * the room. Referenced by CID in the shared mistlib store. A null environment
  * (no MSG_WORLD active) means the default procedural grid.
@@ -84,4 +94,11 @@ export type PlacedObject = {
   kind?: PlacedKind
   /** MIME type of the bytes, so media decodes correctly from a blob URL. */
   mime?: string
+  /**
+   * Display name of whoever originally placed this. Credit, not authority: it
+   * survives edits and hand-overs, while the peer responsible for publishing
+   * the object can change (see ObjectRegistry). Absent on placements from
+   * before this field existed.
+   */
+  placedBy?: string
 }

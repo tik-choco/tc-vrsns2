@@ -136,13 +136,23 @@ export function App() {
           onUploadWorld={(file) => void session.uploadWorld(file)}
           onApplyWorld={(cid) => void session.applyWorld(cid)}
           onResetWorld={session.resetWorld}
+          worldPolicy={session.worldPolicy}
+          onSetWorldPolicy={session.setWorldPolicy}
           objectModels={session.objectModels}
           placedCount={session.placedCount}
+          ownPlacedCount={session.ownPlacedCount}
+          orphanCount={session.orphanCount}
           objectBusy={session.objectBusy}
           objectError={session.objectError}
           onUploadObject={(file) => void session.uploadObject(file)}
           onPlaceObject={(cid) => void session.placeObject(cid)}
           onClearObjects={session.clearObjects}
+          editMode={session.editMode}
+          editTool={session.editTool}
+          selectedObject={session.selectedObject}
+          onSetEditMode={session.setEditMode}
+          onSetEditTool={session.setEditTool}
+          onDeleteSelectedObject={session.deleteSelectedObject}
           onUpdateProfile={session.updateProfile}
           inviteUrl={session.inviteUrl}
           onSwitchRoom={(nextRoom) => void session.switchRoom(nextRoom)}

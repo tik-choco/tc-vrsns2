@@ -12,6 +12,7 @@ import type {
   PlacedObject,
   PlayerProfile,
   PlayerState,
+  WorldEditPolicy,
   WorldEnvironment,
   WorldFormat,
 } from '../shared/types'
@@ -30,6 +31,14 @@ export const MSG_WORLD = 0x05
 export const MSG_OBJECTS = 0x06
 /** Gossip room-discovery announce, body { rooms } (DELIVERY_UNRELIABLE). See DiscoverySession. */
 export const MSG_ROOM_ANNOUNCE = 0x07
+/**
+ * Room-wide editing policy, body { locked, policy? } (DELIVERY_RELIABLE).
+ * Advisory: there is no authority in a P2P room, so every client simply
+ * applies it to its own editing UI. Replayed to newcomers when it is not the
+ * default. `locked` is the original boolean form and stays on the wire so a
+ * peer that predates the three-way policy still understands a locked room.
+ */
+export const MSG_LOCK = 0x08
 
 /** A room the announcer knows about, carried inside a MSG_ROOM_ANNOUNCE. */
 export interface RoomAnnounceEntry {
@@ -49,6 +58,7 @@ export type NetMessage =
   | { kind: typeof MSG_WORLD; env: WorldEnvironment | null }
   | { kind: typeof MSG_OBJECTS; objects: PlacedObject[] }
   | { kind: typeof MSG_ROOM_ANNOUNCE; rooms: RoomAnnounceEntry[] }
+  | { kind: typeof MSG_LOCK; policy: WorldEditPolicy }
 
 // Defensive limits applied to peer-supplied data.
 export const POS_LIMIT = 1000
@@ -88,6 +98,8 @@ const WORLD_FORMATS: ReadonlySet<string> = new Set<WorldFormat>([
 ])
 
 const PLACED_KINDS: ReadonlySet<string> = new Set<PlacedKind>(['model', 'image', 'video', 'audio'])
+
+const EDIT_POLICIES: ReadonlySet<string> = new Set<WorldEditPolicy>(['owner', 'everyone', 'locked'])
 
 /** type/subtype, no parameters — peers never need to send a charset or codecs list. */
 const MIME_RE = /^[a-z]+\/[a-z0-9][a-z0-9.+-]*$/i
@@ -155,6 +167,9 @@ export function encode(msg: NetMessage): Uint8Array {
     case MSG_ROOM_ANNOUNCE:
       body = { rooms: msg.rooms }
       break
+    case MSG_LOCK:
+      body = { locked: msg.policy === 'locked', policy: msg.policy }
+      break
   }
   const json = body === undefined ? new Uint8Array(0) : textEncoder.encode(JSON.stringify(body))
   const frame = new Uint8Array(1 + json.length)
@@ -178,8 +193,13 @@ function clampNumber(v: unknown, min: number, max: number): number | null {
   return Math.min(max, Math.max(min, v))
 }
 
-/** Validates a peer-supplied WorldEnvironment. Returns null if malformed. */
-function parseWorldEnv(raw: unknown): WorldEnvironment | null {
+/**
+ * Validates a peer-supplied WorldEnvironment. Returns null if malformed.
+ * Exported because the world autosave (storage/worldSave.ts) re-reads the same
+ * shape back out of localStorage and validates it with this exact function
+ * rather than a second, drift-prone copy.
+ */
+export function parseWorldEnv(raw: unknown): WorldEnvironment | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
   if (typeof o.cid !== 'string' || o.cid.length === 0 || o.cid.length > CID_MAX_LEN) return null
@@ -194,8 +214,11 @@ function parseWorldEnv(raw: unknown): WorldEnvironment | null {
  * 'model'), but an unrecognized one drops the whole placement: we cannot build
  * something we don't understand, and quietly treating it as a model would try
  * to parse arbitrary bytes as glTF. A malformed `mime` only drops that field.
+ *
+ * Exported for the same reason as parseWorldEnv: the world autosave validates
+ * restored placements through it.
  */
-function parsePlacedObject(raw: unknown): PlacedObject | null {
+export function parsePlacedObject(raw: unknown): PlacedObject | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
   if (typeof o.id !== 'string' || o.id.length === 0 || o.id.length > CID_MAX_LEN) return null
@@ -214,6 +237,13 @@ function parsePlacedObject(raw: unknown): PlacedObject | null {
   }
   if (typeof o.mime === 'string' && o.mime.length <= MIME_MAX_LEN && MIME_RE.test(o.mime)) {
     object.mime = o.mime
+  }
+  // Credit for the original placer. Peer-supplied display text, so it is
+  // trimmed and capped like any other name; blank means "don't credit anyone"
+  // rather than an invalid placement.
+  if (typeof o.placedBy === 'string') {
+    const placedBy = o.placedBy.trim().slice(0, NAME_MAX_LEN)
+    if (placedBy) object.placedBy = placedBy
   }
   return object
 }
@@ -373,6 +403,16 @@ export function decode(data: Uint8Array): NetMessage | null {
         if (obj) objects.push(obj)
       }
       return { kind: MSG_OBJECTS, objects }
+    }
+    case MSG_LOCK: {
+      if (typeof body.locked !== 'boolean') return null
+      // A peer that knows the three-way policy sends both; one that only knows
+      // the boolean sends `locked` alone, which maps onto the two ends of it.
+      if (body.policy !== undefined) {
+        if (typeof body.policy !== 'string' || !EDIT_POLICIES.has(body.policy)) return null
+        return { kind: MSG_LOCK, policy: body.policy as WorldEditPolicy }
+      }
+      return { kind: MSG_LOCK, policy: body.locked ? 'locked' : 'owner' }
     }
     case MSG_ROOM_ANNOUNCE: {
       if (!Array.isArray(body.rooms)) return null

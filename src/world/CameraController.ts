@@ -37,15 +37,40 @@ export class CameraController {
   private lastTouchX = 0
   private lastTouchY = 0
   private touching = false
+  /**
+   * Object-editing mode: the left button belongs to the editor (picking and
+   * gizmo drags), so looking around moves to a held right button and the
+   * pointer is never locked — a lock would both swallow the clicks the gizmo
+   * needs and hide the cursor that aims them.
+   */
+  private editMode = false
+  private dragLooking = false
 
-  private readonly onMouseDown = (): void => {
+  private readonly onMouseDown = (e: MouseEvent): void => {
     if (!this.enabled) return
+    if (this.editMode) {
+      if (e.button === 2) this.dragLooking = true
+      return
+    }
     this.domElement.requestPointerLock()
+  }
+
+  private readonly onMouseUp = (): void => {
+    this.dragLooking = false
+  }
+
+  /** Right-drag is "look around" in edit mode, so it must not open a menu. */
+  private readonly onContextMenu = (e: MouseEvent): void => {
+    if (this.editMode) e.preventDefault()
   }
 
   private readonly onMouseMove = (e: MouseEvent): void => {
     if (!this.enabled) return
-    if (document.pointerLockElement !== this.domElement) return
+    if (this.editMode) {
+      if (!this.dragLooking) return
+    } else if (document.pointerLockElement !== this.domElement) {
+      return
+    }
     this.rotation.y -= e.movementX * MOUSE_SENSITIVITY
     this.rotation.x = clampPitch(this.rotation.x - e.movementY * MOUSE_SENSITIVITY)
   }
@@ -87,6 +112,8 @@ export class CameraController {
     this.currentLookAt.copy(target.position).add(new THREE.Vector3(0, this.headHeight * LOOK_AT_RATIO, 0))
 
     domElement.addEventListener('mousedown', this.onMouseDown)
+    document.addEventListener('mouseup', this.onMouseUp)
+    domElement.addEventListener('contextmenu', this.onContextMenu)
     document.addEventListener('mousemove', this.onMouseMove)
     domElement.addEventListener('wheel', this.onWheel, { passive: false })
     domElement.addEventListener('touchstart', this.onTouchStart, { passive: false })
@@ -97,6 +124,19 @@ export class CameraController {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled
     if (!enabled && document.pointerLockElement === this.domElement) {
+      document.exitPointerLock()
+    }
+  }
+
+  /**
+   * Switches looking around between pointer-lock (normal play) and hold-right-
+   * button (while objects are being edited). Releases any lock we still hold.
+   */
+  setEditMode(editMode: boolean): void {
+    if (this.editMode === editMode) return
+    this.editMode = editMode
+    this.dragLooking = false
+    if (editMode && document.pointerLockElement === this.domElement) {
       document.exitPointerLock()
     }
   }
@@ -149,6 +189,8 @@ export class CameraController {
 
   dispose(): void {
     this.domElement.removeEventListener('mousedown', this.onMouseDown)
+    document.removeEventListener('mouseup', this.onMouseUp)
+    this.domElement.removeEventListener('contextmenu', this.onContextMenu)
     document.removeEventListener('mousemove', this.onMouseMove)
     this.domElement.removeEventListener('wheel', this.onWheel)
     this.domElement.removeEventListener('touchstart', this.onTouchStart)

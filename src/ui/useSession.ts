@@ -7,9 +7,11 @@ import type {
   ChatMessage,
   PlacedObject,
   PlayerProfile,
+  WorldEditPolicy,
   WorldEnvironment,
 } from '../shared/types'
 import { World } from '../world/World'
+import type { EditTool } from '../world/ObjectEditor'
 import { detectWorldFormat } from '../world/worldFormat'
 import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat'
 import { captureMediaThumbnail } from '../world/mediaThumbnail'
@@ -31,6 +33,8 @@ import {
   type CatalogKind,
 } from '../storage/catalog'
 import { vrmBytesFromCid } from '../storage/vrmSource'
+import { ObjectRegistry } from './objectRegistry'
+import { loadWorldSave, saveWorldSave } from '../storage/worldSave'
 import {
   clampUserName,
   loadLocalProfile,
@@ -38,7 +42,12 @@ import {
   saveLastRoomId,
   saveLocalProfile,
 } from '../profile/localProfile'
-import { clearResumeState, updateResumeState, type ResumeState } from '../profile/resumeState'
+import {
+  clearResumeState,
+  loadResumeState,
+  updateResumeState,
+  type ResumeState,
+} from '../profile/resumeState'
 import {
   listTownCharacters,
   subscribeTownCharacters,
@@ -52,6 +61,8 @@ export type MicState = 'off' | 'on' | 'pending' | 'error'
 export type RoomVisibility = 'public' | 'private'
 /** Why an attempted placeable upload was rejected (the panel localizes it). */
 export type ObjectUploadError = 'tooLarge' | 'invalid'
+export type { EditTool }
+export type { WorldEditPolicy }
 
 export type SessionApi = {
   phase: SessionPhase
@@ -76,6 +87,17 @@ export type SessionApi = {
   currentAvatarCid: string | null
   currentWorld: WorldEnvironment | null
   placedCount: number
+  /** How many of the placed objects are ours — the only ones we may edit. */
+  ownPlacedCount: number
+  /** Room-wide advisory rule for who may edit the world (see setWorldPolicy). */
+  worldPolicy: WorldEditPolicy
+  /** Placements left behind by peers who have gone: shown, but owned by nobody. */
+  orphanCount: number
+  /** In-world editing of already-placed objects is active. */
+  editMode: boolean
+  editTool: EditTool
+  /** The placement the editor currently has selected, if any. */
+  selectedObject: PlacedObject | null
   avatarBusy: boolean
   worldBusy: boolean
   objectBusy: boolean
@@ -108,10 +130,16 @@ export type SessionApi = {
   uploadWorld: (file: File) => Promise<void>
   applyWorld: (cid: string) => Promise<void>
   resetWorld: () => void
+  /** Announces who may edit this room's world (advisory, last writer wins). */
+  setWorldPolicy: (policy: WorldEditPolicy) => void
   // objects
   uploadObject: (file: File) => Promise<void>
   placeObject: (cid: string) => Promise<void>
   clearObjects: () => void
+  // editing already-placed objects (own placements only)
+  setEditMode: (enabled: boolean) => void
+  setEditTool: (tool: EditTool) => void
+  deleteSelectedObject: () => void
   // profile + camera + mobile
   updateProfile: (patch: { name?: string; color?: string }) => void
   toggleView: () => void
@@ -122,9 +150,11 @@ export type SessionApi = {
 }
 
 const MAX_MESSAGES = 200
-/** Owner key for the local player's own placed objects in the per-owner map. */
-const SELF_OWNER = 'self'
-/** How long resumeJoin waits after joining for a peer's MSG_WORLD replay before assuming none is coming. */
+/**
+ * How long a join waits for the peers' MSG_WORLD / MSG_LOCK replay before
+ * restoring the room-wide half of its own autosave. Anyone already in the room
+ * is the better authority on what the world currently is.
+ */
 const RESUME_WORLD_WAIT_MS = 2000
 /** How often the local player's pose is snapshotted into the resume record while joined. */
 const RESUME_POSITION_SAVE_INTERVAL_MS = 5000
@@ -175,8 +205,8 @@ export function useSession(): SessionApi {
   const sessionRef = useRef<RoomSession | null>(null)
   const audioRef = useRef<RemoteAudioSink | null>(null)
   const profileRef = useRef<PlayerProfile>(loadLocalProfile())
-  /** Placed objects keyed by owner id ('self' for us) — union drives the scene. */
-  const objectsByOwner = useRef<Map<string, PlacedObject[]>>(new Map())
+  /** Who is responsible for which placement; its union drives the scene. */
+  const objects = useRef(new ObjectRegistry())
 
   const [phase, setPhase] = useState<SessionPhase>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -195,6 +225,12 @@ export function useSession(): SessionApi {
   )
   const [currentWorld, setCurrentWorld] = useState<WorldEnvironment | null>(null)
   const [placedCount, setPlacedCount] = useState(0)
+  const [ownPlacedCount, setOwnPlacedCount] = useState(0)
+  const [worldPolicy, setWorldPolicyState] = useState<WorldEditPolicy>('owner')
+  const [orphanCount, setOrphanCount] = useState(0)
+  const [editMode, setEditModeState] = useState(false)
+  const [editTool, setEditToolState] = useState<EditTool>('move')
+  const [selectedObject, setSelectedObject] = useState<PlacedObject | null>(null)
   const [avatarBusy, setAvatarBusy] = useState(false)
   const [worldBusy, setWorldBusy] = useState(false)
   const [objectBusy, setObjectBusy] = useState(false)
@@ -245,12 +281,67 @@ export function useSession(): SessionApi {
   peerCountRef.current = peerCount
   const roomVisibilityRef = useRef(roomVisibility)
   roomVisibilityRef.current = roomVisibility
-  // Mirror for resumeJoin's async flow, which needs the latest value inside a
-  // setTimeout callback rather than whatever was closed over when it started.
-  const currentWorldRef = useRef(currentWorld)
-  currentWorldRef.current = currentWorld
   /** Set by cancelResumeJoin(); checked at each await point inside resumeJoin. */
   const resumeCancelledRef = useRef(false)
+
+  // --- world state mirrors (written imperatively, not at render) ---------------
+  // The autosave and the delayed restore both run inside async callbacks, where
+  // a value captured at render time is already stale — these refs are updated in
+  // the same statement as their useState counterpart so both always agree.
+  const currentWorldRef = useRef<WorldEnvironment | null>(null)
+  const worldPolicyRef = useRef<WorldEditPolicy>('owner')
+  /** Room actually joined right now; unlike roomId this is set before the re-render. */
+  const activeRoomIdRef = useRef('')
+  /** A peer told us this room's policy, so our saved one must not override it. */
+  const peerPolicySeenRef = useRef(false)
+  /** Latest gizmo-commit handler, so the World's callback never goes stale. */
+  const objectEditedRef = useRef<(state: PlacedObject) => void>(() => {})
+  /** Current selection, so the delete action doesn't need it as a dependency. */
+  const selectedObjectRef = useRef<PlacedObject | null>(null)
+  selectedObjectRef.current = selectedObject
+
+  const setWorldEnv = useCallback((env: WorldEnvironment | null) => {
+    currentWorldRef.current = env
+    setCurrentWorld(env)
+  }, [])
+
+  /**
+   * Writes the room's world snapshot to the local autosave. Called after every
+   * change that alters it, so leaving (or crashing, or closing the tab) never
+   * loses more than the change in flight. `patch` carries values that have just
+   * been set but whose state has not re-rendered yet.
+   */
+  const persistWorld = useCallback(
+    (patch?: { env?: WorldEnvironment | null; objects?: PlacedObject[]; policy?: WorldEditPolicy }) => {
+      const roomId = activeRoomIdRef.current
+      if (!roomId) return
+      // Only what we publish is ours to save: orphaned placements have no
+      // owner to restore them, and a peer's are that peer's to bring back.
+      saveWorldSave(roomId, {
+        env: patch?.env !== undefined ? patch.env : currentWorldRef.current,
+        objects: patch?.objects ?? objects.current.own(),
+        policy: patch?.policy ?? worldPolicyRef.current,
+      })
+    },
+    [],
+  )
+
+  /** Refreshes what the in-world editor will let the player select. */
+  const refreshEditable = useCallback(() => {
+    worldRef.current?.setEditableObjects(objects.current.editableIds(worldPolicyRef.current))
+  }, [])
+
+  /** Publishes our owned set: peers, autosave and the editor's pick list. */
+  const commitOwnObjects = useCallback(
+    (own: PlacedObject[]) => {
+      objects.current.setOwn(own)
+      sessionRef.current?.setObjects(own)
+      setOwnPlacedCount(own.length)
+      refreshEditable()
+      persistWorld({ objects: own })
+    },
+    [persistWorld, refreshEditable],
+  )
 
   // tc-town's character roster lives on the shared bus, independent of the
   // room session — subscribe once for the lifetime of the app, not per-join.
@@ -311,15 +402,31 @@ export function useSession(): SessionApi {
     setPlacedCount(worldRef.current?.listPlacedObjects().length ?? 0)
   }, [])
 
-  /** Reconcile the scene's placed objects to the union across all owners. */
+  /** Reconcile the scene to everything currently in the registry. */
   const reconcileObjects = useCallback(() => {
     const world = worldRef.current
     if (!world) return
-    const union: PlacedObject[] = []
-    for (const arr of objectsByOwner.current.values()) union.push(...arr)
+    const union = objects.current.union()
     void world.syncObjects(union, resolveBytes).then(refreshPlacedCount)
     setPlacedCount(union.length)
+    setOrphanCount(objects.current.orphanCount())
   }, [refreshPlacedCount])
+
+  /**
+   * A gizmo drag finished. The edited placement joins our published set — for
+   * one of ours that is just an update, and under the 'everyone' policy it is
+   * also how we take over a peer's object: publishing an id is the claim, and
+   * its previous publisher yields when it sees our set (see ObjectRegistry).
+   * `placedBy` rides along untouched, so credit stays with whoever placed it.
+   */
+  const handleObjectEdited = useCallback(
+    (state: PlacedObject) => {
+      commitOwnObjects(objects.current.claim(state))
+      setSelectedObject(state)
+    },
+    [commitOwnObjects],
+  )
+  objectEditedRef.current = handleObjectEdited
 
   const attachCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     if (!canvas || worldRef.current) return
@@ -330,7 +437,14 @@ export function useSession(): SessionApi {
       if (vrsnsDebug) vrsnsDebug.local = s
       sessionRef.current?.sendState(s)
     })
+    world.onObjectSelected(setSelectedObject)
+    world.onObjectEdited((state) => objectEditedRef.current(state))
     worldRef.current = world
+    if (vrsnsDebug) {
+      vrsnsDebug.objects = () => world.listPlacedObjects()
+      vrsnsDebug.owned = () => objects.current.own()
+      vrsnsDebug.editable = () => objects.current.editableIds(worldPolicyRef.current)
+    }
     // Restore a previously equipped avatar so the local player isn't a primitive.
     if (profileRef.current.avatarCid) {
       void loadLocalAvatar(world, profileRef.current.avatarCid)
@@ -348,7 +462,10 @@ export function useSession(): SessionApi {
         world.removeRemotePlayer(id)
         audio.remove(id)
         setPeerCount(session.peerCount)
-        if (objectsByOwner.current.delete(id)) reconcileObjects()
+        // The world a group built should not empty out as people drift away:
+        // a departed peer's placements stay on show as orphans (nobody's to
+        // edit, publish or save) instead of being deleted.
+        if (objects.current.orphan(id)) reconcileObjects()
         if (vrsnsDebug) vrsnsDebug.peers = vrsnsDebug.peers.filter((p) => p !== id)
       }
       session.onPeerProfile = (id, p) => {
@@ -368,31 +485,65 @@ export function useSession(): SessionApi {
       session.onWorldChange = (_fromId, env) => {
         void applyEnvironment(env)
       }
-      session.onObjectsChange = (fromId, objects) => {
-        objectsByOwner.current.set(fromId, objects)
+      session.onObjectsChange = (fromId, published) => {
+        // A peer publishing an id claims it; if it took one of ours, republish
+        // our corrected set so newcomers and the autosave agree with reality.
+        if (objects.current.applyRemote(fromId, published)) {
+          commitOwnObjects(objects.current.own())
+        }
         reconcileObjects()
+        refreshEditable()
+      }
+      session.onWorldPolicyChange = (_fromId, policy) => {
+        peerPolicySeenRef.current = true
+        applyPolicy(policy)
       }
     },
-    [pushMessage, reconcileObjects],
+    // applyEnvironment/applyPolicy are declared just below and only ever
+    // called from these handlers — listing them here would read them in their
+    // temporal dead zone. Both are stable, so the closure stays correct.
+    [pushMessage, reconcileObjects, commitOwnObjects, refreshEditable],
   )
 
-  /** Apply (or clear) the shared world environment locally. */
+  /**
+   * Adopts an edit policy locally (from a peer, from our own change, or from
+   * the autosave). A locked world also ends edit mode — it is not one anybody
+   * should still be dragging objects around in — while the other two only
+   * change what may be picked.
+   */
+  const applyPolicy = useCallback(
+    (policy: WorldEditPolicy) => {
+      worldPolicyRef.current = policy
+      setWorldPolicyState(policy)
+      persistWorld({ policy })
+      refreshEditable()
+      if (policy !== 'locked') return
+      worldRef.current?.setEditMode(false)
+      setEditModeState(false)
+      setSelectedObject(null)
+    },
+    [persistWorld, refreshEditable],
+  )
+
+  /** Apply (or clear) the shared world environment locally, and remember it. */
   const applyEnvironment = useCallback(async (env: WorldEnvironment | null) => {
     const world = worldRef.current
     if (!world) return
     if (!env) {
       world.clearEnvironment()
-      setCurrentWorld(null)
+      setWorldEnv(null)
+      persistWorld({ env: null })
       return
     }
     try {
       const bytes = await catalogBytes(env.cid)
       await world.loadEnvironment(bytes, env)
-      setCurrentWorld(env)
+      setWorldEnv(env)
+      persistWorld({ env })
     } catch (e) {
       console.debug('environment load failed', env.cid, e)
     }
-  }, [])
+  }, [persistWorld, setWorldEnv])
 
   const join = useCallback(
     async (nextRoomId: string, nextProfile: PlayerProfile, visibility?: RoomVisibility) => {
@@ -404,6 +555,8 @@ export function useSession(): SessionApi {
       setPhase('joining')
       setError(null)
       setRoomId(nextRoomId)
+      activeRoomIdRef.current = nextRoomId
+      peerPolicySeenRef.current = false
       setRoomVisibilityState(resolvedVisibility)
       saveRoomVisibility(nextRoomId, resolvedVisibility)
       profileRef.current = nextProfile
@@ -428,12 +581,19 @@ export function useSession(): SessionApi {
           vrsnsDebug.stats = () => session.nodeStats()
         }
         if (nextProfile.avatarCid) void loadLocalAvatar(world, nextProfile.avatarCid)
+        // Bring back whatever this room looked like when we last left it.
+        // Fire-and-forget: the room is fully usable while it runs, and the
+        // room-wide half of it deliberately waits for the peers' replay.
+        void restoreSavedWorld(nextRoomId, session)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
         setPhase('error')
+        activeRoomIdRef.current = ''
         if (vrsnsDebug) vrsnsDebug.phase = 'error'
       }
     },
+    // restoreSavedWorld is declared below and only called here, inside an async
+    // body — see the note on wireSession's deps.
     [wireSession],
   )
 
@@ -450,12 +610,23 @@ export function useSession(): SessionApi {
     sessionRef.current = null
     audioRef.current?.dispose()
     audioRef.current = null
-    // Reset shared world state so the next room starts clean.
-    objectsByOwner.current.clear()
+    // Reset shared world state so the next room starts clean. The room's world
+    // has been autosaved on every change, so nothing is lost by dropping it.
+    activeRoomIdRef.current = ''
+    peerPolicySeenRef.current = false
+    objects.current.clear()
+    worldRef.current?.setEditMode(false)
+    worldRef.current?.setEditableObjects([])
     worldRef.current?.clearObjects()
     worldRef.current?.clearEnvironment()
-    setCurrentWorld(null)
+    setWorldEnv(null)
+    worldPolicyRef.current = 'owner'
+    setWorldPolicyState('owner')
+    setEditModeState(false)
+    setSelectedObject(null)
     setPlacedCount(0)
+    setOwnPlacedCount(0)
+    setOrphanCount(0)
     setMicState('off')
     setPeerCount(0)
     setMessages([])
@@ -464,7 +635,7 @@ export function useSession(): SessionApi {
     // the setOwnRoom(null) effect fire regardless, but this keeps state tidy
     // for whatever room is joined next.
     setRoomVisibilityState('private')
-  }, [])
+  }, [setWorldEnv])
 
   const switchRoom = useCallback(
     async (nextRoomId: string, visibility?: RoomVisibility) => {
@@ -684,7 +855,7 @@ export function useSession(): SessionApi {
 
   const applyWorld = useCallback(async (cid: string) => {
     const world = worldRef.current
-    if (!world) return
+    if (!world || worldPolicyRef.current === 'locked') return
     setWorldBusy(true)
     try {
       const item = listCatalog('world').find((w) => w.cid === cid)
@@ -695,9 +866,10 @@ export function useSession(): SessionApi {
       }
       const bytes = await catalogBytes(cid)
       await world.loadEnvironment(bytes, env)
-      setCurrentWorld(env)
+      setWorldEnv(env)
       sessionRef.current?.setWorld(env)
       updateResumeState({ worldCid: cid })
+      persistWorld({ env })
       // Auto-capture a thumbnail for a world that doesn't have one yet. Wrapped
       // independently (own try/catch, fire-and-forget) so a capture/publish
       // failure can never affect world application above, which already
@@ -724,23 +896,80 @@ export function useSession(): SessionApi {
     } finally {
       setWorldBusy(false)
     }
-  }, [hydrateThumbs])
+  }, [hydrateThumbs, persistWorld, setWorldEnv])
 
   const resetWorld = useCallback(() => {
+    if (worldPolicyRef.current === 'locked') return
     worldRef.current?.clearEnvironment()
-    setCurrentWorld(null)
+    setWorldEnv(null)
     sessionRef.current?.setWorld(null)
     updateResumeState({ worldCid: null })
-  }, [])
+    persistWorld({ env: null })
+  }, [persistWorld, setWorldEnv])
+
+  /**
+   * Announces an edit policy for the whole room and adopts it locally.
+   * Advisory by nature: a P2P room has no authority, so this is an intent
+   * every client honours in its own UI (see RoomSession.setWorldPolicy).
+   * Anyone in the room may change it.
+   */
+  const setWorldPolicy = useCallback(
+    (policy: WorldEditPolicy) => {
+      sessionRef.current?.setWorldPolicy(policy)
+      applyPolicy(policy)
+    },
+    [applyPolicy],
+  )
+
+  /**
+   * Restores this room's autosaved world after joining it.
+   *
+   * Our own placements come back immediately — they are ours to republish, and
+   * their ids are ours alone, so nothing can conflict. The environment and the
+   * lock are room-wide, so they wait out the newcomer-replay window first and
+   * are only applied if nobody already in the room has said otherwise: whoever
+   * is there now knows better than our snapshot from last time.
+   */
+  const restoreSavedWorld = useCallback(
+    async (targetRoomId: string, session: RoomSession) => {
+      const save = loadWorldSave(targetRoomId)
+      // Back-compat: before the per-room autosave, the only thing remembered
+      // about a world was the resume record's worldCid for the last room.
+      const resume = loadResumeState()
+      const legacyCid =
+        !save?.env && resume?.roomId === targetRoomId ? resume.worldCid ?? null : null
+      const envCid = save?.env?.cid ?? legacyCid
+      const saved = save?.objects ?? []
+      const policy = save?.policy ?? 'owner'
+      if (saved.length === 0 && !envCid && policy === 'owner') return
+
+      if (saved.length > 0) {
+        commitOwnObjects(saved)
+        reconcileObjects()
+      }
+      if (!envCid && policy === 'owner') return
+
+      await new Promise<void>((resolve) => setTimeout(resolve, RESUME_WORLD_WAIT_MS))
+      // Still the same room, same session? Otherwise this restore is stale.
+      if (sessionRef.current !== session || activeRoomIdRef.current !== targetRoomId) return
+
+      if (!currentWorldRef.current && envCid && listCatalog('world').some((i) => i.cid === envCid)) {
+        await applyWorld(envCid)
+        if (sessionRef.current !== session || activeRoomIdRef.current !== targetRoomId) return
+      }
+      if (policy !== 'owner' && !peerPolicySeenRef.current) setWorldPolicy(policy)
+    },
+    [applyWorld, commitOwnObjects, reconcileObjects, setWorldPolicy],
+  )
 
   /**
    * Startup auto-resume join (see app.tsx's resume overlay): joins the
-   * recorded room, then — unless cancelled in the meantime — waits briefly
-   * for a peer's MSG_WORLD replay before re-applying the recorded world CID
-   * itself (rehosting it, which is correct: applyWorld broadcasts) and
-   * restoring the recorded local pose. Runs exactly once per app load
-   * (guaranteed by the mount-only effect in app.tsx), so there's no risk of
-   * this yanking the player around later after they've moved.
+   * recorded room and — unless cancelled in the meantime — restores the
+   * recorded local pose. The room's world itself is no longer this function's
+   * business: every join now restores the room's autosave (see join ->
+   * restoreSavedWorld), which covers the auto-resume case too. Runs exactly
+   * once per app load (guaranteed by the mount-only effect in app.tsx), so
+   * there's no risk of this yanking the player around later.
    */
   const resumeJoin = useCallback(
     async (state: ResumeState, profile: PlayerProfile) => {
@@ -751,30 +980,9 @@ export function useSession(): SessionApi {
         return
       }
       if (!sessionRef.current) return // join failed — normal error surface handles it
-
-      await new Promise<void>((resolve) => setTimeout(resolve, RESUME_WORLD_WAIT_MS))
-      if (resumeCancelledRef.current) {
-        leave()
-        return
-      }
-      if (!sessionRef.current) return
-
-      if (
-        !currentWorldRef.current &&
-        state.worldCid &&
-        listCatalog('world').some((item) => item.cid === state.worldCid)
-      ) {
-        await applyWorld(state.worldCid)
-        if (resumeCancelledRef.current) {
-          leave()
-          return
-        }
-        if (!sessionRef.current) return
-      }
-
       if (state.position) worldRef.current?.setLocalPose(state.position)
     },
-    [join, leave, applyWorld],
+    [join, leave],
   )
 
   /** Best-effort cancel: the in-flight join/restore notices this at its next await and leaves cleanly. */
@@ -827,7 +1035,7 @@ export function useSession(): SessionApi {
   const placeObject = useCallback(
     async (cid: string) => {
       const world = worldRef.current
-      if (!world) return
+      if (!world || worldPolicyRef.current === 'locked') return
       setObjectBusy(true)
       try {
         const item = listCatalog('object').find((o) => o.cid === cid)
@@ -838,10 +1046,11 @@ export function useSession(): SessionApi {
           name: item?.name ?? 'Object',
           kind: asset.kind,
           mime: asset.mime,
+          // Credit travels with the object from here on, even once somebody
+          // else takes over publishing or editing it.
+          placedBy: profileRef.current.name,
         })
-        const mine = [...(objectsByOwner.current.get(SELF_OWNER) ?? []), state]
-        objectsByOwner.current.set(SELF_OWNER, mine)
-        sessionRef.current?.setObjects(mine)
+        commitOwnObjects([...objects.current.own(), state])
         refreshPlacedCount()
       } catch (e) {
         console.debug('object place failed', cid, e)
@@ -849,14 +1058,52 @@ export function useSession(): SessionApi {
         setObjectBusy(false)
       }
     },
-    [refreshPlacedCount],
+    [commitOwnObjects, refreshPlacedCount],
   )
 
   const clearObjects = useCallback(() => {
-    objectsByOwner.current.set(SELF_OWNER, [])
-    sessionRef.current?.setObjects([])
+    if (worldPolicyRef.current === 'locked') return
+    commitOwnObjects([])
     reconcileObjects()
-  }, [reconcileObjects])
+  }, [commitOwnObjects, reconcileObjects])
+
+  // --- editing already-placed objects ----------------------------------------
+
+  /**
+   * Turns in-world editing on or off. Only our own placements are made
+   * selectable, so an edit can never touch what a peer placed — their objects
+   * stay exactly where their owner put them.
+   */
+  const setEditMode = useCallback(
+    (enabled: boolean) => {
+      const world = worldRef.current
+      if (!world) return
+      if (enabled && worldPolicyRef.current === 'locked') return
+      refreshEditable()
+      world.setEditMode(enabled)
+      setEditModeState(enabled)
+      if (!enabled) setSelectedObject(null)
+    },
+    [refreshEditable],
+  )
+
+  const setEditTool = useCallback((tool: EditTool) => {
+    setEditToolState(tool)
+    worldRef.current?.setEditTool(tool)
+  }, [])
+
+  /** Deletes just the selected placement (the rest of the world is untouched). */
+  const deleteSelectedObject = useCallback(() => {
+    const selected = selectedObjectRef.current
+    if (!selected || worldPolicyRef.current === 'locked') return
+    worldRef.current?.selectObject(null)
+    setSelectedObject(null)
+    // Deleting a peer's placement means claiming it first, so the removal is
+    // published by us instead of being undone by its previous publisher.
+    if (!objects.current.ownsLocally(selected.id)) objects.current.claim(selected)
+    commitOwnObjects(objects.current.release(selected.id))
+    reconcileObjects()
+  }, [commitOwnObjects, reconcileObjects])
 
   // --- camera + mobile -------------------------------------------------------
 
@@ -944,6 +1191,12 @@ export function useSession(): SessionApi {
     currentAvatarCid,
     currentWorld,
     placedCount,
+    ownPlacedCount,
+    worldPolicy,
+    orphanCount,
+    editMode,
+    editTool,
+    selectedObject,
     avatarBusy,
     worldBusy,
     objectBusy,
@@ -964,9 +1217,13 @@ export function useSession(): SessionApi {
     uploadWorld,
     applyWorld,
     resetWorld,
+    setWorldPolicy,
     uploadObject,
     placeObject,
     clearObjects,
+    setEditMode,
+    setEditTool,
+    deleteSelectedObject,
     updateProfile,
     toggleView,
     setMobileMove,

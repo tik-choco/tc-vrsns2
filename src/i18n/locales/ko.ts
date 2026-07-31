@@ -41,6 +41,8 @@ export const ko: Dict = {
   'hud.hintJump': '점프',
   'hud.hintSprint': '달리기',
   'hud.hintMenu': '메뉴',
+  'hud.locked': '월드 잠금 중',
+  'hud.openEditing': '누구나 편집 가능',
 
   // Main menu
   'menu.title': '메뉴',
@@ -82,6 +84,15 @@ export const ko: Dict = {
   'world.format': '형식',
   'world.invalid': '지원하지 않는 월드 형식이에요. GLB, GLTF, PLY, SPLAT 또는 KSPLAT을 사용하세요.',
   'world.hint': 'GLB / GLTF 메시와 가우시안 스플랫 씬을 지원해요.',
+  'world.autosaveHint': '이 방의 월드는 이 기기에 자동 저장되어 다시 들어오면 복원돼요.',
+  'world.policyLabel': '이 월드를 편집할 수 있는 사람',
+  'world.policyOwner': '놓은 사람만',
+  'world.policyEveryone': '모두',
+  'world.policyLocked': '잠금',
+  'world.policyOwnerHint': '누구나 추가할 수 있지만, 옮기거나 지우는 건 놓은 사람만 할 수 있어요.',
+  'world.policyEveryoneHint': '방에 있는 누구나 놓인 것을 옮기고 크기를 바꾸고 지울 수 있어요.',
+  'world.policyLockedHint': '환경도 바꿀 수 없고 놓인 것도 건드릴 수 없어요.',
+  'world.lockedNotice': '이 월드는 잠겨 있어요. 편집하려면 위 설정을 바꾸세요.',
 
   // Objects panel
   'objects.title': '오브젝트',
@@ -98,6 +109,16 @@ export const ko: Dict = {
   'objects.hint': 'GLB / GLTF 모델, 이미지, 영상, 오디오를 지원해요. 영상과 오디오는 거리에 따라 소리가 줄어드는 공간 음향으로 재생돼요.',
   'objects.invalid': '이 파일은 모델·이미지·영상·오디오로 읽을 수 없어요.',
   'objects.tooLarge': '파일이 너무 커요. 최대 {size} MB예요.',
+  'objects.edit': '배치된 것 편집',
+  'objects.editing': '배치된 오브젝트 편집',
+  'objects.editHint': '직접 놓은 것을 클릭해 선택하세요. 오른쪽 버튼을 누른 채로 시점을 돌릴 수 있어요.',
+  'objects.editDone': '완료',
+  'objects.deleteOne': '삭제',
+  'objects.move': '이동',
+  'objects.rotate': '회전',
+  'objects.scale': '크기',
+  'objects.placedBy': '{name} 님이 배치',
+  'objects.orphans': '떠난 사람이 남긴 것이 {count}개 있어요. 방을 나갈 때까지 남지만 아무도 편집할 수 없어요.',
 
   // Room panel
   'room.title': '방',

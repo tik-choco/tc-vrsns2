@@ -43,6 +43,8 @@ export const en = {
   'hud.hintJump': 'Jump',
   'hud.hintSprint': 'Sprint',
   'hud.hintMenu': 'Menu',
+  'hud.locked': 'World locked',
+  'hud.openEditing': 'Anyone may edit',
 
   // Main menu
   'menu.title': 'Menu',
@@ -87,6 +89,15 @@ export const en = {
   'world.format': 'Format',
   'world.invalid': 'Unsupported world format. Use GLB, GLTF, PLY, SPLAT or KSPLAT.',
   'world.hint': 'GLB / GLTF meshes and Gaussian-splat scenes are supported.',
+  'world.autosaveHint': 'This room is saved on this device automatically and comes back when you return.',
+  'world.policyLabel': 'Who may edit this world',
+  'world.policyOwner': 'Placer only',
+  'world.policyEveryone': 'Everyone',
+  'world.policyLocked': 'Locked',
+  'world.policyOwnerHint': 'Everyone may add things, but only the person who placed something may move or delete it.',
+  'world.policyEveryoneHint': 'Anyone in the room may move, resize or delete anything that was placed.',
+  'world.policyLockedHint': 'Nobody may change the environment or touch what has been placed.',
+  'world.lockedNotice': 'This world is locked. Change that above to make edits.',
 
   // Objects panel
   'objects.title': 'Objects',
@@ -103,6 +114,16 @@ export const en = {
   'objects.hint': 'GLB / GLTF models, images, video and audio are supported. Video and audio play positionally, so sound fades with distance.',
   'objects.invalid': 'That file could not be read as a model, image, video or audio file.',
   'objects.tooLarge': 'That file is too large. The limit is {size} MB.',
+  'objects.edit': 'Edit placed',
+  'objects.editing': 'Editing placed objects',
+  'objects.editHint': 'Click something you placed. Hold the right button to look around.',
+  'objects.editDone': 'Done',
+  'objects.deleteOne': 'Delete',
+  'objects.move': 'Move',
+  'objects.rotate': 'Turn',
+  'objects.scale': 'Resize',
+  'objects.placedBy': 'placed by {name}',
+  'objects.orphans': '{count} left behind by people who have gone. They stay until you leave the room, and nobody can edit them.',
 
   // Room panel
   'room.title': 'Room',
