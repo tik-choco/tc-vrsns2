@@ -3,11 +3,18 @@
 // types to supply the data; every component below is pure and driven entirely by
 // these props and callbacks — it owns no session, world or network state.
 
-import type { ChatMessage, PlayerProfile, WorldEnvironment } from '../shared/types'
+import type {
+  ChatMessage,
+  PlacedObject,
+  PlayerProfile,
+  WorldEditPolicy,
+  WorldEnvironment,
+} from '../shared/types'
 import type { CharacterIndexEntry } from '../interop/townCharacters'
 import type { DiscoveredRoom } from '../net/DiscoverySession'
+import type { EditTool } from '../world/ObjectEditor'
 
-export type { DiscoveredRoom }
+export type { DiscoveredRoom, EditTool, WorldEditPolicy }
 
 export type MicState = 'off' | 'on' | 'pending' | 'error'
 export type RoomVisibility = 'public' | 'private'
@@ -43,14 +50,28 @@ export type GameOverlayProps = {
   onUploadWorld: (file: File) => void
   onApplyWorld: (cid: string) => void
   onResetWorld: () => void
+  /** Room-wide advisory rule for who may edit; 'locked' hides every world edit. */
+  worldPolicy: WorldEditPolicy
+  onSetWorldPolicy: (policy: WorldEditPolicy) => void
   // placeable objects (glTF props + image / video / audio media)
   objectModels: CatalogItem[]
   placedCount: number
+  /** Of those, the ones we publish — what the editor can select under 'owner'. */
+  ownPlacedCount: number
+  /** Placements whose owner has left: still shown, editable by nobody. */
+  orphanCount: number
   objectBusy: boolean
   objectError: ObjectUploadError | null
   onUploadObject: (file: File) => void
   onPlaceObject: (cid: string) => void
   onClearObjects: () => void
+  // in-world editing of already-placed objects (own placements only)
+  editMode: boolean
+  editTool: EditTool
+  selectedObject: PlacedObject | null
+  onSetEditMode: (enabled: boolean) => void
+  onSetEditTool: (tool: EditTool) => void
+  onDeleteSelectedObject: () => void
   // profile + room + session
   onUpdateProfile: (patch: { name?: string; color?: string }) => void
   inviteUrl: string

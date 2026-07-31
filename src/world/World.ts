@@ -17,6 +17,7 @@ import { RemotePlayerView } from './RemotePlayerView'
 import { disposeVrm, loadVrmFromBytes, vrmMetaSummary, type VrmMeta } from './vrmLoader'
 import { WorldManager } from './WorldManager'
 import { WorldObjects, type PlacementSource } from './WorldObjects'
+import { ObjectEditor, type EditTool } from './ObjectEditor'
 
 // Light-theme scene palette, matching the light UI. Grid tones follow
 // ../tc-vrm-viewer's light theme (soft grey lines on a near-white ground).
@@ -52,6 +53,7 @@ export class World {
   // Shared world environment + placeable objects.
   private worldManager: WorldManager
   private worldObjects: WorldObjects
+  private objectEditor: ObjectEditor
   /** Ears for positional audio from placed video/audio objects; rides the camera. */
   private audioListener: THREE.AudioListener
   private grid!: THREE.GridHelper
@@ -100,6 +102,7 @@ export class World {
     this.audioListener = new THREE.AudioListener()
     this.camera.add(this.audioListener)
     this.worldObjects = new WorldObjects(this.scene, this.audioListener)
+    this.objectEditor = new ObjectEditor(this.scene, this.camera, canvas, this.worldObjects)
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize())
     this.resizeObserver.observe(canvas.parentElement ?? canvas)
@@ -366,6 +369,41 @@ export class World {
     this.worldObjects.clearAll()
   }
 
+  // --- editing placed objects ----------------------------------------------
+
+  /**
+   * Enter/leave object-edit mode. While on, the objects listed by
+   * setEditableObjects() can be clicked and dragged with a gizmo, and looking
+   * around moves to the right mouse button so the left one is free to edit.
+   */
+  setEditMode(enabled: boolean): void {
+    this.objectEditor.setEnabled(enabled)
+    this.cameraController.setEditMode(enabled)
+  }
+
+  /** The placements the local player owns, i.e. the only ones it may edit. */
+  setEditableObjects(ids: Iterable<string>): void {
+    this.objectEditor.setEditableIds(ids)
+  }
+
+  setEditTool(tool: EditTool): void {
+    this.objectEditor.setTool(tool)
+  }
+
+  selectObject(id: string | null): void {
+    this.objectEditor.select(id)
+  }
+
+  /** Notified when the edited selection changes (null = nothing selected). */
+  onObjectSelected(cb: (state: PlacedObject | null) => void): void {
+    this.objectEditor.onSelectionChange = cb
+  }
+
+  /** Notified with the placement's new state each time a gizmo drag finishes. */
+  onObjectEdited(cb: (state: PlacedObject) => void): void {
+    this.objectEditor.onCommit = cb
+  }
+
   // --- input relays (mobile UI + view toggle) ------------------------------
 
   setMobileMove(x: number, y: number): void {
@@ -393,6 +431,7 @@ export class World {
     this.characterController.dispose()
     this.cameraController.dispose()
     this.worldManager.dispose()
+    this.objectEditor.dispose()
     this.worldObjects.dispose()
     this.camera.remove(this.audioListener)
 
@@ -477,6 +516,7 @@ export class World {
 
     this.worldManager.update(delta)
     this.worldObjects.update(delta)
+    this.objectEditor.update()
     this.emitLocalState()
     this.renderer.render(this.scene, this.camera)
   }
@@ -502,3 +542,4 @@ export class World {
 
 export type { AnimState, PlayerProfile, PlayerState }
 export type { VrmMeta }
+export type { EditTool }

@@ -41,6 +41,8 @@ export const zh: Dict = {
   'hud.hintJump': '跳跃',
   'hud.hintSprint': '奔跑',
   'hud.hintMenu': '菜单',
+  'hud.locked': '世界已锁定',
+  'hud.openEditing': '任何人可编辑',
 
   // Main menu
   'menu.title': '菜单',
@@ -82,6 +84,15 @@ export const zh: Dict = {
   'world.format': '格式',
   'world.invalid': '不支持的世界格式。请使用 GLB、GLTF、PLY、SPLAT 或 KSPLAT。',
   'world.hint': '支持 GLB / GLTF 网格和高斯泼溅场景。',
+  'world.autosaveHint': '该房间的世界会自动保存在本机，下次进入时恢复。',
+  'world.policyLabel': '谁可以编辑这个世界',
+  'world.policyOwner': '仅放置者',
+  'world.policyEveryone': '所有人',
+  'world.policyLocked': '锁定',
+  'world.policyOwnerHint': '任何人都能添加，但只有放置者能移动或删除自己的物体。',
+  'world.policyEveryoneHint': '房间里的任何人都能移动、缩放或删除已放置的物体。',
+  'world.policyLockedHint': '不能更改环境，也不能操作已放置的物体。',
+  'world.lockedNotice': '该世界已锁定。要编辑请先修改上面的设置。',
 
   // Objects panel
   'objects.title': '物体',
@@ -98,6 +109,16 @@ export const zh: Dict = {
   'objects.hint': '支持 GLB / GLTF 模型、图片、视频和音频。视频和音频以空间音效播放，音量随距离衰减。',
   'objects.invalid': '无法将该文件读取为模型、图片、视频或音频。',
   'objects.tooLarge': '文件太大，上限为 {size} MB。',
+  'objects.edit': '编辑已放置',
+  'objects.editing': '编辑已放置的物体',
+  'objects.editHint': '点击你放置的物体进行选择。按住右键可转动视角。',
+  'objects.editDone': '完成',
+  'objects.deleteOne': '删除',
+  'objects.move': '移动',
+  'objects.rotate': '旋转',
+  'objects.scale': '缩放',
+  'objects.placedBy': '由 {name} 放置',
+  'objects.orphans': '有 {count} 个是已离开的人留下的。它们会保留到你离开房间，且无人能编辑。',
 
   // Room panel
   'room.title': '房间',

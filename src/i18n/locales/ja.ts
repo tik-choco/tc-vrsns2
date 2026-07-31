@@ -41,6 +41,8 @@ export const ja: Dict = {
   'hud.hintJump': 'ジャンプ',
   'hud.hintSprint': 'ダッシュ',
   'hud.hintMenu': 'メニュー',
+  'hud.locked': 'ワールドをロック中',
+  'hud.openEditing': '全員が編集可',
 
   // Main menu
   'menu.title': 'メニュー',
@@ -85,6 +87,15 @@ export const ja: Dict = {
   'world.format': '形式',
   'world.invalid': '対応していない形式です。GLB・GLTF・PLY・SPLAT・KSPLATを使用してください。',
   'world.hint': 'GLB／GLTFメッシュとガウシアンスプラットに対応しています。',
+  'world.autosaveHint': 'このルームのワールドはこの端末に自動保存され、次に入るときに復元されます。',
+  'world.policyLabel': 'このワールドを編集できる人',
+  'world.policyOwner': '置いた人のみ',
+  'world.policyEveryone': '全員',
+  'world.policyLocked': 'ロック',
+  'world.policyOwnerHint': '誰でも追加できますが、動かしたり消したりできるのは置いた本人だけです。',
+  'world.policyEveryoneHint': 'ルームにいる誰でも、置かれたものを移動・サイズ変更・削除できます。',
+  'world.policyLockedHint': '環境の変更も、置かれたものへの操作もできません。',
+  'world.lockedNotice': 'このワールドはロックされています。編集するには上の設定を変更してください。',
 
   // Objects panel
   'objects.title': 'オブジェクト',
@@ -101,6 +112,16 @@ export const ja: Dict = {
   'objects.hint': 'GLB／GLTFモデル、画像、動画、音声に対応。動画と音声は距離に応じて音量が変わる立体音響で再生されます。',
   'objects.invalid': 'このファイルはモデル・画像・動画・音声として読み込めませんでした。',
   'objects.tooLarge': 'ファイルが大きすぎます。上限は{size}MBです。',
+  'objects.edit': '配置済みを編集',
+  'objects.editing': '配置済みオブジェクトの編集',
+  'objects.editHint': '自分が置いたものをクリックして選択。右ボタン長押しで視点移動。',
+  'objects.editDone': '完了',
+  'objects.deleteOne': '削除',
+  'objects.move': '移動',
+  'objects.rotate': '回転',
+  'objects.scale': 'サイズ',
+  'objects.placedBy': '配置：{name}',
+  'objects.orphans': '退室した人が残したものが{count}個あります。ルームを出るまで表示されますが、誰も編集できません。',
 
   // Room panel
   'room.title': 'ルーム',

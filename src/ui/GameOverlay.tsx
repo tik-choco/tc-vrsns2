@@ -12,11 +12,14 @@ import {
   Compass,
   Settings as SettingsIcon,
   LogOut,
+  Lock,
+  Users as UsersIcon,
 } from 'lucide-preact'
 import { useTranslation } from '../i18n'
 import type { TranslationKey } from '../i18n'
 import type { GameOverlayProps } from './uiContract'
 import { ChatPanel } from './ChatPanel'
+import { EditToolbar } from './EditToolbar'
 import { MobileControls } from './MobileControls'
 import { AvatarPanel } from './panels/AvatarPanel'
 import { WorldPanel } from './panels/WorldPanel'
@@ -63,6 +66,12 @@ export function GameOverlay(props: GameOverlayProps) {
   const suppressAutoMenuUntil = useRef(0)
   const chatFocusedRef = useRef(chatFocused)
   chatFocusedRef.current = chatFocused
+  // Edit-mode shortcuts (Delete / Escape) read through refs for the same
+  // reason the mic toggle does: the keydown listener is registered once.
+  const editModeRef = useRef(props.editMode)
+  editModeRef.current = props.editMode
+  const editKeysRef = useRef({ exit: props.onSetEditMode, remove: props.onDeleteSelectedObject })
+  editKeysRef.current = { exit: props.onSetEditMode, remove: props.onDeleteSelectedObject }
 
   // Keyboard operability, mirroring the predecessor (tc-vrsns AppUiBinder):
   //  - Enter  -> open/focus chat (when nothing else is open)
@@ -83,13 +92,28 @@ export function GameOverlay(props: GameOverlayProps) {
     }
     const openMenu = () => {
       if (Date.now() < suppressAutoMenuUntil.current) return
+      // Edit mode never holds a pointer lock, so a release seen while editing
+      // is stray — opening the menu over the object being edited is not what
+      // the user asked for.
+      if (editModeRef.current) return
       if (!panelStateRef.current && !menuRef.current && !chatFocusedRef.current) setMenuOpen(true)
     }
     const onKey = (e: KeyboardEvent) => {
       if (isEditableFocused()) return
+      // Delete removes the selected object while editing; Escape leaves the
+      // mode (checked below, after any open panel has had its turn).
+      if (editModeRef.current && (e.key === 'Delete' || e.key === 'Backspace')) {
+        e.preventDefault()
+        editKeysRef.current.remove()
+        return
+      }
       if (e.key === 'Escape') {
         if (panelStateRef.current) {
           setPanel(null)
+          return
+        }
+        if (editModeRef.current) {
+          editKeysRef.current.exit(false)
           return
         }
         const willOpen = !menuRef.current
@@ -157,7 +181,7 @@ export function GameOverlay(props: GameOverlayProps) {
           : t('hud.voiceMuted')
 
   return (
-    <div class="overlay">
+    <div class={props.editMode ? 'overlay is-editing' : 'overlay'}>
       {/* Top HUD */}
       <div class="hud-top">
         <div class="hud-cluster">
@@ -180,6 +204,19 @@ export function GameOverlay(props: GameOverlayProps) {
             </span>
             <span class="voice-label">{voiceLabel}</span>
           </button>
+          {props.worldPolicy !== 'owner' && (
+            <div
+              class="hud-pill lock-pill"
+              title={t(props.worldPolicy === 'locked' ? 'world.policyLockedHint' : 'world.policyEveryoneHint')}
+            >
+              {props.worldPolicy === 'locked' ? (
+                <Lock size={15} aria-hidden="true" />
+              ) : (
+                <UsersIcon size={15} aria-hidden="true" />
+              )}
+              <span>{t(props.worldPolicy === 'locked' ? 'hud.locked' : 'hud.openEditing')}</span>
+            </div>
+          )}
         </div>
         <button type="button" class="hud-menu-btn" onClick={() => setMenuOpen(true)} aria-label={t('menu.title')}>
           <Menu size={20} aria-hidden="true" />
@@ -201,6 +238,17 @@ export function GameOverlay(props: GameOverlayProps) {
         onFocusChange={setChatFocused}
         focusSignal={chatFocus}
       />
+
+      {/* In-world object editing (gizmo lives on the canvas) */}
+      {props.editMode && (
+        <EditToolbar
+          editTool={props.editTool}
+          selectedObject={props.selectedObject}
+          onSetEditTool={props.onSetEditTool}
+          onDeleteSelectedObject={props.onDeleteSelectedObject}
+          onSetEditMode={props.onSetEditMode}
+        />
+      )}
 
       {/* Mobile on-screen controls (CSS-gated to touch devices) */}
       <MobileControls

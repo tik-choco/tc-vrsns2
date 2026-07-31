@@ -41,6 +41,8 @@ export const pt: Dict = {
   'hud.hintJump': 'Pular',
   'hud.hintSprint': 'Correr',
   'hud.hintMenu': 'Menu',
+  'hud.locked': 'Mundo bloqueado',
+  'hud.openEditing': 'Todos podem editar',
 
   // Main menu
   'menu.title': 'Menu',
@@ -82,6 +84,15 @@ export const pt: Dict = {
   'world.format': 'Formato',
   'world.invalid': 'Formato de mundo não suportado. Use GLB, GLTF, PLY, SPLAT ou KSPLAT.',
   'world.hint': 'Há suporte para malhas GLB / GLTF e cenas Gaussian-splat.',
+  'world.autosaveHint': 'Esta sala é salva automaticamente neste dispositivo e volta quando você retornar.',
+  'world.policyLabel': 'Quem pode editar este mundo',
+  'world.policyOwner': 'Só quem colocou',
+  'world.policyEveryone': 'Todos',
+  'world.policyLocked': 'Bloqueado',
+  'world.policyOwnerHint': 'Qualquer um pode adicionar coisas, mas só quem colocou pode mover ou apagar.',
+  'world.policyEveryoneHint': 'Qualquer pessoa na sala pode mover, redimensionar ou apagar o que foi colocado.',
+  'world.policyLockedHint': 'Ninguém pode mudar o ambiente nem mexer no que foi colocado.',
+  'world.lockedNotice': 'Este mundo está bloqueado. Mude o ajuste acima para editar.',
 
   // Objects panel
   'objects.title': 'Objetos',
@@ -98,6 +109,16 @@ export const pt: Dict = {
   'objects.hint': 'São aceitos modelos GLB / GLTF, imagens, vídeo e áudio. Vídeo e áudio tocam de forma posicional: o som diminui com a distância.',
   'objects.invalid': 'Não foi possível ler esse arquivo como modelo, imagem, vídeo ou áudio.',
   'objects.tooLarge': 'Esse arquivo é muito grande. O limite é {size} MB.',
+  'objects.edit': 'Editar colocados',
+  'objects.editing': 'Editando objetos colocados',
+  'objects.editHint': 'Clique em algo que você colocou. Segure o botão direito para olhar em volta.',
+  'objects.editDone': 'Concluído',
+  'objects.deleteOne': 'Excluir',
+  'objects.move': 'Mover',
+  'objects.rotate': 'Girar',
+  'objects.scale': 'Redimensionar',
+  'objects.placedBy': 'colocado por {name}',
+  'objects.orphans': '{count} ficaram de pessoas que saíram. Elas permanecem até você sair da sala e ninguém pode editá-las.',
 
   // Room panel
   'room.title': 'Sala',

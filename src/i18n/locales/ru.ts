@@ -41,6 +41,8 @@ export const ru: Dict = {
   'hud.hintJump': 'Прыжок',
   'hud.hintSprint': 'Бег',
   'hud.hintMenu': 'Меню',
+  'hud.locked': 'Мир заблокирован',
+  'hud.openEditing': 'Редактировать могут все',
 
   // Main menu
   'menu.title': 'Меню',
@@ -82,6 +84,15 @@ export const ru: Dict = {
   'world.format': 'Формат',
   'world.invalid': 'Неподдерживаемый формат мира. Используйте GLB, GLTF, PLY, SPLAT или KSPLAT.',
   'world.hint': 'Поддерживаются меши GLB / GLTF и сцены Gaussian-splat.',
+  'world.autosaveHint': 'Эта комната автоматически сохраняется на этом устройстве и восстанавливается при возвращении.',
+  'world.policyLabel': 'Кто может редактировать этот мир',
+  'world.policyOwner': 'Только автор',
+  'world.policyEveryone': 'Все',
+  'world.policyLocked': 'Заблокировано',
+  'world.policyOwnerHint': 'Добавлять может любой, но перемещать и удалять — только тот, кто поставил.',
+  'world.policyEveryoneHint': 'Любой в комнате может перемещать, менять размер и удалять поставленное.',
+  'world.policyLockedHint': 'Никто не может менять окружение и трогать поставленное.',
+  'world.lockedNotice': 'Этот мир заблокирован. Измените настройку выше, чтобы редактировать.',
 
   // Objects panel
   'objects.title': 'Объекты',
@@ -98,6 +109,16 @@ export const ru: Dict = {
   'objects.hint': 'Поддерживаются модели GLB / GLTF, изображения, видео и аудио. Видео и аудио звучат позиционно — громкость убывает с расстоянием.',
   'objects.invalid': 'Не удалось прочитать этот файл как модель, изображение, видео или аудио.',
   'objects.tooLarge': 'Файл слишком большой. Ограничение — {size} МБ.',
+  'objects.edit': 'Изменить размещённые',
+  'objects.editing': 'Изменение размещённых объектов',
+  'objects.editHint': 'Нажмите на то, что поставили вы. Удерживайте правую кнопку, чтобы осмотреться.',
+  'objects.editDone': 'Готово',
+  'objects.deleteOne': 'Удалить',
+  'objects.move': 'Переместить',
+  'objects.rotate': 'Повернуть',
+  'objects.scale': 'Размер',
+  'objects.placedBy': 'поставил(а) {name}',
+  'objects.orphans': '{count} осталось от ушедших. Они видны, пока вы не выйдете из комнаты, и никто не может их изменить.',
 
   // Room panel
   'room.title': 'Комната',

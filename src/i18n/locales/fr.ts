@@ -41,6 +41,8 @@ export const fr: Dict = {
   'hud.hintJump': 'Sauter',
   'hud.hintSprint': 'Courir',
   'hud.hintMenu': 'Menu',
+  'hud.locked': 'Monde verrouillé',
+  'hud.openEditing': 'Tout le monde peut modifier',
 
   // Main menu
   'menu.title': 'Menu',
@@ -82,6 +84,15 @@ export const fr: Dict = {
   'world.format': 'Format',
   'world.invalid': 'Format de monde non pris en charge. Utilisez GLB, GLTF, PLY, SPLAT ou KSPLAT.',
   'world.hint': 'Les maillages GLB / GLTF et les scènes Gaussian-splat sont pris en charge.',
+  'world.autosaveHint': 'Ce salon est enregistré automatiquement sur cet appareil et revient à votre retour.',
+  'world.policyLabel': 'Qui peut modifier ce monde',
+  'world.policyOwner': 'Auteur seulement',
+  'world.policyEveryone': 'Tout le monde',
+  'world.policyLocked': 'Verrouillé',
+  'world.policyOwnerHint': 'Chacun peut ajouter des objets, mais seul celui qui a posé un objet peut le déplacer ou le supprimer.',
+  'world.policyEveryoneHint': 'Tout le monde dans le salon peut déplacer, redimensionner ou supprimer ce qui a été posé.',
+  'world.policyLockedHint': 'Personne ne peut changer le décor ni toucher aux objets posés.',
+  'world.lockedNotice': 'Ce monde est verrouillé. Changez le réglage ci-dessus pour le modifier.',
 
   // Objects panel
   'objects.title': 'Objets',
@@ -98,6 +109,16 @@ export const fr: Dict = {
   'objects.hint': 'Modèles GLB / GLTF, images, vidéos et audio pris en charge. La vidéo et l\'audio sont spatialisés : le son s\'atténue avec la distance.',
   'objects.invalid': 'Ce fichier n\'a pas pu être lu comme modèle, image, vidéo ou audio.',
   'objects.tooLarge': 'Ce fichier est trop volumineux. La limite est de {size} Mo.',
+  'objects.edit': 'Modifier les objets posés',
+  'objects.editing': 'Modification des objets posés',
+  'objects.editHint': 'Cliquez sur un objet que vous avez posé. Maintenez le bouton droit pour regarder autour.',
+  'objects.editDone': 'Terminé',
+  'objects.deleteOne': 'Supprimer',
+  'objects.move': 'Déplacer',
+  'objects.rotate': 'Tourner',
+  'objects.scale': 'Redimensionner',
+  'objects.placedBy': 'posé par {name}',
+  'objects.orphans': '{count} ont été laissés par des personnes parties. Ils restent jusqu’à votre départ et personne ne peut les modifier.',
 
   // Room panel
   'room.title': 'Salon',

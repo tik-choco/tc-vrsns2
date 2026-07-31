@@ -41,6 +41,8 @@ export const ar: Dict = {
   'hud.hintJump': 'القفز',
   'hud.hintSprint': 'الركض',
   'hud.hintMenu': 'القائمة',
+  'hud.locked': 'العالم مقفل',
+  'hud.openEditing': 'يمكن للجميع التعديل',
 
   // Main menu
   'menu.title': 'القائمة',
@@ -82,6 +84,15 @@ export const ar: Dict = {
   'world.format': 'الصيغة',
   'world.invalid': 'صيغة عالم غير مدعومة. استخدم GLB أو GLTF أو PLY أو SPLAT أو KSPLAT.',
   'world.hint': 'مجسمات GLB / GLTF ومشاهد Gaussian-splat مدعومة.',
+  'world.autosaveHint': 'تُحفَظ هذه الغرفة تلقائيًا على هذا الجهاز وتعود عند رجوعك.',
+  'world.policyLabel': 'من يمكنه تعديل هذا العالم',
+  'world.policyOwner': 'من وضعه فقط',
+  'world.policyEveryone': 'الجميع',
+  'world.policyLocked': 'مقفل',
+  'world.policyOwnerHint': 'يمكن للجميع الإضافة، لكن التحريك أو الحذف لمن وضع الشيء فقط.',
+  'world.policyEveryoneHint': 'يمكن لأي شخص في الغرفة تحريك ما وُضع أو تغيير حجمه أو حذفه.',
+  'world.policyLockedHint': 'لا يمكن لأحد تغيير البيئة ولا لمس ما وُضع.',
+  'world.lockedNotice': 'هذا العالم مقفل. غيّر الإعداد أعلاه للتعديل.',
 
   // Objects panel
   'objects.title': 'العناصر',
@@ -98,6 +109,16 @@ export const ar: Dict = {
   'objects.hint': 'يدعم نماذج GLB / GLTF والصور والفيديو والصوت. يُشغَّل الفيديو والصوت مكانيًا، فيخفت الصوت مع المسافة.',
   'objects.invalid': 'تعذّرت قراءة هذا الملف كنموذج أو صورة أو فيديو أو صوت.',
   'objects.tooLarge': 'هذا الملف كبير جدًا. الحد هو {size} ميغابايت.',
+  'objects.edit': 'تعديل الموضوعة',
+  'objects.editing': 'تعديل الكائنات الموضوعة',
+  'objects.editHint': 'انقر على شيء وضعته أنت. اضغط الزر الأيمن مع الاستمرار للنظر حولك.',
+  'objects.editDone': 'تم',
+  'objects.deleteOne': 'حذف',
+  'objects.move': 'تحريك',
+  'objects.rotate': 'تدوير',
+  'objects.scale': 'تحجيم',
+  'objects.placedBy': 'وضعه {name}',
+  'objects.orphans': '{count} تركها أشخاص غادروا. تبقى حتى تخرج من الغرفة ولا يمكن لأحد تعديلها.',
 
   // Room panel
   'room.title': 'الغرفة',
