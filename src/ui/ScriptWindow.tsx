@@ -65,11 +65,22 @@ type ViewProps = {
 }
 
 /**
- * One window. Positioned absolutely at its projected screen point, then
- * clamped so its actual rendered box (measured via ResizeObserver, since
- * script content can be any size within the caps) never crosses the viewport
- * edge. Hidden outright when the anchor reports invisible — e.g. behind the
- * camera, or the followed object no longer exists.
+ * One window, placed so the projected point is its ANCHOR, not its top-left
+ * corner — otherwise a window "at" an object visibly hangs off to its lower
+ * right, which is not what either the script author or the person reading it
+ * expects.
+ *
+ * Horizontally the box is always centred on the point. Vertically the two
+ * anchor modes differ on purpose: an object anchor puts the box's BOTTOM on
+ * the point, so it floats above the thing it belongs to like a label (and the
+ * node's `oy` config controls how high), while a screen anchor centres it, so
+ * the documented "0.5, 0.5 = middle of the viewport" actually lands in the
+ * middle.
+ *
+ * The box is then clamped so its real rendered size (measured with a
+ * ResizeObserver, since script content can be any size within the caps) never
+ * crosses the viewport edge. Hidden outright when the anchor reports
+ * invisible — behind the camera, or the followed object is gone.
  */
 function ScriptWindowView({ win, project, resolveImage, onUiEvent }: ViewProps) {
   const elRef = useRef<HTMLDivElement | null>(null)
@@ -92,8 +103,10 @@ function ScriptWindowView({ win, project, resolveImage, onUiEvent }: ViewProps) 
 
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
-  const left = clampAxis(projection.x, size.width, viewportWidth)
-  const top = clampAxis(projection.y, size.height, viewportHeight)
+  const anchoredTop =
+    win.anchor.mode === 'object' ? projection.y - size.height : projection.y - size.height / 2
+  const left = clampAxis(projection.x - size.width / 2, size.width, viewportWidth)
+  const top = clampAxis(anchoredTop, size.height, viewportHeight)
 
   return (
     <div ref={elRef} class="script-window" style={{ left: `${left}px`, top: `${top}px` }}>

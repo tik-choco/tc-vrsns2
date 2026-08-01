@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "fetch-mistlib": "node scripts/fetch-mistlib.mjs",
     "test": "vitest run",
-    "test:e2e": "node scripts/e2e-sync.mjs"
+    "test:e2e": "node scripts/e2e-sync.mjs",
+    "test:e2e:script": "node scripts/e2e-script.mjs"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",

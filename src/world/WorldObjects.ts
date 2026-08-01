@@ -183,7 +183,7 @@ export class WorldObjects {
     for (const state of states) {
       const existing = this.objects.get(state.id)
       if (existing) {
-        if (transformDiffers(existing.state, state)) this.applyTransform(state)
+        if (stateDiffers(existing.state, state)) this.applyTransform(state)
         continue
       }
       const bytes = await resolveBytes(state.cid)
@@ -261,7 +261,12 @@ export class WorldObjects {
     return { ...entry.state }
   }
 
-  /** Applies an exact transform to a tracked placement (peer edits, undo of a drag). */
+  /**
+   * Applies an exact transform to a tracked placement (peer edits, undo of a
+   * drag) and — since it replaces `entry.state` wholesale — is also
+   * syncRemote()'s only path for refreshing non-transform fields like
+   * script/trigger onto a placement that hasn't moved (see stateDiffers()).
+   */
   applyTransform(state: PlacedObject): void {
     const entry = this.objects.get(state.id)
     if (!entry) return
@@ -698,10 +703,38 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-/** True when two states describe different transforms (ignores identity/asset fields). */
-function transformDiffers(a: PlacedObject, b: PlacedObject): boolean {
+/**
+ * True when an incoming state differs from the tracked one in ANY way that
+ * matters — not just its transform.
+ *
+ * This used to compare only x/y/z/rotationY/scale, which quietly broke the
+ * moment a placement grew fields that are not geometry: `entry.state` is what
+ * list() hands back, and World.syncScripts() feeds that straight into
+ * ScriptRuntime, so attaching a behaviour to an object that had not moved was
+ * skipped by the "nothing changed" fast path and the script never started.
+ * Rather than bolt on one predicate per new field — and rediscover the same
+ * bug for `name`, `placedBy`, or whatever comes next — this compares
+ * everything. Structural (JSON) comparison because a graph is a plain object
+ * with no identity to compare by reference; it runs on a sync (add / remove /
+ * edit / peer update), never per frame, so the cost is irrelevant.
+ *
+ * `cid` and `id` are excluded deliberately: a changed cid is a different asset
+ * that has to be rebuilt from bytes, not refreshed in place, and callers key
+ * on `id` before ever reaching here.
+ */
+function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
   return (
-    a.x !== b.x || a.y !== b.y || a.z !== b.z || a.rotationY !== b.rotationY || a.scale !== b.scale
+    a.x !== b.x ||
+    a.y !== b.y ||
+    a.z !== b.z ||
+    a.rotationY !== b.rotationY ||
+    a.scale !== b.scale ||
+    a.name !== b.name ||
+    a.kind !== b.kind ||
+    a.mime !== b.mime ||
+    a.placedBy !== b.placedBy ||
+    JSON.stringify(a.script) !== JSON.stringify(b.script) ||
+    JSON.stringify(a.trigger) !== JSON.stringify(b.trigger)
   )
 }
 
