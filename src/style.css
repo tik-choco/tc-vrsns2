@@ -34,6 +34,14 @@
   /* Surfaces (translucent glass — light) */
   --glass-1: rgba(255, 255, 255, 0.74);
   --glass-2: rgba(255, 255, 255, 0.88);
+  /* Opaque (never translucent) card surface for chrome that sits over other
+     2D content it must fully occlude — e.g. GraphCanvas.tsx's node boxes,
+     which are painted on top of the wire diagram. --glass-2 is deliberately
+     translucent for panels floating over the live 3D scene (see this file's
+     header); reusing it for a node box let wires "ghost" through wherever a
+     curve routed underneath one, reading as a stray, wrongly-colored strand
+     — see GraphCanvas.tsx's header for why wire color must be unambiguous. */
+  --surface-solid: #fcfdfe;
   --fill-1: rgba(23, 28, 38, 0.045);
   --fill-2: rgba(23, 28, 38, 0.08);
   --fill-3: rgba(23, 28, 38, 0.12);
@@ -120,6 +128,7 @@
 
   --glass-1: rgba(22, 25, 33, 0.72);
   --glass-2: rgba(22, 25, 33, 0.88);
+  --surface-solid: #181b23;
   --fill-1: rgba(255, 255, 255, 0.06);
   --fill-2: rgba(255, 255, 255, 0.1);
   --fill-3: rgba(255, 255, 255, 0.15);
@@ -1966,4 +1975,509 @@ body {
   font-size: 0.85rem;
   line-height: 1.6;
   color: var(--text-dim);
+}
+
+/* --- Graph editor (R4: direct node-graph editing) --------------------------
+   Opened from the edit toolbar's "Edit graph…" entry (GraphEditor.tsx). A
+   wider, taller variant of the .panel shell (three columns: a floating "add
+   node" palette, the pan/zoom SVG canvas, and an inspector), plus its own
+   SVG design language for nodes/sockets/wires — see GraphCanvas.tsx's header
+   for why flow and value wires are never the same color or weight. */
+
+.graph-editor-panel {
+  position: relative;
+  inline-size: min(96vw, 92rem);
+  block-size: min(92vh, 56rem);
+  max-block-size: 92vh;
+}
+.graph-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-5);
+  border-block-end: 1px solid var(--border);
+  flex: none;
+}
+.graph-editor-status {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--r-pill);
+}
+.graph-editor-status.is-ok {
+  background: var(--success-tint);
+  color: var(--success);
+}
+.graph-editor-status.is-warn {
+  background: var(--danger-tint);
+  color: var(--warn);
+}
+.graph-editor-toolbar-actions {
+  margin-inline-start: auto;
+  display: flex;
+  gap: var(--sp-2);
+}
+.graph-editor-body {
+  display: flex;
+  flex: 1;
+  min-block-size: 0;
+}
+.graph-editor-canvas-wrap {
+  flex: 1;
+  min-inline-size: 0;
+  position: relative;
+  background: var(--fill-1);
+}
+.graph-editor-empty {
+  display: grid;
+  place-items: center;
+  inline-size: 100%;
+  block-size: 100%;
+  color: var(--text-faint);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: var(--sp-5);
+}
+.graph-editor-inspector {
+  flex: none;
+  inline-size: min(22rem, 34vw);
+  border-inline-start: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: var(--sp-4);
+}
+
+/* --- Canvas ---------------------------------------------------------------- */
+
+.gcanvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.gcanvas-svg {
+  inline-size: 100%;
+  block-size: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+.gcanvas-bg {
+  fill: transparent;
+}
+.gcanvas-toolbar {
+  position: absolute;
+  inset-block-end: var(--sp-3);
+  inset-inline-end: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-md);
+  background: var(--glass-1);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+/* --- Nodes ------------------------------------------------------------------
+   Header tint carries the node's kind: warm amber for an event (a flow entry
+   point), neutral for ordinary flow, teal for a pure value node — the same
+   hue family as that kind's wires/pins, so the whole picture (not just the
+   wires) reads as "control flow" vs "data" at a glance. */
+
+.gnode-rect {
+  /* Opaque, not var(--glass-2) — a node box must fully hide any wire that
+     routes underneath it (wires paint first; see GraphCanvas.tsx's render
+     order). A translucent fill let a wire "ghost" through as a faint,
+     wrongly-colored strand wherever a curve passed under an unrelated node —
+     see --surface-solid's doc comment in this file's :root block. */
+  fill: var(--surface-solid);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+.gnode-rect.is-selected {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.gnode-rect.has-error {
+  stroke: var(--danger);
+  stroke-width: 2;
+}
+.gnode-header {
+  fill: var(--fill-2);
+  pointer-events: none;
+}
+.gnode-rect-event ~ .gnode-header {
+  fill: var(--accent-tint-strong);
+}
+.gnode-rect-value ~ .gnode-header {
+  fill: var(--accent-tint);
+}
+.gnode-rect-unknown ~ .gnode-header {
+  fill: var(--danger-tint);
+}
+.gnode-title {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  dominant-baseline: middle;
+  pointer-events: none;
+  user-select: none;
+}
+.gnode-error-dot {
+  fill: var(--danger);
+  stroke: var(--glass-2);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+.gnode-socket-label {
+  fill: var(--text-dim);
+  font-size: 10px;
+  dominant-baseline: middle;
+  pointer-events: none;
+  user-select: none;
+}
+.gnode-socket-label-right {
+  text-anchor: end;
+}
+.gnode {
+  cursor: pointer;
+}
+
+/* --- Sockets ----------------------------------------------------------------
+   Flow pins (amber) vs value pins (teal) mirror the wire colors below, and a
+   flow pin is drawn as a triangle/square (a "plug shape") where a value pin
+   is a plain circle — a second, shape-based cue on top of color, so the
+   distinction still reads for a colorblind user. */
+
+.gsocket {
+  cursor: crosshair;
+}
+.gsocket-flow-in,
+.gsocket-flow-out {
+  fill: var(--warn);
+  stroke: var(--glass-2);
+  stroke-width: 1;
+}
+.gsocket-value-in,
+.gsocket-value-out {
+  fill: var(--accent);
+  stroke: var(--glass-2);
+  stroke-width: 1;
+}
+.gsocket.is-hover-legal {
+  fill: var(--success);
+  stroke: var(--success);
+  stroke-width: 2;
+}
+.gsocket.is-hover-illegal {
+  fill: var(--danger);
+  stroke: var(--danger);
+  stroke-width: 2;
+  cursor: not-allowed;
+}
+
+/* --- Wires ------------------------------------------------------------------
+   Flow: thick amber with an arrowhead — sequenced control transfer. Value:
+   thin teal, no arrowhead — pulled on demand, not sequenced. A back-edge
+   (the language's only loop construct) is additionally dashed and routed as
+   a wide dip below the graph rather than straight through the middle — see
+   GraphCanvas.tsx's loopPath(). */
+
+.gwire-flow {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.gwire-flow.gwire-back path {
+  stroke: var(--warn);
+  stroke-width: 3.5;
+  stroke-dasharray: 3 5;
+}
+.gwire-value {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+.gwire-flow-arrowhead {
+  fill: var(--warn);
+}
+.gwire-loop-badge {
+  fill: var(--glass-2);
+  stroke: var(--warn);
+  stroke-width: 1.5;
+}
+.gwire-loop-icon {
+  fill: var(--warn);
+  stroke: none;
+  font-size: 12px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+.gwire-temp {
+  opacity: 0.9;
+  stroke-dasharray: 4 4;
+}
+.gwire-temp.is-legal {
+  stroke: var(--success);
+}
+.gwire-temp.is-illegal {
+  stroke: var(--danger);
+  stroke-dasharray: 2 4;
+}
+
+/* --- Inspector --------------------------------------------------------------
+   The right-hand pane: a selected node's doc/inputs/flow/cfg/delete, or (no
+   selection) the graph's name and variable list. Reuses .input/.btn/
+   .panel-note for form chrome, same as the rest of the app. */
+
+.ginspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  font-size: 0.85rem;
+}
+.ginspector-hint {
+  margin: 0;
+  color: var(--text-dim);
+}
+.ginspector-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.ginspector-kind {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+  color: var(--text-dim);
+}
+.ginspector-kind-event {
+  background: var(--accent-tint-strong);
+  color: var(--accent-strong);
+}
+.ginspector-kind-value {
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+.ginspector-op {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  word-break: break-word;
+}
+.ginspector-doc {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.ginspector-errors {
+  list-style: none;
+  padding-inline-start: 0;
+}
+.ginspector-errors li {
+  margin: 0.2rem 0;
+}
+.ginspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-block-start: var(--sp-3);
+  border-block-start: 1px solid var(--border);
+}
+.ginspector-section h4 {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+.ginspector-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.ginspector-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.ginspector-field label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.ginspector-required {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+.ginspector-wired {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-sm);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+  font-size: 0.8rem;
+}
+.ginspector-not-connected {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+.ginspector-number {
+  max-inline-size: 8rem;
+}
+.ginspector-vec3 {
+  display: flex;
+  gap: var(--sp-2);
+}
+.ginspector-vec3-field {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.ginspector-vec3-field .input {
+  max-inline-size: 5rem;
+}
+.ginspector-var {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.ginspector-var-name {
+  flex: 1 1 6rem;
+  min-inline-size: 5rem;
+}
+.ginspector-var-type {
+  flex: none;
+  inline-size: 6rem;
+}
+.ginspector-delete {
+  align-self: flex-start;
+}
+
+/* --- Node palette ------------------------------------------------------------
+   A searchable, namespace-grouped list of every op in NODE_DESCS, floated
+   over the editor panel (contained within it, not the whole screen — see
+   .graph-editor-panel's position:relative). */
+
+.gpalette-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  padding-block-start: var(--sp-6);
+  background: var(--scrim);
+}
+.gpalette {
+  display: flex;
+  flex-direction: column;
+  inline-size: min(28rem, 90%);
+  max-block-size: calc(100% - var(--sp-6));
+  border-radius: var(--r-lg);
+  background: var(--glass-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.gpalette-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-block-end: 1px solid var(--border);
+  color: var(--text-faint);
+  flex: none;
+}
+.gpalette-search .input {
+  flex: 1;
+}
+.gpalette-list {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: var(--sp-2);
+}
+.gpalette-empty {
+  padding: var(--sp-4);
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+}
+.gpalette-group-title {
+  margin: var(--sp-2) var(--sp-2) 0.2rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+.gpalette-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  inline-size: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+}
+.gpalette-item:hover {
+  background: var(--fill-2);
+}
+.gpalette-kind {
+  flex: none;
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: var(--r-pill);
+  margin-block-start: 0.4rem;
+  background: var(--fill-3);
+}
+.gpalette-kind-event,
+.gpalette-kind-flow {
+  background: var(--warn);
+}
+.gpalette-kind-value {
+  background: var(--accent);
+}
+.gpalette-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-inline-size: 0;
+}
+.gpalette-item-op {
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+}
+.gpalette-item-doc {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.4;
 }
