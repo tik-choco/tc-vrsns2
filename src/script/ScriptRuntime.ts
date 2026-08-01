@@ -13,15 +13,32 @@
 //             doing it per frame would silently wipe all state.
 //   tick()  — FRAME-driven. Cheap, allocation-light, never validates.
 //
-// Effects are returned rather than dispatched. The caller applies them
-// locally, and — once room sync lands — broadcasts the same array as a
-// MSG_EVENT frame. One seam, so local and remote behaviour cannot drift.
+// Effects are returned rather than dispatched. The caller applies them locally
+// AND broadcasts the same array as a MSG_EVENT frame. One seam, so local and
+// remote behaviour cannot drift.
+//
+// OWNER-AUTHORITATIVE, and the split runs right through this class:
+//
+//   scripts  attach only for objects WE publish (see ObjectRegistry —
+//            publishing an id is the claim). A peer's graph never executes on
+//            our client, which is what keeps a shared room from being a
+//            remote-code-execution surface, and what stops two peers running
+//            the same script and diverging.
+//   triggers register for EVERY object, ours or not. Each peer is
+//            authoritative over where its OWN avatar is, so it detects its own
+//            crossings against everyone's volumes and either runs them (our
+//            object) or reports them to the owner (theirs). Nobody guesses at
+//            anyone else's position, so a crossing fires exactly once.
+//
+// The cost of that model is that a remote player's exit only arrives if their
+// client sends it — so a peer that crashes mid-trigger would leave a script
+// believing they are still inside. playerLeft() closes that hole.
 
 import type { ScriptEffect } from '../net/protocol'
 import type { PlacedObject } from '../shared/types'
 import { TriggerTracker } from '../world/triggers'
 import { WorldScriptHost, type ScriptLogEntry, type ScriptWorldBridge } from './host'
-import type { ScriptError, ScriptGraph, ScriptWindow, Vec3 } from './ir'
+import type { ScriptError, ScriptGraph, ScriptInput, ScriptWindow, Vec3 } from './ir'
 import { validate } from './validate'
 import { ScriptRunner } from './vm'
 
@@ -32,11 +49,23 @@ type Attached = {
   rejected: ScriptError[] | null
 }
 
+/** What one frame produced: effects to apply and broadcast, inputs to send to other owners. */
+export type ScriptTickResult = {
+  effects: ScriptEffect[]
+  inputs: ScriptInput[]
+}
+
 export class ScriptRuntime {
   private host: WorldScriptHost
   private runner: ScriptRunner
   private triggers = new TriggerTracker()
   private attached = new Map<string, Attached>()
+  /** Ids we publish, i.e. the scripts we are authoritative for. Refreshed by sync(). */
+  private ownedIds: ReadonlySet<string> = new Set()
+  /** Who each of our scripts currently believes is standing in its trigger, so playerLeft() can undo it. */
+  private occupancy = new Map<string, Set<string>>()
+  /** Crossings and clicks on objects we do NOT own, flushed to their owners by tick(). */
+  private pendingInputs: ScriptInput[] = []
 
   constructor(world: ScriptWorldBridge) {
     this.host = new WorldScriptHost(world)
@@ -53,19 +82,20 @@ export class ScriptRuntime {
    * well-formed, so the VM's own defensive coding is a second line, not the
    * first.
    */
-  sync(objects: readonly PlacedObject[]): void {
+  sync(objects: readonly PlacedObject[], ownedIds: ReadonlySet<string>): void {
+    this.ownedIds = new Set(ownedIds)
     const seen = new Set<string>()
+    const withTrigger = new Set<string>()
 
     for (const obj of objects) {
+      // Volumes are registered for every object, including peers' — we detect
+      // our own avatar crossing them and report it to whoever owns the script.
       if (obj.trigger) {
         this.triggers.setVolume(obj.id, obj.trigger, { x: obj.x, y: obj.y, z: obj.z })
-      } else if (this.attached.has(obj.id)) {
-        // Trigger removed while the script stayed: drop the volume (and let
-        // its occupants exit) without touching the running script.
-        this.triggers.unregister(obj.id)
+        withTrigger.add(obj.id)
       }
 
-      if (!obj.script) continue
+      if (!obj.script || !ownedIds.has(obj.id)) continue
       seen.add(obj.id)
 
       const fingerprint = JSON.stringify(obj.script)
@@ -87,52 +117,127 @@ export class ScriptRuntime {
       this.attached.delete(id)
       this.runner.detach(id)
       this.host.forget(id)
-      this.triggers.unregister(id)
+    }
+    for (const id of this.triggers.trackedIds()) {
+      if (!withTrigger.has(id)) this.triggers.unregister(id)
+    }
+    for (const id of [...this.occupancy.keys()]) {
+      if (!withTrigger.has(id)) this.occupancy.delete(id)
     }
 
     this.host.setLiveObjects(objects.map((o) => o.id))
   }
 
   /**
-   * Runs one frame and returns the effects it produced.
+   * Runs one frame.
    *
-   * `occupants` maps a player's DISPLAY NAME to their position — the name is
-   * what event/onTriggerEnter hands the graph, so keying by it avoids carrying
-   * a second identifier through the whole path. Two players with the same
-   * name collapse into one occupant; that is a cosmetic collision in a room
-   * where they were already indistinguishable to anyone reading name tags.
+   * `self` is the LOCAL player only — deliberately not a map of everyone. Each
+   * peer is authoritative over its own avatar's position and reports its own
+   * crossings; taking a map here would invite a caller to pass every player it
+   * can see, and the same crossing would then fire on two clients at once. Its
+   * `name` is what event/onTriggerEnter hands the graph. Pass null before the
+   * world has started.
+   *
+   * Returns what to apply locally (`effects`) and what to send to the peers
+   * that own the objects we touched (`inputs`).
    */
-  tick(dt: number, occupants: ReadonlyMap<string, Vec3>): ScriptEffect[] {
+  tick(dt: number, self: { name: string; pos: Vec3 } | null): ScriptTickResult {
     this.host.advance(dt)
 
+    const inputs = this.pendingInputs
+    this.pendingInputs = []
+
+    const occupants = new Map<string, Vec3>()
+    if (self) occupants.set(self.name, self.pos)
     for (const t of this.triggers.update(occupants)) {
-      const op = t.kind === 'enter' ? 'event/onTriggerEnter' : 'event/onTriggerExit'
-      this.runner.fire(t.objectId, op, { player: t.player })
+      const input: ScriptInput =
+        t.kind === 'enter'
+          ? { t: 'enter', objectId: t.objectId, player: t.player }
+          : { t: 'exit', objectId: t.objectId, player: t.player }
+      if (this.ownedIds.has(t.objectId)) this.fireTrigger(t.objectId, t.kind, t.player)
+      else inputs.push(input)
     }
 
     this.runner.tick(dt)
 
     const effects = this.host.drainEffects()
     // A custom event is delivered by re-entering the runner rather than by the
-    // VM looping it back itself: emit crosses script boundaries (and, later,
-    // peer boundaries), so it has to pass through the layer that knows which
+    // VM looping it back itself: emit crosses script boundaries (and peer
+    // boundaries), so it has to pass through the layer that knows which
     // scripts exist. Scripts fired here run on the NEXT tick, which also stops
     // two scripts emitting at each other from recursing inside one frame.
     for (const effect of effects) {
       if (effect.t !== 'emit') continue
       this.deliverCustom(effect.event, effect.payload)
     }
-    return effects
+    return { effects, inputs }
   }
 
-  /** A player clicked a placed object. */
+  /**
+   * A player clicked a placed object. Runs here when we own it, otherwise it
+   * is queued as an input for the owner and flushed by the next tick().
+   */
   interact(objectId: string, player: string): void {
-    this.runner.fire(objectId, 'event/onInteract', { player })
+    if (this.ownedIds.has(objectId)) {
+      this.runner.fire(objectId, 'event/onInteract', { player })
+      return
+    }
+    this.pendingInputs.push({ t: 'interact', objectId, player })
   }
 
-  /** A button inside one of a script's windows was pressed. */
+  /** A button inside one of a script's windows was pressed. Routed like interact(). */
   uiEvent(scriptId: string, event: string, player: string): void {
-    this.runner.fire(scriptId, 'event/onUiEvent', { player }, event)
+    if (this.ownedIds.has(scriptId)) {
+      this.runner.fire(scriptId, 'event/onUiEvent', { player }, event)
+      return
+    }
+    this.pendingInputs.push({ t: 'ui', scriptId, event, player })
+  }
+
+  /**
+   * Applies an input a peer reported against one of OUR objects. Ignored
+   * unless we actually run that script — the sender is untrusted, and an input
+   * naming someone else's object (or nothing at all) is just noise.
+   */
+  applyInput(input: ScriptInput): void {
+    const id = input.t === 'ui' ? input.scriptId : input.objectId
+    if (!this.ownedIds.has(id) || !this.attached.has(id)) return
+    switch (input.t) {
+      case 'enter':
+      case 'exit':
+        this.fireTrigger(id, input.t, input.player)
+        break
+      case 'interact':
+        this.runner.fire(id, 'event/onInteract', { player: input.player })
+        break
+      case 'ui':
+        this.runner.fire(id, 'event/onUiEvent', { player: input.player }, input.event)
+        break
+    }
+  }
+
+  /**
+   * A peer left the room. Their exits will never arrive, so synthesize them:
+   * without this a script keeps believing someone is standing in its trigger
+   * forever, and a door that opened for them never closes.
+   */
+  playerLeft(player: string): void {
+    for (const [objectId, players] of this.occupancy) {
+      if (!players.delete(player)) continue
+      this.runner.fire(objectId, 'event/onTriggerExit', { player })
+    }
+  }
+
+  private fireTrigger(objectId: string, kind: 'enter' | 'exit', player: string): void {
+    let players = this.occupancy.get(objectId)
+    if (!players) {
+      players = new Set()
+      this.occupancy.set(objectId, players)
+    }
+    if (kind === 'enter') players.add(player)
+    else players.delete(player)
+    const op = kind === 'enter' ? 'event/onTriggerEnter' : 'event/onTriggerExit'
+    this.runner.fire(objectId, op, { player })
   }
 
   /** Delivers a custom event to every attached script. Also the entry point for remote emits. */

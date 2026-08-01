@@ -11,7 +11,7 @@
 // reloading what is already present.
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import type { PlacedKind, PlacedObject } from '../shared/types'
+import type { ObjectState, PlacedKind, PlacedObject } from '../shared/types'
 import { isMediaKind } from './mediaFormat'
 
 /** Where and which way a placed object faces, from the placer's viewpoint. */
@@ -274,6 +274,37 @@ export class WorldObjects {
     entry.object.rotation.set(0, state.rotationY, 0)
     entry.object.scale.setScalar(state.scale)
     entry.state = { ...entry.state, ...state }
+  }
+
+  /**
+   * Applies a transform-only update from a peer's MSG_OBJ_STATE stream (see
+   * net/protocol.ts's ObjectState and World.applyRemoteObjectStates). Unlike
+   * applyTransform() above — which takes a whole PlacedObject and replaces
+   * `entry.state` wholesale, so it also doubles as syncRemote()'s path for
+   * refreshing non-transform fields like script/trigger — this touches ONLY
+   * position/rotation/scale. `state` being an ObjectState rather than a
+   * PlacedObject makes that a type-level guarantee, not just a convention:
+   * there is no cid/name/script/trigger to merge in, so a script's per-frame
+   * transform stream can never blank those fields out from under a
+   * placement. Never creates or resurrects: an id we are not already
+   * tracking (removed locally, or not yet arrived via MSG_OBJECTS) is
+   * silently ignored rather than materializing a placement with nothing to
+   * build from.
+   */
+  applyRemoteState(state: ObjectState): void {
+    const entry = this.objects.get(state.id)
+    if (!entry) return
+    entry.object.position.set(state.x, state.y, state.z)
+    entry.object.rotation.set(0, state.rotationY, 0)
+    entry.object.scale.setScalar(state.scale)
+    entry.state = {
+      ...entry.state,
+      x: state.x,
+      y: state.y,
+      z: state.z,
+      rotationY: state.rotationY,
+      scale: state.scale,
+    }
   }
 
   /**

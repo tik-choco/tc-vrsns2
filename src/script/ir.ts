@@ -228,6 +228,25 @@ export type UiAnchor =
   | { mode: 'object'; id: string; oy?: number }
   | { mode: 'screen'; x: number; y: number }
 
+/**
+ * Something that happened to a peer's scripted object, reported to whoever
+ * owns it. The mirror image of ScriptEffect (net/protocol.ts): effects travel
+ * owner → room, inputs travel actor → owner.
+ *
+ * Inputs exist because scripts are owner-authoritative but the things that
+ * provoke them are not: only your own client knows where your avatar is or
+ * what you clicked. So each peer detects its OWN crossings and clicks against
+ * everyone's objects, runs them directly when it owns the object, and
+ * otherwise sends one of these. The owner is free to ignore an input naming an
+ * object it does not actually run — untrusted, like everything else on the
+ * wire.
+ */
+export type ScriptInput =
+  | { t: 'enter'; objectId: string; player: string }
+  | { t: 'exit'; objectId: string; player: string }
+  | { t: 'interact'; objectId: string; player: string }
+  | { t: 'ui'; scriptId: string; event: string; player: string }
+
 /** A live window the UI layer must render. Keyed by (scriptId, windowId). */
 export type ScriptWindow = {
   scriptId: string

@@ -21,6 +21,26 @@ export type PlayerState = {
   anim: AnimState
 }
 
+/**
+ * Transform-only snapshot of one placed object, streamed continuously at a
+ * fixed rate (see net/protocol.ts's MSG_OBJ_STATE) so a script-driven
+ * transform — the 'rotate'/'bob' presets in script/presets.ts, which call
+ * world/setRotationY or world/setPosition every tick — reaches every peer
+ * every frame without re-broadcasting the whole placement (MSG_OBJECTS,
+ * which is change-driven and carries a script up to
+ * SCRIPT_LIMITS.maxGraphBytes). Deliberately a narrow subset of PlacedObject:
+ * no cid/name/kind/mime/placedBy/script/trigger — none of those change at
+ * frame rate, and they only ever travel over MSG_OBJECTS.
+ */
+export type ObjectState = {
+  id: string
+  x: number
+  y: number
+  z: number
+  rotationY: number
+  scale: number
+}
+
 /** Lightweight peer profile exchanged at the application layer (untrusted — sanitize on receipt). */
 export type PlayerProfile = {
   name: string
