@@ -122,6 +122,11 @@ export class TriggerTracker {
     this.entries.set(objectId, { volume, origin })
   }
 
+  /** Every object id with a volume registered, so a caller can prune what it no longer sees. */
+  trackedIds(): string[] {
+    return [...this.entries.keys()]
+  }
+
   /**
    * Stops tracking a volume — because the object was deleted, or because a
    * script/edit removed its trigger. Whoever was standing in it did not

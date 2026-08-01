@@ -31,17 +31,22 @@ import { currentNodeId, ensureMistNode, subscribeRoomEvents, toBytes } from '../
 import { vrsnsDebug } from '../lib/debugHook'
 import type {
   ChatMessage,
+  ObjectState,
   PlacedObject,
   PlayerProfile,
   PlayerState,
   WorldEditPolicy,
   WorldEnvironment,
 } from '../shared/types'
+import type { ScriptInput } from '../script/ir'
 import {
   FALLBACK_COLOR,
   FALLBACK_NAME,
   MSG_CHAT,
+  MSG_EVENT,
+  MSG_INPUT,
   MSG_LOCK,
+  MSG_OBJ_STATE,
   MSG_OBJECTS,
   MSG_PROFILE,
   MSG_STATE,
@@ -54,6 +59,9 @@ import {
   sanitizeProfile,
   unwrapEnvelope,
 } from './protocol'
+// Type-only, so it stays a separate import (verbatimModuleSyntax) from the
+// MSG_EVENT/MSG_INPUT kind constants pulled from the same module above.
+import type { ScriptEffect } from './protocol'
 
 /** App prefix keeps our rooms from colliding with other mistlib apps. */
 const ROOM_PREFIX = 'tc-vrsns2/'
@@ -102,6 +110,17 @@ export class RoomSession {
   onObjectsChange: ((fromId: string, objects: PlacedObject[]) => void) | null = null
   /** A peer changed who may edit the room's world (advisory — see setWorldPolicy). */
   onWorldPolicyChange: ((fromId: string, policy: WorldEditPolicy) => void) | null = null
+  /** A peer's scripts produced one-shot effects this frame (say/sound/window/etc — see sendScriptEffects). */
+  onScriptEffects: ((fromId: string, effects: ScriptEffect[]) => void) | null = null
+  /** A peer reported one-shot script inputs against objects we own (see sendScriptInputs). */
+  onScriptInputs: ((fromId: string, inputs: ScriptInput[]) => void) | null = null
+  /**
+   * A peer's owned objects moved (script-driven, e.g. 'rotate'/'bob' —
+   * see sendObjectStates). Transform-only and NOT tracked as room state,
+   * unlike onObjectsChange — a newcomer gets the authoritative transform
+   * from MSG_OBJECTS's replay and then simply starts receiving this too.
+   */
+  onObjectStates: ((fromId: string, states: ObjectState[]) => void) | null = null
 
   private readonly node: MistNode
   private profile: PlayerProfile
@@ -271,6 +290,20 @@ export class RoomSession {
   }
 
   /**
+   * Broadcasts a transform-only snapshot of OUR objects that moved since the
+   * last call (unreliable, ~10 Hz — see World.emitObjectStates, which is the
+   * only caller and already does the "did it actually change" filtering).
+   * Unlike setObjects() this is NOT kept as room state and never replayed to
+   * a newcomer (see MSG_OBJ_STATE's doc in protocol.ts). Skips an empty
+   * batch, same as sendScriptEffects/sendScriptInputs — nothing moved this
+   * tick means nothing to send.
+   */
+  sendObjectStates(states: ObjectState[]): void {
+    if (this.closed || states.length === 0) return
+    this.broadcast(encode({ kind: MSG_OBJ_STATE, states }), DELIVERY_UNRELIABLE)
+  }
+
+  /**
    * Announces who may edit the room's world (last-writer-wins, and anyone may
    * change it). Nothing here can *enforce* it — a P2P room has no authority —
    * so the policy is an announced intent that every well-behaved client
@@ -282,6 +315,46 @@ export class RoomSession {
     this.worldPolicy = policy
     if (this.closed) return
     this.broadcast(encode({ kind: MSG_LOCK, policy }), DELIVERY_RELIABLE)
+  }
+
+  /**
+   * Broadcasts one-shot script effects our scripts produced this frame (say,
+   * sound, window, closeWindow, emit — see ScriptEffect in protocol.ts). Not
+   * replayed to newcomers: MSG_EVENT is deliberately not tracked as room
+   * state, unlike setWorld/setObjects/setWorldPolicy above (see MSG_EVENT's
+   * doc comment in protocol.ts). Skips an empty batch — see sendScriptInputs
+   * for why a caller should never pay for a frame carrying nothing.
+   */
+  sendScriptEffects(effects: ScriptEffect[]): void {
+    if (this.closed || effects.length === 0) return
+    this.broadcast(encode({ kind: MSG_EVENT, effects }), DELIVERY_RELIABLE)
+  }
+
+  /**
+   * Broadcasts one-shot script inputs our client detected this frame against
+   * objects we do NOT own (trigger enter/exit, interact, ui — see ScriptInput
+   * in ir.ts). Room-wide broadcast(), same as every other outbound method
+   * here, even though a given input logically has exactly one recipient: the
+   * peer that owns the named object. Two reasons this stays broadcast rather
+   * than a targeted unicast to that one peer:
+   *  - Targeted RELIABLE unicast is per-destination sequenced, and builds
+   *    predating mistlib-dev#16's fix double-wrap the envelope, burning two
+   *    sequence numbers per message — the receiver's reorder buffer then
+   *    waits forever for the odd seq that was never transmitted (see
+   *    unwrapEnvelope's doc in protocol.ts). Broadcast envelopes carry no
+   *    e2e seq at all, sidestepping this regardless of the peer's build.
+   *  - The sender has no reliable way to know which peer currently owns a
+   *    given object id: ownership moves by republication (a fresh
+   *    MSG_OBJECTS from a different peer claims it), and there is no
+   *    ownership handshake to consult before addressing one.
+   * Receivers already discard an input naming an object they don't run (see
+   * ScriptRuntime.applyInput's untrusted-sender check), so broadcasting to
+   * everyone is correct, not merely convenient. Never sends an empty array —
+   * a frame carrying nothing is pure waste at frame rate.
+   */
+  sendScriptInputs(inputs: ScriptInput[]): void {
+    if (this.closed || inputs.length === 0) return
+    this.broadcast(encode({ kind: MSG_INPUT, inputs }), DELIVERY_RELIABLE)
   }
 
   /**
@@ -420,6 +493,9 @@ export class RoomSession {
     this.onWorldChange = null
     this.onObjectsChange = null
     this.onWorldPolicyChange = null
+    this.onScriptEffects = null
+    this.onScriptInputs = null
+    this.onObjectStates = null
   }
 
   // --- inbound ---------------------------------------------------------------
@@ -521,6 +597,21 @@ export class RoomSession {
         this.touchPeer(fromId)
         this.worldPolicy = msg.policy
         this.onWorldPolicyChange?.(fromId, msg.policy)
+        break
+      }
+      case MSG_EVENT: {
+        this.touchPeer(fromId)
+        this.onScriptEffects?.(fromId, msg.effects)
+        break
+      }
+      case MSG_INPUT: {
+        this.touchPeer(fromId)
+        this.onScriptInputs?.(fromId, msg.inputs)
+        break
+      }
+      case MSG_OBJ_STATE: {
+        this.touchPeer(fromId)
+        this.onObjectStates?.(fromId, msg.states)
         break
       }
       case MSG_STATE_REQ: {

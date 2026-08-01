@@ -8,6 +8,7 @@
 
 import type {
   AnimState,
+  ObjectState,
   PlacedKind,
   PlacedObject,
   PlayerProfile,
@@ -18,6 +19,7 @@ import type {
 } from '../shared/types'
 import type {
   ScriptGraph,
+  ScriptInput,
   ScriptLiteral,
   ScriptNode,
   ScriptType,
@@ -66,6 +68,38 @@ export const MSG_LOCK = 0x08
  * transforms), which is future work if it turns out to matter in practice.
  */
 export const MSG_EVENT = 0x09
+/**
+ * One-shot script inputs the sender's client detected against objects it does
+ * NOT own this frame, body { inputs } (DELIVERY_RELIABLE). The mirror image
+ * of MSG_EVENT: effects travel owner -> room, inputs travel actor -> owner
+ * (see ScriptInput in ir.ts for why — only the actor's own client knows where
+ * its avatar is or what it clicked). Like MSG_EVENT this is one-shot and is
+ * NEVER tracked as room state or replayed to a newcomer: a peer that joins
+ * mid-session simply was not there to detect whatever crossing or click
+ * already happened, and there is nothing meaningful to catch it up on (unlike
+ * MSG_OBJECTS/MSG_WORLD/MSG_LOCK, an input has no "current value" to resend).
+ */
+export const MSG_INPUT = 0x0a
+/**
+ * Owner's per-frame transform-only stream, body { states: ObjectState[] }
+ * (DELIVERY_UNRELIABLE). The MSG_OBJECTS counterpart to MSG_STATE: a script
+ * that MOVES an object (the 'rotate'/'bob' presets — see script/presets.ts)
+ * has no other way to reach peers, since MSG_OBJECTS only fires on
+ * place/gizmo-edit/attach and carries the WHOLE placement, up to
+ * SCRIPT_LIMITS.maxGraphBytes of script. ObjectState (shared/types.ts)
+ * carries transform only — no cid/name/script/trigger — and is sent
+ * continuously at ~10 Hz like MSG_STATE, but ONLY for objects whose
+ * transform actually changed since the last send (see World's
+ * emitObjectStates): the overwhelming majority of placements never move, so
+ * this must not become a constant broadcast of every object in the room, and
+ * sends nothing at all when nothing moved.
+ *
+ * Never tracked as room state and never replayed to a newcomer — same
+ * reasoning as MSG_EVENT/MSG_INPUT, and moot besides: a newcomer gets the
+ * authoritative transform from the MSG_OBJECTS replay and then simply falls
+ * into this stream, exactly like a player does for MSG_STATE.
+ */
+export const MSG_OBJ_STATE = 0x0b
 
 /** A room the announcer knows about, carried inside a MSG_ROOM_ANNOUNCE. */
 export interface RoomAnnounceEntry {
@@ -101,6 +135,8 @@ export type NetMessage =
   | { kind: typeof MSG_ROOM_ANNOUNCE; rooms: RoomAnnounceEntry[] }
   | { kind: typeof MSG_LOCK; policy: WorldEditPolicy }
   | { kind: typeof MSG_EVENT; effects: ScriptEffect[] }
+  | { kind: typeof MSG_INPUT; inputs: ScriptInput[] }
+  | { kind: typeof MSG_OBJ_STATE; states: ObjectState[] }
 
 // Defensive limits applied to peer-supplied data.
 export const POS_LIMIT = 1000
@@ -122,6 +158,17 @@ export const OBJECTS_MAX = 64
  * 'window' effect can itself carry a UI tree up to SCRIPT_LIMITS.maxUiNodes.
  */
 export const EFFECTS_MAX = 16
+/**
+ * Max script inputs accepted per MSG_INPUT frame (extra are dropped, same
+ * spirit as EFFECTS_MAX). Sent a bit higher than EFFECTS_MAX: one frame's
+ * inputs are keyed by whatever a SINGLE actor's client detected against
+ * OTHER peers' objects, and unlike a burst of script effects (bounded by how
+ * many scripts happen to fire at once), a fast-moving avatar can clip several
+ * overlapping trigger volumes' enter/exit in one tick, plus an interact or UI
+ * click landing in the same frame. Still nowhere near OBJECTS_MAX — this is
+ * one frame of one peer's detections, not a room snapshot.
+ */
+export const INPUTS_MAX = 32
 /** Uniform-scale bounds for a placed object. */
 export const SCALE_MIN = 0.01
 export const SCALE_MAX = 100
@@ -226,6 +273,12 @@ export function encode(msg: NetMessage): Uint8Array {
     case MSG_EVENT:
       body = { effects: msg.effects }
       break
+    case MSG_INPUT:
+      body = { inputs: msg.inputs }
+      break
+    case MSG_OBJ_STATE:
+      body = { states: msg.states }
+      break
   }
   const json = body === undefined ? new Uint8Array(0) : textEncoder.encode(JSON.stringify(body))
   const frame = new Uint8Array(1 + json.length)
@@ -312,6 +365,28 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
     if (trigger) object.trigger = trigger
   }
   return object
+}
+
+/**
+ * Validates one peer-supplied ObjectState (a MSG_OBJ_STATE entry). Reuses
+ * exactly the same clamps parsePlacedObject applies to a placement's own
+ * transform fields (POS_LIMIT / SCALE_MIN / SCALE_MAX / CID_MAX_LEN) rather
+ * than a parallel set of limits — this is the same transform, just carried
+ * on a different, higher-rate message. Returns null to drop just this one
+ * entry; the caller (decode()) keeps the rest of the batch, same as
+ * parseScriptEffect/parseScriptInput.
+ */
+function parseObjectState(raw: unknown): ObjectState | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.id !== 'string' || o.id.length === 0 || o.id.length > CID_MAX_LEN) return null
+  const x = clampPos(o.x)
+  const y = clampPos(o.y)
+  const z = clampPos(o.z)
+  const rotationY = clampNumber(o.rotationY, -Math.PI * 4, Math.PI * 4)
+  const scale = clampNumber(o.scale, SCALE_MIN, SCALE_MAX)
+  if (x === null || y === null || z === null || rotationY === null || scale === null) return null
+  return { id: o.id, x, y, z, rotationY, scale }
 }
 
 // ---------------------------------------------------------------------------
@@ -845,6 +920,65 @@ function parseScriptEffect(raw: unknown): ScriptEffect | null {
 }
 
 /**
+ * Validates one peer-supplied ScriptInput. Same "drop just this one" contract
+ * as parseScriptEffect: returns null to drop a single malformed entry, and
+ * the caller (decode()) keeps the rest of the batch. `objectId`/`scriptId`
+ * are wire-facing ids, so they're capped like every other id (CID_MAX_LEN).
+ * `event` is a graph-domain produced string, capped like ScriptEffect's
+ * `emit.event` (SCRIPT_LIMITS.maxStringLen). `player` is a display name — the
+ * same thing ScriptRuntime keys trigger occupancy by — so it is trimmed and
+ * capped exactly like a PlayerProfile.name (NAME_MAX_LEN), and a blank name
+ * rejects the entry outright rather than falling back to FALLBACK_NAME: an
+ * input with no attributable player identifies nobody, so applying it against
+ * a script would be worse than dropping it.
+ */
+function parseScriptInput(raw: unknown): ScriptInput | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  switch (o.t) {
+    case 'enter':
+    case 'exit':
+    case 'interact': {
+      if (
+        typeof o.objectId !== 'string' ||
+        o.objectId.length === 0 ||
+        o.objectId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      if (typeof o.player !== 'string') return null
+      const player = o.player.trim().slice(0, NAME_MAX_LEN)
+      if (!player) return null
+      if (o.t === 'enter') return { t: 'enter', objectId: o.objectId, player }
+      if (o.t === 'exit') return { t: 'exit', objectId: o.objectId, player }
+      return { t: 'interact', objectId: o.objectId, player }
+    }
+    case 'ui': {
+      if (
+        typeof o.scriptId !== 'string' ||
+        o.scriptId.length === 0 ||
+        o.scriptId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      if (
+        typeof o.event !== 'string' ||
+        o.event.length === 0 ||
+        o.event.length > SCRIPT_LIMITS.maxStringLen
+      ) {
+        return null
+      }
+      if (typeof o.player !== 'string') return null
+      const player = o.player.trim().slice(0, NAME_MAX_LEN)
+      if (!player) return null
+      return { t: 'ui', scriptId: o.scriptId, event: o.event, player }
+    }
+    default:
+      return null
+  }
+}
+
+/**
  * Decodes and validates a peer frame. Returns null for anything malformed —
  * wrong kind, bad JSON, missing/mistyped fields, out-of-vocabulary anim,
  * invalid color, oversized cid. Numbers are clamped, strings capped. Never
@@ -928,6 +1062,24 @@ export function decode(data: Uint8Array): NetMessage | null {
         if (effect) effects.push(effect)
       }
       return { kind: MSG_EVENT, effects }
+    }
+    case MSG_INPUT: {
+      if (!Array.isArray(body.inputs)) return null
+      const inputs: ScriptInput[] = []
+      for (const raw of body.inputs.slice(0, INPUTS_MAX)) {
+        const input = parseScriptInput(raw)
+        if (input) inputs.push(input)
+      }
+      return { kind: MSG_INPUT, inputs }
+    }
+    case MSG_OBJ_STATE: {
+      if (!Array.isArray(body.states)) return null
+      const states: ObjectState[] = []
+      for (const raw of body.states.slice(0, OBJECTS_MAX)) {
+        const state = parseObjectState(raw)
+        if (state) states.push(state)
+      }
+      return { kind: MSG_OBJ_STATE, states }
     }
     case MSG_ROOM_ANNOUNCE: {
       if (!Array.isArray(body.rooms)) return null

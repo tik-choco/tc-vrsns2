@@ -1,21 +1,25 @@
 // Node-environment tests for the wire protocol — no DOM/wasm imports.
 import { describe, expect, it } from 'vitest'
-import type { PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
+import type { ObjectState, PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
 import { SCRIPT_LIMITS } from '../script/ir'
-import type { ScriptGraph, TriggerVolume, UiNode } from '../script/ir'
+import type { ScriptGraph, ScriptInput, TriggerVolume, UiNode } from '../script/ir'
 import {
   ANNOUNCE_ROOMS_MAX,
   EFFECTS_MAX,
   FALLBACK_NAME,
+  INPUTS_MAX,
   MSG_CHAT,
   MSG_EVENT,
+  MSG_INPUT,
   MSG_LOCK,
+  MSG_OBJ_STATE,
   MSG_OBJECTS,
   MSG_PROFILE,
   MSG_ROOM_ANNOUNCE,
   MSG_STATE,
   MSG_STATE_REQ,
   MSG_WORLD,
+  OBJECTS_MAX,
   PEER_COUNT_MAX,
   type RoomAnnounceEntry,
   type ScriptEffect,
@@ -329,6 +333,78 @@ describe('world + object validation', () => {
     }))
     const msg = decode(frame(MSG_OBJECTS, { objects }))
     if (msg?.kind === MSG_OBJECTS) expect(msg.objects.length).toBe(64)
+  })
+})
+
+describe('MSG_OBJ_STATE / ObjectState validation', () => {
+  it('round-trips a transform-only state batch', () => {
+    const states: ObjectState[] = [
+      { id: 'a', x: 1, y: 0, z: -2, rotationY: 1.2, scale: 0.8 },
+      { id: 'b', x: 0, y: 0.5, z: 0, rotationY: 0, scale: 1 },
+    ]
+    expect(decode(encode({ kind: MSG_OBJ_STATE, states }))).toEqual({ kind: MSG_OBJ_STATE, states })
+  })
+
+  it('rejects the whole frame when states is missing or not an array', () => {
+    expect(decode(frame(MSG_OBJ_STATE, {}))).toBeNull()
+    expect(decode(frame(MSG_OBJ_STATE, { states: 'nope' }))).toBeNull()
+  })
+
+  it('clamps position/rotation/scale exactly like a placed object, and drops malformed entries', () => {
+    const msg = decode(
+      frame(MSG_OBJ_STATE, {
+        states: [
+          { id: 'a', x: 5000, y: -99999, z: 0, rotationY: 1e9, scale: 9999 },
+          { id: 'b', x: 'nope', y: 0, z: 0, rotationY: 0, scale: 1 },
+          { x: 0, y: 0, z: 0, rotationY: 0, scale: 1 }, // no id
+          { id: '', x: 0, y: 0, z: 0, rotationY: 0, scale: 1 }, // empty id
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJ_STATE) throw new Error('expected MSG_OBJ_STATE')
+    expect(msg.states).toHaveLength(1)
+    expect(msg.states[0]).toEqual({ id: 'a', x: 1000, y: -1000, z: 0, rotationY: Math.PI * 4, scale: 100 })
+  })
+
+  it('never carries cid/name/script/trigger — only the five transform fields survive', () => {
+    const msg = decode(
+      frame(MSG_OBJ_STATE, {
+        states: [
+          {
+            id: 'a',
+            x: 0,
+            y: 0,
+            z: 0,
+            rotationY: 0,
+            scale: 1,
+            cid: 'bafy',
+            name: 'sneaky',
+            script: { v: 1, nodes: [], vars: [] },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJ_STATE) throw new Error('expected MSG_OBJ_STATE')
+    expect(msg.states).toEqual([{ id: 'a', x: 0, y: 0, z: 0, rotationY: 0, scale: 1 }])
+  })
+
+  it('caps a state batch at OBJECTS_MAX entries', () => {
+    const states = Array.from({ length: 200 }, (_, i) => ({
+      id: 'id' + i,
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationY: 0,
+      scale: 1,
+    }))
+    const msg = decode(frame(MSG_OBJ_STATE, { states }))
+    if (msg?.kind === MSG_OBJ_STATE) expect(msg.states).toHaveLength(OBJECTS_MAX)
+  })
+
+  it('rejects an oversized MSG_OBJ_STATE frame outright, like any other message', () => {
+    const big = new Uint8Array(300 * 1024)
+    big[0] = MSG_OBJ_STATE
+    expect(decode(big)).toBeNull()
   })
 })
 
@@ -647,6 +723,96 @@ describe('MSG_EVENT / ScriptEffect validation', () => {
   it('rejects an oversized MSG_EVENT frame outright, like any other message', () => {
     const big = new Uint8Array(300 * 1024)
     big[0] = MSG_EVENT
+    expect(decode(big)).toBeNull()
+  })
+})
+
+describe('MSG_INPUT / ScriptInput validation', () => {
+  it('round-trips one of each input kind', () => {
+    const inputs: ScriptInput[] = [
+      { t: 'enter', objectId: 'door1', player: 'Ada' },
+      { t: 'exit', objectId: 'door1', player: 'Ada' },
+      { t: 'interact', objectId: 'lever1', player: 'Bob' },
+      { t: 'ui', scriptId: 'panel1', event: 'submit', player: 'Cid' },
+    ]
+    expect(decode(encode({ kind: MSG_INPUT, inputs }))).toEqual({ kind: MSG_INPUT, inputs })
+  })
+
+  it('rejects the whole frame when inputs is missing or not an array', () => {
+    expect(decode(frame(MSG_INPUT, {}))).toBeNull()
+    expect(decode(frame(MSG_INPUT, { inputs: 'nope' }))).toBeNull()
+  })
+
+  it('drops an unknown input kind but keeps the rest of the batch', () => {
+    const msg = decode(
+      frame(MSG_INPUT, {
+        inputs: [
+          { t: 'interact', objectId: 'a', player: 'Ada' },
+          { t: 'teleport', objectId: 'a', player: 'Ada' },
+          { t: 'nonsense' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_INPUT) throw new Error('expected MSG_INPUT')
+    expect(msg.inputs).toEqual([{ t: 'interact', objectId: 'a', player: 'Ada' }])
+  })
+
+  it('caps a frame at INPUTS_MAX entries', () => {
+    const inputs = Array.from({ length: INPUTS_MAX + 20 }, (_, i) => ({
+      t: 'interact',
+      objectId: 'obj' + i,
+      player: 'Ada',
+    }))
+    const msg = decode(frame(MSG_INPUT, { inputs }))
+    if (msg?.kind === MSG_INPUT) expect(msg.inputs).toHaveLength(INPUTS_MAX)
+  })
+
+  it('drops malformed enter/exit/interact entries individually: bad objectId, bad player, blank player', () => {
+    const msg = decode(
+      frame(MSG_INPUT, {
+        inputs: [
+          { t: 'enter', objectId: '', player: 'Ada' }, // empty objectId
+          { t: 'enter', objectId: 'x'.repeat(200), player: 'Ada' }, // oversized objectId
+          { t: 'enter', objectId: 'a', player: 42 }, // mistyped player
+          { t: 'enter', objectId: 'a', player: '   ' }, // blank-after-trim player
+          { t: 'exit', objectId: 'a', player: 'Ada' }, // valid sibling
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_INPUT) throw new Error('expected MSG_INPUT')
+    expect(msg.inputs).toEqual([{ t: 'exit', objectId: 'a', player: 'Ada' }])
+  })
+
+  it('drops malformed ui entries individually: bad scriptId, bad/oversized event, bad player', () => {
+    const msg = decode(
+      frame(MSG_INPUT, {
+        inputs: [
+          { t: 'ui', scriptId: '', event: 'go', player: 'Ada' },
+          { t: 'ui', scriptId: 'p', event: '', player: 'Ada' },
+          { t: 'ui', scriptId: 'p', event: 'e'.repeat(SCRIPT_LIMITS.maxStringLen + 1), player: 'Ada' },
+          { t: 'ui', scriptId: 'p', event: 'go', player: '' },
+          { t: 'ui', scriptId: 'ok', event: 'go', player: 'Ada' }, // valid sibling
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_INPUT) throw new Error('expected MSG_INPUT')
+    expect(msg.inputs).toEqual([{ t: 'ui', scriptId: 'ok', event: 'go', player: 'Ada' }])
+  })
+
+  it('trims and caps player like a profile name', () => {
+    const msg = decode(
+      frame(MSG_INPUT, {
+        inputs: [{ t: 'interact', objectId: 'a', player: '  ' + 'n'.repeat(60) + '  ' }],
+      }),
+    )
+    if (msg?.kind !== MSG_INPUT) throw new Error('expected MSG_INPUT')
+    expect(msg.inputs).toHaveLength(1)
+    expect(msg.inputs[0].player).toBe('n'.repeat(40))
+  })
+
+  it('rejects an oversized MSG_INPUT frame outright, like any other message', () => {
+    const big = new Uint8Array(300 * 1024)
+    big[0] = MSG_INPUT
     expect(decode(big)).toBeNull()
   })
 })

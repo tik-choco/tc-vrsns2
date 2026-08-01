@@ -368,11 +368,20 @@ export function useSession(): SessionApi {
     worldRef.current?.setEditableObjects(objects.current.editableIds(worldPolicyRef.current))
   }, [])
 
-  /** Publishes our owned set: peers, autosave and the editor's pick list. */
+  /**
+   * Publishes our owned set: peers, autosave, the editor's pick list, and —
+   * via World.setOwnedObjects — ScriptRuntime's ownership. That last one
+   * matters even when the objects list itself hasn't changed: an id joining
+   * or leaving our own set is exactly the kind of change that must attach or
+   * detach its script (see World.setOwnedObjects's doc comment), so this is
+   * the single place that keeps ScriptRuntime's idea of "ours" in step with
+   * ObjectRegistry's.
+   */
   const commitOwnObjects = useCallback(
     (own: PlacedObject[]) => {
       objects.current.setOwn(own)
       sessionRef.current?.setObjects(own)
+      worldRef.current?.setOwnedObjects(own.map((o) => o.id))
       setOwnPlacedCount(own.length)
       refreshEditable()
       persistWorld({ objects: own })
@@ -491,6 +500,25 @@ export function useSession(): SessionApi {
         at: Date.now(),
       })
     })
+    // Closes the owner-authoritative loop's local half: World already applied
+    // these effects to itself (say/sound/window/emit) before calling this —
+    // all that's left is broadcasting the same arrays so peers see the same
+    // thing. Reads sessionRef.current at call time (not captured) so this
+    // keeps working across leave/join without re-registering per session.
+    world.onScriptOutput((result) => {
+      const session = sessionRef.current
+      if (!session) return
+      if (result.effects.length > 0) session.sendScriptEffects(result.effects)
+      if (result.inputs.length > 0) session.sendScriptInputs(result.inputs)
+    })
+    // MSG_OBJ_STATE's sender half: a script that MOVES an object we own (the
+    // 'rotate'/'bob' presets) has no other way to reach peers — World has
+    // already filtered this to owned objects that actually changed since the
+    // last send (see World.emitObjectStates), so this is a plain forward,
+    // same "read sessionRef.current at call time" reasoning as onScriptOutput.
+    world.onObjectStates((states) => {
+      sessionRef.current?.sendObjectStates(states)
+    })
     worldRef.current = world
     if (vrsnsDebug) {
       vrsnsDebug.objects = () => world.listPlacedObjects()
@@ -511,12 +539,25 @@ export function useSession(): SessionApi {
         if (vrsnsDebug && !vrsnsDebug.peers.includes(id)) vrsnsDebug.peers.push(id)
       }
       session.onPeerLeft = (id) => {
+        // Grabbed before removeRemotePlayer disposes the view — it's the
+        // only place their display name is still known, and scriptPlayerLeft
+        // needs it keyed the same way event/onTriggerEnter/Exit are (see
+        // World.tickScripts). Their exits will never arrive now, so without
+        // this a script keeps believing they're still standing in its
+        // trigger (e.g. a door that opened for them never closes).
+        const displayName = world.remoteDisplayName(id)
         world.removeRemotePlayer(id)
         audio.remove(id)
         setPeerCount(session.peerCount)
+        if (displayName) world.scriptPlayerLeft(displayName)
         // The world a group built should not empty out as people drift away:
         // a departed peer's placements stay on show as orphans (nobody's to
-        // edit, publish or save) instead of being deleted.
+        // edit, publish or save) instead of being deleted. This doesn't fight
+        // scriptPlayerLeft above: one synthesizes the departed player's
+        // trigger exits, the other stops anyone from publishing/adopting
+        // their objects going forward — orphaned scripts simply stop being
+        // attached (they're never in anyone's ownedIds again), which falls
+        // out of ownership-driven sync() with no extra code.
         if (objects.current.orphan(id)) reconcileObjects()
         if (vrsnsDebug) vrsnsDebug.peers = vrsnsDebug.peers.filter((p) => p !== id)
       }
@@ -549,6 +590,30 @@ export function useSession(): SessionApi {
       session.onWorldPolicyChange = (_fromId, policy) => {
         peerPolicySeenRef.current = true
         applyPolicy(policy)
+      }
+      // A peer's script produced effects (their object, their authority —
+      // see ScriptRuntime's header: effects flow owner -> room). World routes
+      // each by kind: window/closeWindow get applied to our host, say/sound
+      // play the same as if we'd produced them, emit reaches our own scripts.
+      session.onScriptEffects = (_fromId, effects) => {
+        for (const effect of effects) world.applyRemoteScriptEffect(effect)
+      }
+      // A peer reported a crossing/click/ui-press against one of OUR objects
+      // (inputs flow actor -> owner). Untrusted by construction — World /
+      // ScriptRuntime already discard anything not naming a script we
+      // actually run, so there's no second check here.
+      session.onScriptInputs = (_fromId, inputs) => {
+        for (const input of inputs) world.applyRemoteScriptInput(input)
+      }
+      // A peer's owned object moved (script-driven transform stream — see
+      // RoomSession.onObjectStates's doc). Transform-only and never tracked
+      // as room state; World.applyRemoteObjectStates (via
+      // WorldObjects.applyRemoteState) is the guardrail that keeps this from
+      // ever creating an object or touching anything but its transform, so
+      // this can apply the batch straight through with no extra check here —
+      // same trust posture as onScriptInputs above.
+      session.onObjectStates = (_fromId, states) => {
+        world.applyRemoteObjectStates(states)
       }
     },
     // applyEnvironment/applyPolicy are declared just below and only ever

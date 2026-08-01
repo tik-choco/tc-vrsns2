@@ -3,8 +3,20 @@
 // mocked (its module pulls in the wasm glue), and the page-singleton
 // mistNode module is stubbed with a fake in-memory node.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PlayerProfile, PlayerState } from '../shared/types'
-import { MSG_CHAT, MSG_PROFILE, MSG_STATE, MSG_STATE_REQ, decode, encode } from './protocol'
+import type { ObjectState, PlayerProfile, PlayerState } from '../shared/types'
+import type { ScriptInput } from '../script/ir'
+import {
+  MSG_CHAT,
+  MSG_EVENT,
+  MSG_INPUT,
+  MSG_OBJ_STATE,
+  MSG_PROFILE,
+  MSG_STATE,
+  MSG_STATE_REQ,
+  type ScriptEffect,
+  decode,
+  encode,
+} from './protocol'
 
 // Constants mirror src/vendor/mistlib/wrappers/web/index.js.
 vi.mock('../vendor/mistlib/wrappers/web/index.js', () => ({
@@ -328,6 +340,96 @@ describe('inbound state', () => {
     session.onRemoteState = onState
     fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_STATE, state: STATE }))
     expect(onState).not.toHaveBeenCalled()
+  })
+})
+
+describe('script effects/inputs', () => {
+  const EFFECTS: ScriptEffect[] = [{ t: 'say', objectId: 'door1', text: 'hi' }]
+  const INPUTS: ScriptInput[] = [{ t: 'interact', objectId: 'door1', player: 'Ada' }]
+
+  it('broadcasts script effects reliably, room-wide', () => {
+    session.sendScriptEffects(EFFECTS)
+    const frames = sentTo(null)
+    expect(frames.map((s) => s.kind)).toEqual([MSG_EVENT])
+    expect(frames[0].delivery).toBe(0) // DELIVERY_RELIABLE
+    expect(decode(frames[0].bytes)).toEqual({ kind: MSG_EVENT, effects: EFFECTS })
+  })
+
+  it('broadcasts script inputs reliably, room-wide, even though each names one owner', () => {
+    session.sendScriptInputs(INPUTS)
+    const frames = sentTo(null)
+    expect(frames.map((s) => s.kind)).toEqual([MSG_INPUT])
+    expect(frames[0].delivery).toBe(0) // DELIVERY_RELIABLE
+    expect(decode(frames[0].bytes)).toEqual({ kind: MSG_INPUT, inputs: INPUTS })
+  })
+
+  it('never sends an empty effects or inputs batch', () => {
+    session.sendScriptEffects([])
+    session.sendScriptInputs([])
+    expect(fakeNode.sent).toEqual([])
+  })
+
+  it('delivers inbound script effects to onScriptEffects with the sender id', () => {
+    const onEffects = vi.fn()
+    session.onScriptEffects = onEffects
+    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_EVENT, effects: EFFECTS }))
+    expect(onEffects).toHaveBeenCalledWith('p1', EFFECTS)
+  })
+
+  it('delivers inbound script inputs to onScriptInputs with the sender id', () => {
+    const onInputs = vi.fn()
+    session.onScriptInputs = onInputs
+    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_INPUT, inputs: INPUTS }))
+    expect(onInputs).toHaveBeenCalledWith('p1', INPUTS)
+  })
+
+  it('drops script effect/input frames from itself', () => {
+    const onEffects = vi.fn()
+    const onInputs = vi.fn()
+    session.onScriptEffects = onEffects
+    session.onScriptInputs = onInputs
+    fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_EVENT, effects: EFFECTS }))
+    fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_INPUT, inputs: INPUTS }))
+    expect(onEffects).not.toHaveBeenCalled()
+    expect(onInputs).not.toHaveBeenCalled()
+  })
+})
+
+describe('object state stream', () => {
+  const STATES: ObjectState[] = [{ id: 'door1', x: 1, y: 0, z: 2, rotationY: 0.3, scale: 1 }]
+
+  it('broadcasts object states unreliably, room-wide', () => {
+    session.sendObjectStates(STATES)
+    const frames = sentTo(null)
+    expect(frames.map((s) => s.kind)).toEqual([MSG_OBJ_STATE])
+    expect(frames[0].delivery).toBe(2) // DELIVERY_UNRELIABLE
+    expect(decode(frames[0].bytes)).toEqual({ kind: MSG_OBJ_STATE, states: STATES })
+  })
+
+  it('never sends an empty state batch', () => {
+    session.sendObjectStates([])
+    expect(fakeNode.sent).toEqual([])
+  })
+
+  it('delivers inbound object states to onObjectStates with the sender id', () => {
+    const onStates = vi.fn()
+    session.onObjectStates = onStates
+    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_OBJ_STATE, states: STATES }))
+    expect(onStates).toHaveBeenCalledWith('p1', STATES)
+  })
+
+  it('drops object-state frames from itself', () => {
+    const onStates = vi.fn()
+    session.onObjectStates = onStates
+    fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_OBJ_STATE, states: STATES }))
+    expect(onStates).not.toHaveBeenCalled()
+  })
+
+  it('is never replayed to a MSG_STATE_REQ newcomer, unlike MSG_OBJECTS', () => {
+    session.sendObjectStates(STATES)
+    fakeNode.sent = []
+    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_STATE_REQ }))
+    expect(kindsSentTo('p1')).not.toContain(MSG_OBJ_STATE)
   })
 })
 

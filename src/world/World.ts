@@ -7,9 +7,16 @@
 // primitives (no assets from the predecessor app are used).
 import * as THREE from 'three'
 import type { ScriptEffect } from '../net/protocol'
-import type { ScriptError, UiAnchor, ScriptWindow, Vec3 } from '../script/ir'
-import { ScriptRuntime } from '../script/ScriptRuntime'
-import type { AnimState, PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
+import type { ScriptError, ScriptInput, UiAnchor, ScriptWindow } from '../script/ir'
+import { ScriptRuntime, type ScriptTickResult } from '../script/ScriptRuntime'
+import type {
+  AnimState,
+  ObjectState,
+  PlacedObject,
+  PlayerProfile,
+  PlayerState,
+  WorldEnvironment,
+} from '../shared/types'
 import { AvatarRig } from './AvatarRig'
 import { loadBakedSourceClips } from './bakedClips'
 import { CameraController } from './CameraController'
@@ -63,17 +70,38 @@ export class World {
   private grid!: THREE.GridHelper
   private ground!: THREE.Mesh
 
-  // In-world scripting (R1: local only — see ScriptRuntime for the sync/tick split).
+  // In-world scripting (R2: owner-authoritative sync — see ScriptRuntime's
+  // header for the model). World stays net-agnostic: it exposes what a frame
+  // produced (setOwnedObjects/onScriptOutput/onObjectStates) and lets remote
+  // effects/inputs/transforms be applied (applyRemoteScriptEffect/
+  // applyRemoteScriptInput/applyRemoteObjectStates), but never touches
+  // RoomSession itself. onObjectStates is the one that closes R2's known
+  // gap: a script that MOVES an object (rotate/bob) had no way to reach
+  // peers, since MSG_OBJECTS only fires on place/edit/attach — see
+  // emitObjectStates()'s doc and MSG_OBJ_STATE in net/protocol.ts.
   private scriptRuntime: ScriptRuntime
   /**
    * Maintained by syncScripts() (change-driven), read by tick() every frame.
    * This is the whole "zero cost when nothing is scripted" story: tick()
-   * checks this one boolean before building an occupant map or calling into
-   * ScriptRuntime at all, so a room with no scripts pays nothing per frame.
+   * checks this one boolean before building the local occupant snapshot or
+   * calling into ScriptRuntime at all, so a room with no scripts pays nothing
+   * per frame. Covers ANY object with a script or a trigger, not just owned
+   * ones — trigger volumes are registered for every object (see
+   * ScriptRuntime.sync), so a peer's trigger still needs tick() to run for us
+   * to detect our own crossings of it.
    */
   private hasScripts = false
+  /** Ids we currently publish, i.e. the scripts we are authoritative for. Set by setOwnedObjects(). */
+  private ownedObjectIds = new Set<string>()
+  /** Fires at ~10Hz with the transforms of OWNED objects that moved since the last send. See emitObjectStates(). */
+  private objectStateListeners: Array<(states: ObjectState[]) => void> = []
+  /** The transform last actually SENT for each owned id, so a change is reported exactly once — see emitObjectStates(). */
+  private lastSentObjectState = new Map<string, ObjectState>()
+  private lastObjStateEmitAt = 0
   private soundResolver: ((cid: string) => Promise<Uint8Array | null>) | null = null
   private scriptSayListener: ((objectId: string, text: string) => void) | null = null
+  /** Fires once per frame with a non-trivial ScriptTickResult, so the net layer can broadcast it. See onScriptOutput(). */
+  private scriptOutputListener: ((result: ScriptTickResult) => void) | null = null
   /** The caller's onObjectEdited callback, invoked after this class's own script sync. */
   private objectEditedListener: ((state: PlacedObject) => void) | null = null
   /** Cached from setLocalProfile: what event/onTriggerEnter and onInteract hand a script for "who". */
@@ -90,13 +118,8 @@ export class World {
   /**
    * Clicking fires event/onInteract, but ONLY outside edit mode — the left
    * button belongs to ObjectEditor's picking/gizmo there (see
-   * CameraController.setEditMode). Raycasts from the center of the viewport
-   * rather than the click coordinates: this world has no crosshair sprite
-   * (dropped along with top-down mode, see CameraController's header
-   * comment), but once the pointer is locked for normal play its clientX/Y
-   * freezes wherever the cursor happened to be when the lock engaged, so the
-   * screen center is the only aim point that is meaningful (and correct)
-   * both locked and unlocked.
+   * CameraController.setEditMode). Where the ray starts depends on the pointer
+   * lock; see onInteractPointerDown below.
    */
   /** Reused across clicks — a Raycaster per pointerdown is pure garbage churn. */
   private readonly interactRaycaster = new THREE.Raycaster()
@@ -459,17 +482,19 @@ export class World {
   }
 
   /**
-   * Reconciles ScriptRuntime to the current placed-object set and refreshes
-   * the cheap `hasScripts` flag tick() early-outs on. CHANGE-driven only —
-   * see the file header of ScriptRuntime for why calling sync() every frame
-   * would silently reset every script's variables. The only call sites are
-   * the ones above (place/sync/clear) and a committed edit, wired in the
-   * constructor onto objectEditor.onCommit.
+   * Reconciles ScriptRuntime to the current placed-object set (and current
+   * ownership) and refreshes the cheap `hasScripts` flag tick() early-outs
+   * on. CHANGE-driven only — see the file header of ScriptRuntime for why
+   * calling sync() every frame would silently reset every script's
+   * variables. The call sites are the ones above (place/sync/clear), a
+   * committed edit (wired in the constructor onto objectEditor.onCommit),
+   * and setOwnedObjects() below — ownership changing is exactly the kind of
+   * change sync() must react to, even when no object itself changed.
    */
   private syncScripts(): void {
     const objects = this.worldObjects.list()
-    this.scriptRuntime.sync(objects)
-    this.hasScripts = objects.some((o) => o.script !== undefined)
+    this.scriptRuntime.sync(objects, this.ownedObjectIds)
+    this.hasScripts = objects.some((o) => o.script !== undefined || o.trigger !== undefined)
   }
 
   // --- editing placed objects ----------------------------------------------
@@ -512,14 +537,123 @@ export class World {
     this.objectEditedListener = cb
   }
 
-  // --- in-world scripting (R1: local only) ---------------------------------
+  // --- in-world scripting (R2: owner-authoritative sync) -------------------
+
+  /**
+   * The ids we currently publish, i.e. the scripts we are authoritative for
+   * (see ScriptRuntime's header — "publishing an id is the claim"). Feeds
+   * ScriptRuntime.sync() on the next reconciliation, which happens right
+   * here: ownership changing is itself a change sync() must react to (an
+   * object whose script just became ours, or just stopped being ours, has to
+   * attach/detach even though the object itself didn't change), so this
+   * calls syncScripts() rather than waiting for the next place/sync/clear/edit.
+   */
+  setOwnedObjects(ids: Iterable<string>): void {
+    this.ownedObjectIds = new Set(ids)
+    this.syncScripts()
+  }
+
+  /**
+   * Notified once per frame with a ScriptTickResult that has something in it
+   * (effects and/or inputs — never both empty). World applies effects it
+   * produced locally on its own (see tickScripts/applyScriptEffects below);
+   * this is purely so the net layer can broadcast the same array, without
+   * World knowing RoomSession exists.
+   */
+  onScriptOutput(cb: (result: ScriptTickResult) => void): void {
+    this.scriptOutputListener = cb
+  }
+
+  /**
+   * Register for transform-only deltas produced by OUR OWN placements moving
+   * between frames — e.g. the 'rotate'/'bob' script presets (see
+   * script/presets.ts), which call world/setRotationY / world/setPosition
+   * every tick. Fires at the same ~10Hz cadence as onLocalState, but —
+   * unlike that always-on stream — only when emitObjectStates() actually
+   * finds something that changed (see its doc). Costs nothing when nothing
+   * is scripted: emitObjectStates() early-outs on `hasScripts` before doing
+   * any work, same gate tickScripts() uses.
+   */
+  onObjectStates(cb: (states: ObjectState[]) => void): void {
+    this.objectStateListeners.push(cb)
+  }
+
+  /**
+   * Applies transform-only updates that arrived from a peer's MSG_OBJ_STATE
+   * stream (see RoomSession.onObjectStates). Delegates straight to
+   * WorldObjects.applyRemoteState, which is the guardrail that keeps a
+   * frame-rate transform update from ever creating, resurrecting, or
+   * touching anything but position/rotation/scale on a placement — see its
+   * doc comment for why that has to be enforced there, not here.
+   */
+  applyRemoteObjectStates(states: ObjectState[]): void {
+    for (const state of states) this.worldObjects.applyRemoteState(state)
+  }
+
+  /**
+   * Applies one effect that arrived from the peer who owns the script that
+   * produced it (see ScriptRuntime's header: effects flow owner -> room).
+   * Routes by kind rather than delegating wholesale to ScriptRuntime, because
+   * a remote effect needs different handling per kind:
+   *  - window/closeWindow: ScriptRuntime doesn't have this window yet (unlike
+   *    a local one, where the host already holds it) — applyRemoteEffect()
+   *    is what actually stores it so scriptWindows()/render sees it.
+   *  - say/sound: identical to a locally-produced effect, so this reuses the
+   *    exact same paths applyScriptEffects() below uses.
+   *  - emit: a peer's script fired a custom event; deliverCustom() runs it
+   *    against every script WE run, same as a local emit does one tick later.
+   */
+  applyRemoteScriptEffect(effect: ScriptEffect): void {
+    switch (effect.t) {
+      case 'window':
+      case 'closeWindow':
+        this.scriptRuntime.applyRemoteEffect(effect)
+        break
+      case 'say':
+        this.scriptSayListener?.(effect.objectId, effect.text)
+        break
+      case 'sound':
+        void this.playScriptSound(effect.objectId, effect.cid)
+        break
+      case 'emit':
+        this.scriptRuntime.deliverCustom(effect.event, effect.payload)
+        break
+    }
+  }
+
+  /**
+   * Applies an input a peer reported against one of OUR objects (see
+   * ScriptRuntime's header: inputs flow actor -> owner). Untrusted by
+   * construction — ScriptRuntime.applyInput() already discards anything that
+   * doesn't name an object we actually run, so there is deliberately no
+   * second check here.
+   */
+  applyRemoteScriptInput(input: ScriptInput): void {
+    this.scriptRuntime.applyInput(input)
+  }
+
+  /**
+   * A peer left the room. Their crossings will never arrive again, so
+   * synthesize the exits their departure implies (see
+   * ScriptRuntime.playerLeft's doc comment for why this matters). Keyed by
+   * display name, same as tick()'s `self.name` — that's what a script's
+   * event/onTriggerEnter and event/onTriggerExit hand it.
+   */
+  scriptPlayerLeft(player: string): void {
+    this.scriptRuntime.playerLeft(player)
+  }
+
+  /** A live remote peer's current display name, or null if they aren't (or no longer are) in the scene. */
+  remoteDisplayName(id: string): string | null {
+    return this.remotes.get(id)?.displayName ?? null
+  }
 
   /** Installs the resolver used to fetch bytes for a script's `sound` effect (see WorldObjects.playOneShot). */
   setSoundResolver(resolve: (cid: string) => Promise<Uint8Array | null>): void {
     this.soundResolver = resolve
   }
 
-  /** Every script window to render right now (local scripts only in R1; ScriptRuntime already merges remote in R2). */
+  /** Every script window to render right now — local AND remote (ScriptRuntime merges both; see applyRemoteScriptEffect). */
   scriptWindows(): ScriptWindow[] {
     return this.scriptRuntime.windows()
   }
@@ -691,6 +825,7 @@ export class World {
     this.worldObjects.update(delta)
     this.objectEditor.update()
     this.tickScripts(delta)
+    this.emitObjectStates()
     this.emitLocalState()
     this.renderer.render(this.scene, this.camera)
   }
@@ -699,40 +834,39 @@ export class World {
    * Runs one frame of every attached script. `hasScripts` (maintained by
    * syncScripts(), change-driven) is checked FIRST and is the entire cost
    * for the overwhelming majority of rooms, which have no scripts at all —
-   * the occupant map is never allocated and ScriptRuntime.tick() is never
-   * called when it is false.
+   * ScriptRuntime.tick() is never called when it is false.
+   *
+   * Passes only the LOCAL player, keyed by display name (what
+   * event/onTriggerEnter and event/onInteract hand a script) — see
+   * ScriptRuntime.tick's doc comment for why a map of everyone visible would
+   * be a bug (two clients firing the same crossing).
    */
   private tickScripts(delta: number): void {
     if (!this.hasScripts) return
 
-    // Keyed by DISPLAY NAME, not peer/session id: that is what
-    // event/onTriggerEnter and event/onInteract hand a script (see
-    // ScriptRuntime.tick's doc comment). Two occupants sharing a name
-    // collapse into one entry, same tradeoff ScriptRuntime already accepts.
-    const occupants = new Map<string, Vec3>()
-    occupants.set(this.localProfileName, {
-      x: this.localRoot.position.x,
-      y: this.localRoot.position.y,
-      z: this.localRoot.position.z,
-    })
-    for (const view of this.remotes.values()) {
-      occupants.set(view.displayName, {
-        x: view.root.position.x,
-        y: view.root.position.y,
-        z: view.root.position.z,
-      })
+    const self = {
+      name: this.localProfileName,
+      pos: {
+        x: this.localRoot.position.x,
+        y: this.localRoot.position.y,
+        z: this.localRoot.position.z,
+      },
     }
 
-    const effects = this.scriptRuntime.tick(delta, occupants)
-    if (effects.length > 0) this.applyScriptEffects(effects)
+    const result = this.scriptRuntime.tick(delta, self)
+    if (result.effects.length > 0) this.applyScriptEffects(result.effects)
+    if (result.effects.length > 0 || result.inputs.length > 0) {
+      this.scriptOutputListener?.(result)
+    }
   }
 
   /**
-   * Applies one frame's script effects locally (R1). Written so R2 can
-   * broadcast this exact array as a MSG_EVENT frame at this same seam without
-   * changing how a single effect is applied: `window`/`closeWindow` need
-   * nothing done here (the host already holds them; scriptWindows() is the
-   * accessor), and `emit` is already fully handled inside ScriptRuntime.
+   * Applies one frame's LOCALLY produced script effects. `window`/
+   * `closeWindow` need nothing done here (the host already holds them;
+   * scriptWindows() is the accessor) and `emit` is already fully handled
+   * inside ScriptRuntime.tick(). Remote effects (from a peer who owns the
+   * script) go through applyRemoteScriptEffect() instead, which does need to
+   * act on those two kinds since our own host was never told about them.
    */
   private applyScriptEffects(effects: ScriptEffect[]): void {
     for (const effect of effects) {
@@ -761,6 +895,62 @@ export class World {
     for (const cb of this.stateListeners) cb(state)
   }
 
+  /**
+   * Publishes the transforms of objects WE OWN that changed since the last
+   * send that actually went out, at the same ~10Hz cadence as
+   * emitLocalState() — this is MSG_OBJ_STATE's sender half (see its doc in
+   * net/protocol.ts). `hasScripts` is checked FIRST, before touching
+   * ownedObjectIds or WorldObjects at all: the overwhelming majority of
+   * rooms have no scripts, so this — like tickScripts() — costs nothing per
+   * frame and sends nothing extra, preserving R1/R2's
+   * zero-cost-when-unscripted property.
+   *
+   * Reads each owned object's CURRENT transform back from WorldObjects
+   * (tickScripts() above already applied this frame's script-driven
+   * setTransform calls, e.g. 'rotate'/'bob') rather than tracking deltas some
+   * other way, and compares it against `lastSentObjectState` — the snapshot
+   * last actually SENT for that id, not merely last observed — so a change
+   * is reported exactly once even across a run where this method gets
+   * skipped for a few frames by the interval gate below. Stale entries (an
+   * id no longer owned, or no longer resolving at all) are pruned every call
+   * so the map can't grow unbounded over a long session of placing/removing
+   * objects.
+   */
+  private emitObjectStates(): void {
+    if (!this.hasScripts || this.objectStateListeners.length === 0) return
+    const now = performance.now()
+    if (now - this.lastObjStateEmitAt < STATE_EMIT_INTERVAL_MS) return
+    this.lastObjStateEmitAt = now
+
+    for (const id of [...this.lastSentObjectState.keys()]) {
+      if (!this.ownedObjectIds.has(id)) this.lastSentObjectState.delete(id)
+    }
+    if (this.ownedObjectIds.size === 0) return
+
+    const changed: ObjectState[] = []
+    for (const id of this.ownedObjectIds) {
+      const state = this.worldObjects.stateOf(id)
+      if (!state) {
+        this.lastSentObjectState.delete(id)
+        continue
+      }
+      const snapshot: ObjectState = {
+        id: state.id,
+        x: state.x,
+        y: state.y,
+        z: state.z,
+        rotationY: state.rotationY,
+        scale: state.scale,
+      }
+      const prev = this.lastSentObjectState.get(id)
+      if (prev && sameObjectTransform(prev, snapshot)) continue
+      this.lastSentObjectState.set(id, snapshot)
+      changed.push(snapshot)
+    }
+    if (changed.length === 0) return
+    for (const cb of this.objectStateListeners) cb(changed)
+  }
+
   private handleResize(): void {
     const container = this.canvas.parentElement ?? this.canvas
     const width = Math.max(1, container.clientWidth)
@@ -771,6 +961,11 @@ export class World {
   }
 }
 
-export type { AnimState, PlayerProfile, PlayerState }
+/** Exact-equality check for emitObjectStates()'s "did this actually move" test — cheap and correct: these are the same five numbers a script wrote via setTransform, not independently-measured floats that need a tolerance. */
+function sameObjectTransform(a: ObjectState, b: ObjectState): boolean {
+  return a.x === b.x && a.y === b.y && a.z === b.z && a.rotationY === b.rotationY && a.scale === b.scale
+}
+
+export type { AnimState, ObjectState, PlayerProfile, PlayerState }
 export type { VrmMeta }
 export type { EditTool }

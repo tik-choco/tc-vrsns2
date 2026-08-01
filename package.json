@@ -13,7 +13,8 @@
     "fetch-mistlib": "node scripts/fetch-mistlib.mjs",
     "test": "vitest run",
     "test:e2e": "node scripts/e2e-sync.mjs",
-    "test:e2e:script": "node scripts/e2e-script.mjs"
+    "test:e2e:script": "node scripts/e2e-script.mjs",
+    "test:e2e:script-sync": "node scripts/e2e-script-sync.mjs"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
