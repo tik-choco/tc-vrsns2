@@ -22,6 +22,7 @@ import type { GameOverlayProps } from './uiContract'
 import { BehaviourDialog } from './BehaviourDialog'
 import { ChatPanel } from './ChatPanel'
 import { EditToolbar } from './EditToolbar'
+import { GraphEditor } from './GraphEditor'
 import { MobileControls } from './MobileControls'
 import { ScriptWindowsHost } from './ScriptWindowsHost'
 import { AvatarPanel } from './panels/AvatarPanel'
@@ -60,6 +61,13 @@ export function GameOverlay(props: GameOverlayProps) {
   // gate world input and take over Escape/Delete/V while it's up — see the
   // keydown handler below.
   const [describeOpen, setDescribeOpen] = useState(false)
+  // The direct node-graph editor (R4), opened from the same Behavior picker's
+  // "Edit graph…" entry. Owned here for the identical reason describeOpen is:
+  // it must gate world input and take over the same keys while it's up.
+  // GraphEditor is otherwise self-contained (it intercepts its own Escape/
+  // Delete/Enter/V at the window-capture level so they can never reach the
+  // handler below or the object being edited — see GraphEditor.tsx's header).
+  const [graphEditorOpen, setGraphEditorOpen] = useState(false)
   const selected = props.selectedObject
 
   const menuRef = useRef(menuOpen)
@@ -86,11 +94,14 @@ export function GameOverlay(props: GameOverlayProps) {
   const describeOpenRef = useRef(describeOpen)
   describeOpenRef.current = describeOpen
 
-  // The dialog only ever opens while editing a selection; if either goes
-  // away out from under it (leaving edit mode, the selection being cleared)
+  // Neither dialog ever opens while not editing a selection; if either goes
+  // away out from under one (leaving edit mode, the selection being cleared)
   // there is nothing left for it to apply to.
   useEffect(() => {
-    if (!props.editMode || !selected) setDescribeOpen(false)
+    if (!props.editMode || !selected) {
+      setDescribeOpen(false)
+      setGraphEditorOpen(false)
+    }
   }, [props.editMode, selected])
 
   // Keyboard operability, mirroring the predecessor (tc-vrsns AppUiBinder):
@@ -179,8 +190,8 @@ export function GameOverlay(props: GameOverlayProps) {
   // input) is active — the predecessor's InputMode.UIOnly. Driven through the
   // same setInputEnabled path as chat focus (also releases pointer lock).
   useEffect(() => {
-    gateInputRef.current(menuOpen || panel !== null || chatFocused || describeOpen)
-  }, [menuOpen, panel, chatFocused, describeOpen])
+    gateInputRef.current(menuOpen || panel !== null || chatFocused || describeOpen || graphEditorOpen)
+  }, [menuOpen, panel, chatFocused, describeOpen, graphEditorOpen])
 
   const openPanel = (id: PanelId) => {
     setPanel(id)
@@ -282,6 +293,7 @@ export function GameOverlay(props: GameOverlayProps) {
           onSetObjectScript={props.onSetObjectScript}
           scriptProblems={props.scriptProblems}
           onDescribeBehaviour={() => setDescribeOpen(true)}
+          onEditGraph={() => setGraphEditorOpen(true)}
         />
       )}
 
@@ -303,6 +315,22 @@ export function GameOverlay(props: GameOverlayProps) {
             openPanel('ai')
           }}
           onClose={() => setDescribeOpen(false)}
+        />
+      )}
+
+      {/* R4: direct node-graph editor for the selected object's behaviour.
+          Only reachable when it already has one (EditToolbar gates the
+          picker entry), so `selected.script` is always defined here. */}
+      {graphEditorOpen && selected && selected.script && (
+        <GraphEditor
+          objectName={selected.name || t('objects.title')}
+          graph={selected.script}
+          trigger={selected.trigger}
+          onApply={(graph, trigger) => {
+            props.onSetObjectScript(selected.id, { graph, trigger })
+            setGraphEditorOpen(false)
+          }}
+          onClose={() => setGraphEditorOpen(false)}
         />
       )}
 

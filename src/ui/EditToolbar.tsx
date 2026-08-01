@@ -29,6 +29,14 @@ type Props = Pick<
    * world input while the dialog is up, the same way it does for its panels).
    */
   onDescribeBehaviour: () => void
+  /**
+   * "Edit graph…" was picked. Opens GraphEditor for the selected object's
+   * current behaviour. Same reasoning as onDescribeBehaviour: this doesn't
+   * attach anything by itself (GraphEditor edits a local working copy and
+   * only calls onSetObjectScript on Apply), and GameOverlay owns its
+   * open/closed state for the same keyboard/world-input gating reasons.
+   */
+  onEditGraph: () => void
 }
 
 // All lucide-preact icons share one component type; borrow it from any import.
@@ -46,7 +54,7 @@ const TOOLS: Array<{ id: EditTool; icon: IconComponent; labelKey: TranslationKey
  * recognize, but it is not a selectable option: picking it would do nothing,
  * since it isn't one of SCRIPT_PRESETS. 'describe' IS a real action — see
  * onPick — it just never becomes the picker's resting value. */
-type PickerValue = '' | 'custom' | 'describe' | ScriptPresetId
+type PickerValue = '' | 'custom' | 'describe' | 'editGraph' | ScriptPresetId
 
 export function EditToolbar(props: Props) {
   const { t } = useTranslation()
@@ -62,6 +70,11 @@ export function EditToolbar(props: Props) {
     if (value === 'custom') return // not a real choice — see PickerValue's doc comment
     if (value === 'describe') {
       props.onDescribeBehaviour()
+      return
+    }
+    if (value === 'editGraph') {
+      if (!selected.script) return // gated below too, but never act on a stale/disabled option
+      props.onEditGraph()
       return
     }
     props.onSetObjectScript(selected.id, value === '' ? null : value)
@@ -102,6 +115,9 @@ export function EditToolbar(props: Props) {
         <select class="edit-bar-script-select" disabled={!selected} value={pickerValue} onChange={onPick}>
           <option value="">{t('objects.script.none')}</option>
           <option value="describe">{t('objects.script.describe')}</option>
+          <option value="editGraph" disabled={!selected?.script}>
+            {t('objects.script.editGraph')}
+          </option>
           {pickerValue === 'custom' && (
             <option value="custom" disabled>
               {t('objects.script.custom')}
