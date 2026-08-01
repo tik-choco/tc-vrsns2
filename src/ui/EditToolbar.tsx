@@ -1,15 +1,25 @@
 // The floating control bar shown while objects are being edited in-world.
 // Editing itself happens on the canvas (click to select, drag the gizmo); this
-// only picks which transform the gizmo offers, deletes the selection, and
-// leaves the mode. It stays out of the panel system on purpose — a panel would
-// cover the very object being edited and gate world input.
-import { Move3d, Rotate3d, Scale3d, Trash2, Check } from 'lucide-preact'
+// picks which transform the gizmo offers, which behaviour (if any) the
+// selection runs, deletes the selection, and leaves the mode. It stays out of
+// the panel system on purpose — a panel would cover the very object being
+// edited and gate world input, and the behaviour picker below is a native
+// <select> for the same reason: no backdrop, no extra input-gating wiring,
+// and it never steals the global keys GameOverlay listens for.
+import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, AlertTriangle } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
+import { presetIdOf, SCRIPT_PRESETS, type ScriptPresetId } from '../script/presets'
 import type { EditTool, GameOverlayProps } from './uiContract'
 
 type Props = Pick<
   GameOverlayProps,
-  'editTool' | 'selectedObject' | 'onSetEditTool' | 'onDeleteSelectedObject' | 'onSetEditMode'
+  | 'editTool'
+  | 'selectedObject'
+  | 'onSetEditTool'
+  | 'onDeleteSelectedObject'
+  | 'onSetEditMode'
+  | 'onSetObjectScript'
+  | 'scriptProblems'
 >
 
 // All lucide-preact icons share one component type; borrow it from any import.
@@ -21,9 +31,26 @@ const TOOLS: Array<{ id: EditTool; icon: IconComponent; labelKey: TranslationKey
   { id: 'scale', icon: Scale3d, labelKey: 'objects.scale' },
 ]
 
+/** 'custom' means "has a script, but not one of our presets" — e.g. authored
+ * by the (future) LLM flow. It is shown so the picker never silently claims
+ * "None" for a script it just doesn't recognize, but it is not a selectable
+ * option: picking it would do nothing, since it isn't one of SCRIPT_PRESETS. */
+type PickerValue = '' | 'custom' | ScriptPresetId
+
 export function EditToolbar(props: Props) {
   const { t } = useTranslation()
   const selected = props.selectedObject
+
+  const presetId = selected?.script ? presetIdOf(selected.script.name) : null
+  const pickerValue: PickerValue = !selected?.script ? '' : (presetId ?? 'custom')
+  const problems = selected ? props.scriptProblems.get(selected.id) : undefined
+
+  const onPick = (e: Event) => {
+    if (!selected) return
+    const value = (e.target as HTMLSelectElement).value as PickerValue
+    if (value === 'custom') return // not a real choice — see PickerValue's doc comment
+    props.onSetObjectScript(selected.id, value === '' ? null : value)
+  }
 
   return (
     <div class="edit-bar" role="toolbar" aria-label={t('objects.editing')}>
@@ -54,6 +81,31 @@ export function EditToolbar(props: Props) {
           </button>
         ))}
       </div>
+      <label class="edit-bar-script">
+        <Wand2 size={15} aria-hidden="true" />
+        <span class="btn-text-collapse">{t('objects.script.label')}</span>
+        <select class="edit-bar-script-select" disabled={!selected} value={pickerValue} onChange={onPick}>
+          <option value="">{t('objects.script.none')}</option>
+          {pickerValue === 'custom' && (
+            <option value="custom" disabled>
+              {t('objects.script.custom')}
+            </option>
+          )}
+          {SCRIPT_PRESETS.map((preset) => (
+            <option key={preset.id} value={preset.id}>
+              {t(preset.nameKey as TranslationKey)}
+            </option>
+          ))}
+        </select>
+        {problems && problems.length > 0 && (
+          <span
+            class="edit-bar-script-warn"
+            title={`${t('objects.script.problem')}\n${problems.map((p) => p.message).join('\n')}`}
+          >
+            <AlertTriangle size={15} aria-hidden="true" />
+          </span>
+        )}
+      </label>
       <button
         type="button"
         class="btn btn-ghost btn-danger btn-icon-text"

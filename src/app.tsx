@@ -153,6 +153,12 @@ export function App() {
           onSetEditMode={session.setEditMode}
           onSetEditTool={session.setEditTool}
           onDeleteSelectedObject={session.deleteSelectedObject}
+          onSetObjectScript={session.setObjectScript}
+          scriptProblems={session.scriptProblems}
+          getScriptWindows={session.getScriptWindows}
+          projectScriptAnchor={session.projectScriptAnchor}
+          resolveScriptImage={session.resolveScriptImage}
+          onScriptUiEvent={session.onScriptUiEvent}
           onUpdateProfile={session.updateProfile}
           inviteUrl={session.inviteUrl}
           onSwitchRoom={(nextRoom) => void session.switchRoom(nextRoom)}

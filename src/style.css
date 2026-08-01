@@ -727,6 +727,35 @@ body {
 .overlay.is-editing .controls-hint {
   display: none;
 }
+/* The behaviour picker: a native <select> rather than a custom dropdown, so
+   it needs no backdrop/menu wiring and never fights the global keydown
+   handler in GameOverlay.tsx (Escape/Enter/V) for focus. */
+.edit-bar-script {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding-inline: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.edit-bar-script-select {
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  max-inline-size: 9rem;
+}
+.edit-bar-script-select:disabled {
+  opacity: 0.5;
+}
+.edit-bar-script-warn {
+  display: inline-flex;
+  color: var(--warn);
+}
 
 /* Narrow desktop: same collision with the bottom-left chat bar the hint pill
    has — bias to the bottom-right corner instead of the centre. */
@@ -1014,6 +1043,15 @@ body {
   background: var(--fill-1);
   color: var(--text-dim);
   font-weight: 500;
+}
+/* A behavior attached somewhere is broken (failed validation, or halted as
+   runaway) — distinct from .is-muted's "just so you know" tone, since a
+   silently-broken script is the failure mode this feature most needs to
+   avoid hiding. */
+.panel-note.is-warn {
+  background: var(--danger-tint);
+  color: var(--warn);
+  font-weight: 600;
 }
 .panel-note {
   margin: 0 0 var(--sp-3);
@@ -1701,4 +1739,70 @@ body {
   .resume-spinner {
     animation: none;
   }
+}
+
+/* --- Script windows (script-authored in-world UI) --------------------------
+   ScriptWindowLayer (ui/ScriptWindow.tsx) draws windows a script opens via
+   ui/showWindow, anchored either to a placed object (projected from world
+   space every frame) or to a fixed point on the viewport. The layer itself
+   takes no pointer events -- only .script-window opts back in -- so the 3D
+   canvas underneath stays fully clickable everywhere a window isn't. Chrome
+   (surface, border, shadow, and the hard max-width/max-height cap that stops
+   a script from taking over the screen) is ours; only the inner content below
+   is ever styled by the script, and only through sanitized inline style
+   objects -- never a CSS string. */
+
+.script-window-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+.script-window {
+  position: absolute;
+  max-inline-size: min(24rem, calc(100vw - 2rem));
+  max-block-size: min(70vh, 32rem);
+  overflow: auto;
+  padding: var(--sp-3);
+  border-radius: var(--r-lg);
+  background: var(--glass-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(var(--blur));
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  pointer-events: auto;
+  scrollbar-width: thin;
+}
+.script-ui-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.script-ui-image {
+  display: block;
+  max-inline-size: 100%;
+  border-radius: var(--r-sm);
+}
+.script-ui-button {
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--fill-2);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.script-ui-button:hover {
+  background: var(--fill-3);
+}
+.script-ui-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.script-ui-stack-row {
+  flex-direction: row;
+  align-items: center;
 }

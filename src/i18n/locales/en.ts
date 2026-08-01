@@ -52,6 +52,7 @@ export const en = {
   'menu.world': 'World',
   'menu.objects': 'Objects',
   'menu.room': 'Room',
+  'menu.ai': 'AI',
   'menu.settings': 'Settings',
   'menu.leave': 'Leave',
   'menu.close': 'Close',
@@ -125,6 +126,23 @@ export const en = {
   'objects.placedBy': 'placed by {name}',
   'objects.orphans': '{count} left behind by people who have gone. They stay until you leave the room, and nobody can edit them.',
 
+  // Behaviour (script) attach — see the "Behavior" picker in the edit toolbar
+  'objects.script.label': 'Behavior',
+  'objects.script.none': 'None',
+  'objects.script.custom': 'Custom script',
+  'objects.script.problem': "This behavior has a problem and isn't running.",
+  'objects.script.problems': '{count} placed object(s) have a behavior that is not running.',
+
+  // Built-in behaviour presets (src/script/presets.ts)
+  'presets.rotate.name': 'Slow spin',
+  'presets.rotate.desc': 'Rotates in place, forever.',
+  'presets.bob.name': 'Gentle bob',
+  'presets.bob.desc': 'Bobs up and down where it was placed.',
+  'presets.greeter.name': 'Greeter',
+  'presets.greeter.desc': 'Shows a welcome message when a player walks up, and hides it when they leave.',
+  'presets.toggle.name': 'Size toggle',
+  'presets.toggle.desc': 'Grows when clicked, and shrinks back on the next click.',
+
   // Room panel
   'room.title': 'Room',
   'room.subtitle': 'Invite others or switch rooms.',
@@ -149,6 +167,13 @@ export const en = {
   'discover.peers': '{count} online',
   'discover.justNow': 'Just now',
   'discover.secondsAgo': '{count}s ago',
+
+  // AI panel (settings for the LLM connection, AI Network room, and tasks)
+  'ai.title': 'AI',
+  'ai.task.script.label': 'Script generation',
+  'ai.task.script.tip': 'Turns a natural-language request into an in-world behavior script.',
+  'ai.network.modelNotShared': 'That model is not shared by this device.',
+  'ai.network.notConfigured': 'AI is not configured yet.',
 
   // Settings panel
   'settings.title': 'Settings',

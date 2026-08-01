@@ -16,6 +16,21 @@ import type {
   WorldEnvironment,
   WorldFormat,
 } from '../shared/types'
+import type {
+  ScriptGraph,
+  ScriptLiteral,
+  ScriptNode,
+  ScriptType,
+  ScriptVarDecl,
+  TriggerVolume,
+  UiAnchor,
+  UiNode,
+  UiStyle,
+  ValueRef,
+} from '../script/ir'
+// UI_STYLE_PROPS/SCRIPT_LIMITS are frozen runtime constants (not types), so
+// they need a value import alongside the type-only one above.
+import { SCRIPT_LIMITS, UI_STYLE_PROPS } from '../script/ir'
 
 /** High-rate transform/animation snapshot (DELIVERY_UNRELIABLE). */
 export const MSG_STATE = 0x01
@@ -39,6 +54,18 @@ export const MSG_ROOM_ANNOUNCE = 0x07
  * peer that predates the three-way policy still understands a locked room.
  */
 export const MSG_LOCK = 0x08
+/**
+ * One-shot script effects the sender's scripts produced this frame, body
+ * { effects } (DELIVERY_RELIABLE). Unlike MSG_WORLD/MSG_OBJECTS/MSG_LOCK this
+ * is NOT tracked as room state and is therefore never replayed to a newcomer
+ * — a peer that joins mid-session simply misses whatever 'say'/'sound'/emit
+ * already happened, and misses any 'window' that is already open until the
+ * owning script's next tick re-shows it (or the player re-triggers it). That
+ * is a known v1 limitation, not an oversight: replaying it would mean
+ * tracking open-window state as room state (like MSG_OBJECTS tracks
+ * transforms), which is future work if it turns out to matter in practice.
+ */
+export const MSG_EVENT = 0x09
 
 /** A room the announcer knows about, carried inside a MSG_ROOM_ANNOUNCE. */
 export interface RoomAnnounceEntry {
@@ -50,6 +77,20 @@ export interface RoomAnnounceEntry {
   hops: 0 | 1
 }
 
+/**
+ * One one-shot effect a script produced, carried inside a MSG_EVENT frame.
+ * These are exactly the ScriptHost effect calls that do NOT already replicate
+ * via the object's own transform in MSG_OBJECTS (see ScriptHost in ir.ts):
+ * showWindow/hideWindow, playSound, sendChat, and emit. setTransform/
+ * setVisible are deliberately absent — they ride MSG_OBJECTS instead.
+ */
+export type ScriptEffect =
+  | { t: 'say'; objectId: string; text: string }
+  | { t: 'sound'; objectId: string; cid: string }
+  | { t: 'window'; scriptId: string; windowId: string; ui: UiNode; anchor: UiAnchor }
+  | { t: 'closeWindow'; scriptId: string; windowId: string }
+  | { t: 'emit'; event: string; payload: string }
+
 export type NetMessage =
   | { kind: typeof MSG_STATE; state: PlayerState }
   | { kind: typeof MSG_CHAT; text: string }
@@ -59,6 +100,7 @@ export type NetMessage =
   | { kind: typeof MSG_OBJECTS; objects: PlacedObject[] }
   | { kind: typeof MSG_ROOM_ANNOUNCE; rooms: RoomAnnounceEntry[] }
   | { kind: typeof MSG_LOCK; policy: WorldEditPolicy }
+  | { kind: typeof MSG_EVENT; effects: ScriptEffect[] }
 
 // Defensive limits applied to peer-supplied data.
 export const POS_LIMIT = 1000
@@ -69,6 +111,17 @@ export const CID_MAX_LEN = 128
 export const OBJECT_NAME_MAX_LEN = 64
 /** Max placed objects accepted per MSG_OBJECTS frame (extra are dropped). */
 export const OBJECTS_MAX = 64
+/**
+ * Max script effects accepted per MSG_EVENT frame (extra are dropped, same as
+ * OBJECTS_MAX). Set well below OBJECTS_MAX: MSG_OBJECTS is a full snapshot of
+ * everything a peer owns, but MSG_EVENT is only the one-shot effects produced
+ * in a single frame — one script easily produces several (a window plus a
+ * sound plus an emit), but dozens of scripts firing effects in the very same
+ * frame is already an unusual room. 16 comfortably covers that burst while
+ * still bounding how much a single frame can cost to decode, given each
+ * 'window' effect can itself carry a UI tree up to SCRIPT_LIMITS.maxUiNodes.
+ */
+export const EFFECTS_MAX = 16
 /** Uniform-scale bounds for a placed object. */
 export const SCALE_MIN = 0.01
 export const SCALE_MAX = 100
@@ -170,6 +223,9 @@ export function encode(msg: NetMessage): Uint8Array {
     case MSG_LOCK:
       body = { locked: msg.policy === 'locked', policy: msg.policy }
       break
+    case MSG_EVENT:
+      body = { effects: msg.effects }
+      break
   }
   const json = body === undefined ? new Uint8Array(0) : textEncoder.encode(JSON.stringify(body))
   const frame = new Uint8Array(1 + json.length)
@@ -245,7 +301,344 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
     const placedBy = o.placedBy.trim().slice(0, NAME_MAX_LEN)
     if (placedBy) object.placedBy = placedBy
   }
+  // Same "drop just this field" treatment as `mime`: a garbled script or
+  // trigger must not cost the peer their otherwise-valid, visible placement.
+  if (o.script !== undefined) {
+    const script = parseScriptGraph(o.script)
+    if (script) object.script = script
+  }
+  if (o.trigger !== undefined) {
+    const trigger = parseTriggerVolume(o.trigger)
+    if (trigger) object.trigger = trigger
+  }
   return object
+}
+
+// ---------------------------------------------------------------------------
+// Script graph + trigger volume wire validation
+//
+// SCOPE DISCIPLINE: everything below validates wire SHAPE and SIZE only —
+// field types, structure, and the static caps from SCRIPT_LIMITS. It never
+// asks whether an `op` string names a real node, whether a socket type
+// agrees with what it's fed, or any other question that requires the node
+// catalog. That's src/script/validate.ts's job, layered above this file and
+// owned separately. Do not import validate.ts or nodes.ts here, and do not
+// fold their checks in here "for convenience" — the split exists so
+// protocol.ts stays a small, dependency-light, node-testable trust boundary
+// that a peer's bytes must pass before anything script-aware ever sees them.
+//
+// Unlike parsePlacedObject's field-level tolerance (a bad `mime` drops just
+// `mime`), a ScriptGraph is one coupled structure — node indices in `next`
+// and value refs in `in` are meaningless if nodes were silently dropped out
+// from under them. So parseScriptGraph/parseTriggerVolume are all-or-nothing:
+// any malformed piece anywhere inside rejects the whole graph/trigger (null).
+// The field-level tolerance instead happens one level up, in
+// parsePlacedObject: a null script/trigger just means that optional field is
+// left off an otherwise-valid placement, exactly like a bad `mime` today.
+// ---------------------------------------------------------------------------
+
+const SCRIPT_TYPES: ReadonlySet<string> = new Set<ScriptType>(['number', 'bool', 'string', 'vec3'])
+const UI_STYLE_PROP_SET: ReadonlySet<string> = new Set<string>(UI_STYLE_PROPS)
+const TRIGGER_SHAPES: ReadonlySet<string> = new Set<TriggerVolume['shape']>(['sphere', 'box'])
+/** A "how would this even fit" upper bound; the ScriptGraph.name label is a display string, not code. */
+const SCRIPT_NAME_MAX_LEN = SCRIPT_LIMITS.maxStringLen
+/** Offsets/extents on a trigger volume share the same world-unit bound as a placed object's position. */
+const TRIGGER_EXTENT_MAX = POS_LIMIT
+
+/**
+ * A JSON scalar or Vec3 matching ScriptValue. Used for ValueRef{k:'lit'}.v,
+ * ScriptVarDecl.init, and node cfg values — the three places a bare literal
+ * appears in a graph. Returns null for anything else, INCLUDING out-of-range
+ * numbers/strings: unlike a placed object's transform, there is no sane way
+ * to "clamp" a script's own literal without changing what the script means,
+ * so oversized/non-finite literals reject rather than clamp (see the
+ * SCOPE DISCIPLINE note above this section).
+ */
+function parseScriptLiteral(raw: unknown): ScriptLiteral | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null
+  if (typeof raw === 'boolean') return raw
+  if (typeof raw === 'string') return raw.length <= SCRIPT_LIMITS.maxStringLen ? raw : null
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>
+    if (
+      typeof o.x === 'number' &&
+      Number.isFinite(o.x) &&
+      typeof o.y === 'number' &&
+      Number.isFinite(o.y) &&
+      typeof o.z === 'number' &&
+      Number.isFinite(o.z)
+    ) {
+      return { x: o.x, y: o.y, z: o.z }
+    }
+  }
+  return null
+}
+
+/**
+ * ValueRef is a flat, non-recursive shape (none of its three variants embed
+ * another ValueRef), so unlike UiNode there is no depth to bound here — one
+ * call validates one whole ref.
+ */
+function parseValueRef(raw: unknown): ValueRef | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  switch (o.k) {
+    case 'lit': {
+      const v = parseScriptLiteral(o.v)
+      if (v === null) return null
+      return { k: 'lit', v }
+    }
+    case 'out': {
+      if (typeof o.n !== 'number' || !Number.isInteger(o.n)) return null
+      if (typeof o.s !== 'string' || o.s.length === 0 || o.s.length > SCRIPT_LIMITS.maxStringLen) {
+        return null
+      }
+      return { k: 'out', n: o.n, s: o.s }
+    }
+    case 'var': {
+      if (
+        typeof o.name !== 'string' ||
+        o.name.length === 0 ||
+        o.name.length > SCRIPT_LIMITS.maxStringLen
+      ) {
+        return null
+      }
+      return { k: 'var', name: o.name }
+    }
+    default:
+      return null
+  }
+}
+
+function parseScriptNode(raw: unknown): ScriptNode | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.op !== 'string' || o.op.length === 0 || o.op.length > SCRIPT_LIMITS.maxStringLen) {
+    return null
+  }
+  const node: ScriptNode = { op: o.op }
+  if (o.next !== undefined) {
+    if (typeof o.next !== 'object' || o.next === null || Array.isArray(o.next)) return null
+    const next: Record<string, number> = {}
+    for (const [key, val] of Object.entries(o.next as Record<string, unknown>)) {
+      if (key.length === 0 || key.length > SCRIPT_LIMITS.maxStringLen) return null
+      // Not bounds-checked against nodes.length: whether a target index
+      // actually exists is graph-structural, not wire-shape — validate.ts's job.
+      if (typeof val !== 'number' || !Number.isInteger(val)) return null
+      next[key] = val
+    }
+    node.next = next
+  }
+  if (o.in !== undefined) {
+    if (typeof o.in !== 'object' || o.in === null || Array.isArray(o.in)) return null
+    const inputs: Record<string, ValueRef> = {}
+    for (const [key, val] of Object.entries(o.in as Record<string, unknown>)) {
+      if (key.length === 0 || key.length > SCRIPT_LIMITS.maxStringLen) return null
+      const ref = parseValueRef(val)
+      if (!ref) return null
+      inputs[key] = ref
+    }
+    node.in = inputs
+  }
+  if (o.cfg !== undefined) {
+    if (typeof o.cfg !== 'object' || o.cfg === null || Array.isArray(o.cfg)) return null
+    const cfg: Record<string, ScriptLiteral> = {}
+    for (const [key, val] of Object.entries(o.cfg as Record<string, unknown>)) {
+      if (key.length === 0 || key.length > SCRIPT_LIMITS.maxStringLen) return null
+      const lit = parseScriptLiteral(val)
+      if (lit === null) return null
+      cfg[key] = lit
+    }
+    node.cfg = cfg
+  }
+  return node
+}
+
+function parseScriptVarDecl(raw: unknown): ScriptVarDecl | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (
+    typeof o.name !== 'string' ||
+    o.name.length === 0 ||
+    o.name.length > SCRIPT_LIMITS.maxStringLen
+  ) {
+    return null
+  }
+  if (typeof o.type !== 'string' || !SCRIPT_TYPES.has(o.type)) return null
+  const init = parseScriptLiteral(o.init)
+  if (init === null) return null
+  // Wire-shape only: we don't check that `init`'s JS type actually agrees
+  // with the declared `type` (e.g. type 'bool' with init 'hello') — that
+  // requires the same type-system knowledge validate.ts already owns.
+  return { name: o.name, type: o.type as ScriptType, init }
+}
+
+/**
+ * A style block, filtered to UI_STYLE_PROPS. Unknown CSS properties and
+ * oversized values are dropped individually rather than rejecting the whole
+ * node — same "drop just the bad part" spirit as parsePlacedObject's `mime`,
+ * and doubles up (harmlessly) with whatever render-time sanitizer also
+ * exists, since defense in depth at the earliest boundary is cheap here.
+ */
+function parseUiStyle(raw: unknown): UiStyle | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const style: Record<string, string> = {}
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!UI_STYLE_PROP_SET.has(key)) continue
+    if (typeof val !== 'string' || val.length > SCRIPT_LIMITS.maxStyleValueLen) continue
+    style[key] = val
+  }
+  return style as UiStyle
+}
+
+/**
+ * A UI tree, depth- and count-capped. `budget` is a mutable counter shared
+ * across one whole parseUiNode() call tree (one template, or one MSG_EVENT
+ * 'window' effect's `ui`), decremented once per node and checked BEFORE
+ * doing any work — that is what keeps recursion bounded by both
+ * SCRIPT_LIMITS.maxUiDepth (via the `depth` parameter) and
+ * SCRIPT_LIMITS.maxUiNodes (via `budget`), rather than by size alone.
+ */
+function parseUiNode(raw: unknown, depth: number, budget: { left: number }): UiNode | null {
+  if (depth > SCRIPT_LIMITS.maxUiDepth) return null
+  if (budget.left <= 0) return null
+  budget.left -= 1
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  let style: UiStyle | undefined
+  if (o.style !== undefined) {
+    const parsed = parseUiStyle(o.style)
+    if (!parsed) return null
+    style = parsed
+  }
+  switch (o.t) {
+    case 'text': {
+      if (typeof o.text !== 'string' || o.text.length > SCRIPT_LIMITS.maxStringLen) return null
+      const node: UiNode = { t: 'text', text: o.text }
+      if (style) node.style = style
+      return node
+    }
+    case 'image': {
+      if (typeof o.cid !== 'string' || o.cid.length === 0 || o.cid.length > CID_MAX_LEN) return null
+      const node: UiNode = { t: 'image', cid: o.cid }
+      if (style) node.style = style
+      return node
+    }
+    case 'button': {
+      if (typeof o.text !== 'string' || o.text.length > SCRIPT_LIMITS.maxStringLen) return null
+      if (
+        typeof o.event !== 'string' ||
+        o.event.length === 0 ||
+        o.event.length > SCRIPT_LIMITS.maxStringLen
+      ) {
+        return null
+      }
+      const node: UiNode = { t: 'button', text: o.text, event: o.event }
+      if (style) node.style = style
+      return node
+    }
+    case 'stack': {
+      if (o.dir !== undefined && o.dir !== 'row' && o.dir !== 'col') return null
+      if (!Array.isArray(o.children)) return null
+      const children: UiNode[] = []
+      for (const rawChild of o.children) {
+        const child = parseUiNode(rawChild, depth + 1, budget)
+        if (!child) return null
+        children.push(child)
+      }
+      const node: UiNode = { t: 'stack', children }
+      if (o.dir !== undefined) node.dir = o.dir
+      if (style) node.style = style
+      return node
+    }
+    default:
+      return null
+  }
+}
+
+/**
+ * Validates a peer-supplied ScriptGraph. Returns null if malformed anywhere —
+ * see the SCOPE DISCIPLINE note above for why this is all-or-nothing rather
+ * than field-level tolerant. Checks maxGraphBytes first, cheaply, before
+ * walking the structure at all.
+ */
+export function parseScriptGraph(raw: unknown): ScriptGraph | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  let bytes: number
+  try {
+    bytes = textEncoder.encode(JSON.stringify(raw)).length
+  } catch {
+    return null
+  }
+  if (bytes > SCRIPT_LIMITS.maxGraphBytes) return null
+  const o = raw as Record<string, unknown>
+  if (o.v !== 1) return null
+  if (!Array.isArray(o.nodes) || o.nodes.length > SCRIPT_LIMITS.maxNodes) return null
+  const nodes: ScriptNode[] = []
+  for (const rawNode of o.nodes) {
+    const node = parseScriptNode(rawNode)
+    if (!node) return null
+    nodes.push(node)
+  }
+  if (!Array.isArray(o.vars) || o.vars.length > SCRIPT_LIMITS.maxVars) return null
+  const vars: ScriptVarDecl[] = []
+  for (const rawVar of o.vars) {
+    const v = parseScriptVarDecl(rawVar)
+    if (!v) return null
+    vars.push(v)
+  }
+  const graph: ScriptGraph = { v: 1, nodes, vars }
+  if (o.ui !== undefined) {
+    if (typeof o.ui !== 'object' || o.ui === null || Array.isArray(o.ui)) return null
+    const ui: Record<string, UiNode> = {}
+    for (const [key, rawTemplate] of Object.entries(o.ui as Record<string, unknown>)) {
+      if (key.length === 0 || key.length > SCRIPT_LIMITS.maxStringLen) return null
+      // Each named template gets its own fresh node-count budget:
+      // maxUiNodes bounds one tree, not the whole `ui` table.
+      const template = parseUiNode(rawTemplate, 0, { left: SCRIPT_LIMITS.maxUiNodes })
+      if (!template) return null
+      ui[key] = template
+    }
+    graph.ui = ui
+  }
+  if (o.name !== undefined) {
+    // The one clamp-rather-than-reject field in this function: `name` is a
+    // cosmetic editor label (see ir.ts), not part of the graph's behaviour,
+    // so trimming/truncating it can't change what the script does — same
+    // reasoning that lets parsePlacedObject/parseWorldEnv clamp their `name`.
+    if (typeof o.name !== 'string') return null
+    graph.name = o.name.trim().slice(0, SCRIPT_NAME_MAX_LEN)
+  }
+  return graph
+}
+
+/**
+ * Validates a peer-supplied TriggerVolume. Offsets/extents are clamped like
+ * a placed object's transform (they're plain world-unit numbers, not
+ * behaviour-defining literals), but a wrong-shape field or unknown `shape`
+ * still rejects the whole thing — same all-or-nothing reasoning as
+ * parseScriptGraph. Deliberately does NOT require e.g. `r` when
+ * shape === 'sphere': whether the shape/field combination makes sense is a
+ * semantic question, symmetric with the script-graph split above.
+ */
+export function parseTriggerVolume(raw: unknown): TriggerVolume | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.shape !== 'string' || !TRIGGER_SHAPES.has(o.shape)) return null
+  const trigger: TriggerVolume = { shape: o.shape as TriggerVolume['shape'] }
+  for (const key of ['ox', 'oy', 'oz'] as const) {
+    if (o[key] === undefined) continue
+    const v = clampNumber(o[key], -TRIGGER_EXTENT_MAX, TRIGGER_EXTENT_MAX)
+    if (v === null) return null
+    trigger[key] = v
+  }
+  for (const key of ['r', 'hx', 'hy', 'hz'] as const) {
+    if (o[key] === undefined) continue
+    const v = clampNumber(o[key], 0, TRIGGER_EXTENT_MAX)
+    if (v === null) return null
+    trigger[key] = v
+  }
+  return trigger
 }
 
 /**
@@ -338,6 +731,119 @@ export function unwrapEnvelope(bytes: Uint8Array): { fromId: string; payload: Ui
   }
 }
 
+/** Validates a peer-supplied UiAnchor for a MSG_EVENT 'window' effect. */
+function parseUiAnchor(raw: unknown): UiAnchor | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (o.mode === 'object') {
+    if (typeof o.id !== 'string' || o.id.length === 0 || o.id.length > CID_MAX_LEN) return null
+    const anchor: UiAnchor = { mode: 'object', id: o.id }
+    if (o.oy !== undefined) {
+      const oy = clampNumber(o.oy, -POS_LIMIT, POS_LIMIT)
+      if (oy === null) return null
+      anchor.oy = oy
+    }
+    return anchor
+  }
+  if (o.mode === 'screen') {
+    const x = clampNumber(o.x, 0, 1)
+    const y = clampNumber(o.y, 0, 1)
+    if (x === null || y === null) return null
+    return { mode: 'screen', x, y }
+  }
+  return null
+}
+
+/**
+ * Validates one peer-supplied ScriptEffect. Every string is capped, reusing
+ * the existing net-layer *_MAX_LEN constants for wire-facing identifiers
+ * (object/script/window ids, content-carrying `cid`s -> CID_MAX_LEN; chat-like
+ * `text` -> TEXT_MAX_LEN, matching MSG_CHAT) and SCRIPT_LIMITS.maxStringLen for
+ * the two fields that are graph-domain values rather than net-protocol ids
+ * (`event`, `payload` — the same bound the graph itself uses for a "produced
+ * string"). Returns null to drop just this one effect; the caller (decode())
+ * keeps the rest of the batch, same as parseRoomAnnounceEntry.
+ */
+function parseScriptEffect(raw: unknown): ScriptEffect | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  switch (o.t) {
+    case 'say': {
+      if (
+        typeof o.objectId !== 'string' ||
+        o.objectId.length === 0 ||
+        o.objectId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      if (typeof o.text !== 'string') return null
+      return { t: 'say', objectId: o.objectId, text: o.text.trim().slice(0, TEXT_MAX_LEN) }
+    }
+    case 'sound': {
+      if (
+        typeof o.objectId !== 'string' ||
+        o.objectId.length === 0 ||
+        o.objectId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      if (typeof o.cid !== 'string' || o.cid.length === 0 || o.cid.length > CID_MAX_LEN) return null
+      return { t: 'sound', objectId: o.objectId, cid: o.cid }
+    }
+    case 'window': {
+      if (
+        typeof o.scriptId !== 'string' ||
+        o.scriptId.length === 0 ||
+        o.scriptId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      if (
+        typeof o.windowId !== 'string' ||
+        o.windowId.length === 0 ||
+        o.windowId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      const ui = parseUiNode(o.ui, 0, { left: SCRIPT_LIMITS.maxUiNodes })
+      if (!ui) return null
+      const anchor = parseUiAnchor(o.anchor)
+      if (!anchor) return null
+      return { t: 'window', scriptId: o.scriptId, windowId: o.windowId, ui, anchor }
+    }
+    case 'closeWindow': {
+      if (
+        typeof o.scriptId !== 'string' ||
+        o.scriptId.length === 0 ||
+        o.scriptId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      if (
+        typeof o.windowId !== 'string' ||
+        o.windowId.length === 0 ||
+        o.windowId.length > CID_MAX_LEN
+      ) {
+        return null
+      }
+      return { t: 'closeWindow', scriptId: o.scriptId, windowId: o.windowId }
+    }
+    case 'emit': {
+      if (
+        typeof o.event !== 'string' ||
+        o.event.length === 0 ||
+        o.event.length > SCRIPT_LIMITS.maxStringLen
+      ) {
+        return null
+      }
+      if (typeof o.payload !== 'string' || o.payload.length > SCRIPT_LIMITS.maxStringLen) return null
+      return { t: 'emit', event: o.event, payload: o.payload }
+    }
+    default:
+      return null
+  }
+}
+
 /**
  * Decodes and validates a peer frame. Returns null for anything malformed —
  * wrong kind, bad JSON, missing/mistyped fields, out-of-vocabulary anim,
@@ -413,6 +919,15 @@ export function decode(data: Uint8Array): NetMessage | null {
         return { kind: MSG_LOCK, policy: body.policy as WorldEditPolicy }
       }
       return { kind: MSG_LOCK, policy: body.locked ? 'locked' : 'owner' }
+    }
+    case MSG_EVENT: {
+      if (!Array.isArray(body.effects)) return null
+      const effects: ScriptEffect[] = []
+      for (const raw of body.effects.slice(0, EFFECTS_MAX)) {
+        const effect = parseScriptEffect(raw)
+        if (effect) effects.push(effect)
+      }
+      return { kind: MSG_EVENT, effects }
     }
     case MSG_ROOM_ANNOUNCE: {
       if (!Array.isArray(body.rooms)) return null

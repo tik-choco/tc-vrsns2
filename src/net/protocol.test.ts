@@ -1,10 +1,14 @@
 // Node-environment tests for the wire protocol — no DOM/wasm imports.
 import { describe, expect, it } from 'vitest'
 import type { PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
+import { SCRIPT_LIMITS } from '../script/ir'
+import type { ScriptGraph, TriggerVolume, UiNode } from '../script/ir'
 import {
   ANNOUNCE_ROOMS_MAX,
+  EFFECTS_MAX,
   FALLBACK_NAME,
   MSG_CHAT,
+  MSG_EVENT,
   MSG_LOCK,
   MSG_OBJECTS,
   MSG_PROFILE,
@@ -14,9 +18,12 @@ import {
   MSG_WORLD,
   PEER_COUNT_MAX,
   type RoomAnnounceEntry,
+  type ScriptEffect,
   decode,
   encode,
   encodeRoomAnnounce,
+  parseScriptGraph,
+  parseTriggerVolume,
   sanitizeProfile,
   unwrapEnvelope,
 } from './protocol'
@@ -322,6 +329,325 @@ describe('world + object validation', () => {
     }))
     const msg = decode(frame(MSG_OBJECTS, { objects }))
     if (msg?.kind === MSG_OBJECTS) expect(msg.objects.length).toBe(64)
+  })
+})
+
+describe('script graph validation', () => {
+  it('round-trips a full graph and trigger through a placed object', () => {
+    const graph: ScriptGraph = {
+      v: 1,
+      nodes: [
+        { op: 'event/onStart', next: { out: 1 } },
+        { op: 'flow/say', in: { text: { k: 'lit', v: 'hi' } }, cfg: { volume: 1 } },
+      ],
+      vars: [{ name: 'count', type: 'number', init: 0 }],
+      ui: {
+        main: {
+          t: 'stack',
+          dir: 'col',
+          children: [{ t: 'text', text: 'hello', style: { color: '#fff' } }],
+        },
+      },
+      name: 'greeter',
+    }
+    const trigger: TriggerVolume = { shape: 'box', ox: 1, oy: 0, oz: -1, hx: 2, hy: 2, hz: 2 }
+    const objects: PlacedObject[] = [
+      {
+        id: 'a',
+        cid: 'c',
+        name: 'Door',
+        x: 0,
+        y: 0,
+        z: 0,
+        rotationY: 0,
+        scale: 1,
+        script: graph,
+        trigger,
+      },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('drops a malformed script and trigger but keeps the rest of the placement', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          {
+            id: 'a',
+            cid: 'c',
+            name: 'Door',
+            x: 0,
+            y: 0,
+            z: 0,
+            rotationY: 0,
+            scale: 1,
+            script: { v: 1, nodes: [{ op: 123 }], vars: [] }, // op must be a string
+            trigger: { shape: 'nonsense' },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(1)
+    expect(msg.objects[0].script).toBeUndefined()
+    expect(msg.objects[0].trigger).toBeUndefined()
+    expect(msg.objects[0].name).toBe('Door')
+  })
+
+  it('accepts a minimal graph and rejects non-object or wrong-version input', () => {
+    expect(parseScriptGraph({ v: 1, nodes: [], vars: [] })).toEqual({ v: 1, nodes: [], vars: [] })
+    expect(parseScriptGraph(null)).toBeNull()
+    expect(parseScriptGraph('nope')).toBeNull()
+    expect(parseScriptGraph([])).toBeNull()
+    expect(parseScriptGraph({ v: 2, nodes: [], vars: [] })).toBeNull()
+  })
+
+  it('accepts exactly maxNodes nodes and rejects one more', () => {
+    const atLimit = Array.from({ length: SCRIPT_LIMITS.maxNodes }, () => ({ op: 'flow/noop' }))
+    expect(parseScriptGraph({ v: 1, nodes: atLimit, vars: [] })?.nodes).toHaveLength(
+      SCRIPT_LIMITS.maxNodes,
+    )
+    const overLimit = Array.from({ length: SCRIPT_LIMITS.maxNodes + 1 }, () => ({
+      op: 'flow/noop',
+    }))
+    expect(parseScriptGraph({ v: 1, nodes: overLimit, vars: [] })).toBeNull()
+  })
+
+  it('accepts exactly maxVars declarations and rejects one more', () => {
+    const decl = (i: number) => ({ name: 'v' + i, type: 'number', init: 0 })
+    const atLimit = Array.from({ length: SCRIPT_LIMITS.maxVars }, (_, i) => decl(i))
+    expect(parseScriptGraph({ v: 1, nodes: [], vars: atLimit })?.vars).toHaveLength(
+      SCRIPT_LIMITS.maxVars,
+    )
+    const overLimit = Array.from({ length: SCRIPT_LIMITS.maxVars + 1 }, (_, i) => decl(i))
+    expect(parseScriptGraph({ v: 1, nodes: [], vars: overLimit })).toBeNull()
+  })
+
+  it('does not require a var init to match its declared type (that is validate.ts\'s job)', () => {
+    const graph = { v: 1, nodes: [], vars: [{ name: 'v', type: 'bool', init: 'not-a-bool' }] }
+    expect(parseScriptGraph(graph)).toEqual(graph)
+  })
+
+  it('accepts a string literal exactly at maxStringLen and rejects one over it', () => {
+    const atLimit = 'x'.repeat(SCRIPT_LIMITS.maxStringLen)
+    const ok = parseScriptGraph({
+      v: 1,
+      nodes: [{ op: 'flow/say', cfg: { text: atLimit } }],
+      vars: [],
+    })
+    expect(ok?.nodes[0].cfg?.text).toBe(atLimit)
+
+    const overLimit = atLimit + 'x'
+    expect(
+      parseScriptGraph({
+        v: 1,
+        nodes: [{ op: 'flow/say', cfg: { text: overLimit } }],
+        vars: [],
+      }),
+    ).toBeNull()
+    expect(
+      parseScriptGraph({
+        v: 1,
+        nodes: [],
+        vars: [{ name: 'v', type: 'string', init: overLimit }],
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects a graph whose serialized size exceeds maxGraphBytes even if every node is individually legal', () => {
+    const nodes = Array.from({ length: SCRIPT_LIMITS.maxNodes }, () => ({
+      op: 'x'.repeat(SCRIPT_LIMITS.maxStringLen),
+    }))
+    expect(parseScriptGraph({ v: 1, nodes, vars: [] })).toBeNull()
+  })
+
+  it('round-trips every ValueRef kind in a long, flat chain (no recursion needed — ValueRef never nests)', () => {
+    const nodes = Array.from({ length: 200 }, (_, i) => ({
+      op: 'flow/setVar',
+      in: {
+        a: { k: 'lit' as const, v: i },
+        b: { k: 'out' as const, n: i - 1, s: 'result' },
+        c: { k: 'var' as const, name: 'v' + i },
+      },
+    }))
+    const graph = { v: 1 as const, nodes, vars: [] }
+    expect(parseScriptGraph(graph)).toEqual(graph)
+  })
+
+  it('rejects a value ref with a bad literal or an unknown kind', () => {
+    expect(
+      parseScriptGraph({
+        v: 1,
+        nodes: [{ op: 'flow/setVar', in: { a: { k: 'lit', v: {} } } }],
+        vars: [],
+      }),
+    ).toBeNull()
+    expect(
+      parseScriptGraph({
+        v: 1,
+        nodes: [{ op: 'flow/setVar', in: { a: { k: 'nope' } } }],
+        vars: [],
+      }),
+    ).toBeNull()
+  })
+
+  it('caps a UI tree at maxUiNodes total nodes, root included', () => {
+    const childAt = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ t: 'text', text: 'n' + i }))
+    const atLimit = { t: 'stack', children: childAt(SCRIPT_LIMITS.maxUiNodes - 1) }
+    expect(
+      parseScriptGraph({ v: 1, nodes: [], vars: [], ui: { w: atLimit } }),
+    ).not.toBeNull()
+    const overLimit = { t: 'stack', children: childAt(SCRIPT_LIMITS.maxUiNodes) }
+    expect(parseScriptGraph({ v: 1, nodes: [], vars: [], ui: { w: overLimit } })).toBeNull()
+  })
+
+  it('caps a UI tree at maxUiDepth nesting and rejects one level deeper', () => {
+    function nest(depth: number): UiNode {
+      let node: UiNode = { t: 'text', text: 'leaf' }
+      for (let i = 0; i < depth; i++) node = { t: 'stack', children: [node] }
+      return node
+    }
+    const atLimit = nest(SCRIPT_LIMITS.maxUiDepth)
+    const overLimit = nest(SCRIPT_LIMITS.maxUiDepth + 1)
+    expect(parseScriptGraph({ v: 1, nodes: [], vars: [], ui: { w: atLimit } })).not.toBeNull()
+    expect(parseScriptGraph({ v: 1, nodes: [], vars: [], ui: { w: overLimit } })).toBeNull()
+  })
+
+  it('never blows the stack on a pathologically deep UI tree — the depth check bails out before recursing further', () => {
+    function nest(depth: number): UiNode {
+      let node: UiNode = { t: 'text', text: 'leaf' }
+      for (let i = 0; i < depth; i++) node = { t: 'stack', children: [node] }
+      return node
+    }
+    const veryDeep = nest(2000)
+    expect(() =>
+      parseScriptGraph({ v: 1, nodes: [], vars: [], ui: { w: veryDeep } }),
+    ).not.toThrow()
+    expect(parseScriptGraph({ v: 1, nodes: [], vars: [], ui: { w: veryDeep } })).toBeNull()
+  })
+
+  it('drops unknown style properties and oversized style values, keeping the rest', () => {
+    const raw = {
+      t: 'text',
+      text: 'hi',
+      style: {
+        color: '#fff',
+        position: 'fixed', // not in UI_STYLE_PROPS — dropped, doesn't reject the node
+        'font-size': 'x'.repeat(SCRIPT_LIMITS.maxStyleValueLen + 1), // too long — dropped
+      },
+    }
+    const graph = parseScriptGraph({ v: 1, nodes: [], vars: [], ui: { w: raw } })
+    expect(graph?.ui?.w).toEqual({ t: 'text', text: 'hi', style: { color: '#fff' } })
+  })
+})
+
+describe('trigger volume validation', () => {
+  it('round-trips a sphere and a box, and accepts a bare shape', () => {
+    expect(parseTriggerVolume({ shape: 'sphere', ox: 1, oy: 2, oz: 3, r: 5 })).toEqual({
+      shape: 'sphere',
+      ox: 1,
+      oy: 2,
+      oz: 3,
+      r: 5,
+    })
+    expect(parseTriggerVolume({ shape: 'box', hx: 1, hy: 2, hz: 3 })).toEqual({
+      shape: 'box',
+      hx: 1,
+      hy: 2,
+      hz: 3,
+    })
+    expect(parseTriggerVolume({ shape: 'sphere' })).toEqual({ shape: 'sphere' })
+  })
+
+  it('rejects an unknown or missing shape, and non-object input', () => {
+    expect(parseTriggerVolume({ shape: 'cone' })).toBeNull()
+    expect(parseTriggerVolume({})).toBeNull()
+    expect(parseTriggerVolume(null)).toBeNull()
+    expect(parseTriggerVolume('sphere')).toBeNull()
+  })
+
+  it('clamps offsets and extents to world bounds, and rejects a mistyped field', () => {
+    const ok = parseTriggerVolume({ shape: 'sphere', ox: 99999, r: -50 })
+    expect(ok).toEqual({ shape: 'sphere', ox: 1000, r: 0 })
+    expect(parseTriggerVolume({ shape: 'box', hx: 'nope' })).toBeNull()
+  })
+})
+
+describe('MSG_EVENT / ScriptEffect validation', () => {
+  it('round-trips one of each effect kind, including both window anchor modes', () => {
+    const effects: ScriptEffect[] = [
+      { t: 'say', objectId: 'obj1', text: 'hello' },
+      { t: 'sound', objectId: 'obj1', cid: 'bafySound' },
+      {
+        t: 'window',
+        scriptId: 'obj1',
+        windowId: 'win1',
+        ui: { t: 'text', text: 'hi' },
+        anchor: { mode: 'object', id: 'obj1', oy: 1.5 },
+      },
+      {
+        t: 'window',
+        scriptId: 'obj1',
+        windowId: 'win2',
+        ui: { t: 'stack', children: [{ t: 'button', text: 'Go', event: 'go' }] },
+        anchor: { mode: 'screen', x: 0.5, y: 0.9 },
+      },
+      { t: 'closeWindow', scriptId: 'obj1', windowId: 'win1' },
+      { t: 'emit', event: 'door.opened', payload: '{}' },
+    ]
+    expect(decode(encode({ kind: MSG_EVENT, effects }))).toEqual({ kind: MSG_EVENT, effects })
+  })
+
+  it('drops an unknown effect kind but keeps the rest of the batch', () => {
+    const msg = decode(
+      frame(MSG_EVENT, {
+        effects: [
+          { t: 'say', objectId: 'a', text: 'ok' },
+          { t: 'explode', objectId: 'a' },
+          { t: 'nonsense' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_EVENT) throw new Error('expected MSG_EVENT')
+    expect(msg.effects).toEqual([{ t: 'say', objectId: 'a', text: 'ok' }])
+  })
+
+  it('caps a frame at EFFECTS_MAX entries', () => {
+    const effects = Array.from({ length: EFFECTS_MAX + 20 }, (_, i) => ({
+      t: 'emit',
+      event: 'e' + i,
+      payload: '',
+    }))
+    const msg = decode(frame(MSG_EVENT, { effects }))
+    if (msg?.kind === MSG_EVENT) expect(msg.effects).toHaveLength(EFFECTS_MAX)
+  })
+
+  it('rejects the whole frame when effects is missing or not an array', () => {
+    expect(decode(frame(MSG_EVENT, {}))).toBeNull()
+    expect(decode(frame(MSG_EVENT, { effects: 'nope' }))).toBeNull()
+  })
+
+  it('caps say text like MSG_CHAT, and drops an oversized emit event but keeps a valid sibling', () => {
+    const msg = decode(
+      frame(MSG_EVENT, {
+        effects: [
+          { t: 'say', objectId: 'a', text: '  ' + 'x'.repeat(2000) },
+          { t: 'emit', event: 'e'.repeat(SCRIPT_LIMITS.maxStringLen + 1), payload: '' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_EVENT) throw new Error('expected MSG_EVENT')
+    expect(msg.effects).toHaveLength(1)
+    const [effect] = msg.effects
+    expect(effect.t).toBe('say')
+    if (effect.t === 'say') expect(effect.text).toBe('x'.repeat(1000))
+  })
+
+  it('rejects an oversized MSG_EVENT frame outright, like any other message', () => {
+    const big = new Uint8Array(300 * 1024)
+    big[0] = MSG_EVENT
+    expect(decode(big)).toBeNull()
   })
 })
 

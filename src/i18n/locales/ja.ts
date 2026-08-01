@@ -50,6 +50,7 @@ export const ja: Dict = {
   'menu.world': 'ワールド',
   'menu.objects': 'オブジェクト',
   'menu.room': 'ルーム',
+  'menu.ai': 'AI',
   'menu.settings': '設定',
   'menu.leave': '退室',
   'menu.close': '閉じる',
@@ -123,6 +124,23 @@ export const ja: Dict = {
   'objects.placedBy': '配置：{name}',
   'objects.orphans': '退室した人が残したものが{count}個あります。ルームを出るまで表示されますが、誰も編集できません。',
 
+  // ビヘイビア（スクリプト）の付与 — 編集ツールバーの「ビヘイビア」選択
+  'objects.script.label': 'ビヘイビア',
+  'objects.script.none': 'なし',
+  'objects.script.custom': 'カスタムスクリプト',
+  'objects.script.problem': 'このビヘイビアには問題があり、動作していません。',
+  'objects.script.problems': '{count}個の配置オブジェクトのビヘイビアが動作していません。',
+
+  // 組み込みビヘイビアのプリセット（src/script/presets.ts）
+  'presets.rotate.name': 'ゆっくり回転',
+  'presets.rotate.desc': 'その場でずっと回転し続けます。',
+  'presets.bob.name': 'ゆらゆら上下',
+  'presets.bob.desc': '置いた場所で上下にゆっくり揺れます。',
+  'presets.greeter.name': '出迎え',
+  'presets.greeter.desc': 'プレイヤーが近づくとメッセージを表示し、離れると消えます。',
+  'presets.toggle.name': 'サイズ切り替え',
+  'presets.toggle.desc': 'クリックすると大きくなり、もう一度クリックすると元に戻ります。',
+
   // Room panel
   'room.title': 'ルーム',
   'room.subtitle': '他の人を招待したり、ルームを切り替えます。',
@@ -147,6 +165,13 @@ export const ja: Dict = {
   'discover.peers': '{count}人',
   'discover.justNow': 'たった今',
   'discover.secondsAgo': '{count}秒前',
+
+  // AI panel（LLM接続・AI Network・タスクの設定）
+  'ai.title': 'AI',
+  'ai.task.script.label': 'スクリプト生成',
+  'ai.task.script.tip': '自然言語での指示をワールド内の動作スクリプトに変換します。',
+  'ai.network.modelNotShared': 'そのモデルはこの端末では共有されていません。',
+  'ai.network.notConfigured': 'AIがまだ設定されていません。',
 
   // Settings panel
   'settings.title': '設定',

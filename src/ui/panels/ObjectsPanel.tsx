@@ -14,6 +14,7 @@ type Props = Pick<
   | 'objectBusy'
   | 'objectError'
   | 'worldPolicy'
+  | 'scriptProblems'
   | 'onUploadObject'
   | 'onPlaceObject'
   | 'onClearObjects'
@@ -33,6 +34,7 @@ export function ObjectsPanel(props: Props) {
   // Under the 'everyone' policy anything with a live owner is editable, so the
   // button follows what is on show rather than only what we placed.
   const editableCount = props.worldPolicy === 'everyone' ? props.placedCount - props.orphanCount : props.ownPlacedCount
+  const scriptProblemCount = props.scriptProblems.size
 
   /** Editing happens on the canvas, so the panel gets out of the way first. */
   const startEditing = () => {
@@ -50,6 +52,11 @@ export function ObjectsPanel(props: Props) {
       {locked && <p class="panel-note">{t('world.lockedNotice')}</p>}
       {!locked && props.orphanCount > 0 && (
         <p class="panel-note is-muted">{t('objects.orphans', { count: props.orphanCount })}</p>
+      )}
+      {scriptProblemCount > 0 && (
+        <p class="panel-note is-warn" role="alert">
+          {t('objects.script.problems', { count: scriptProblemCount })}
+        </p>
       )}
       <CatalogPanel
         items={props.objectModels}

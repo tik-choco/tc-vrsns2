@@ -13,6 +13,9 @@ import type {
 import type { CharacterIndexEntry } from '../interop/townCharacters'
 import type { DiscoveredRoom } from '../net/DiscoverySession'
 import type { EditTool } from '../world/ObjectEditor'
+import type { ScriptError, ScriptWindow, UiAnchor } from '../script/ir'
+import type { ScriptPresetId } from '../script/presets'
+import type { ScreenProjection } from './ScriptWindow'
 
 export type { DiscoveredRoom, EditTool, WorldEditPolicy }
 
@@ -72,6 +75,25 @@ export type GameOverlayProps = {
   onSetEditMode: (enabled: boolean) => void
   onSetEditTool: (tool: EditTool) => void
   onDeleteSelectedObject: () => void
+  // scripting: attach a ready-made behaviour (src/script/presets.ts) to a
+  // placement, render the windows scripts open, and surface why one isn't
+  // running. Passing world reads as callbacks (rather than already-resolved
+  // data) mirrors onToggleView/onMobileMove etc. above — GameOverlay stays a
+  // thin, presentational layer, but a live window's position and a script's
+  // pass/fail state are inherently imperative, frame-by-frame facts about the
+  // 3D world, not render-time props.
+  /** Attaches a built-in preset to a placement the local player may edit, or removes its script when null. */
+  onSetObjectScript: (id: string, presetId: ScriptPresetId | null) => void
+  /** Validation/runaway problems per placement id, refreshed periodically while joined. */
+  scriptProblems: Map<string, ScriptError[]>
+  /** Every script window currently open, local and remote — call fresh each frame, never memoized. */
+  getScriptWindows: () => ScriptWindow[]
+  /** Projects a script window's anchor to screen space this frame, or null if it cannot be placed. */
+  projectScriptAnchor: (anchor: UiAnchor) => ScreenProjection | null
+  /** Resolves a content id to a blob URL for a script's ui/image node, through the shared content store. */
+  resolveScriptImage: (cid: string) => string | null
+  /** A button inside a script window was pressed. */
+  onScriptUiEvent: (scriptId: string, event: string) => void
   // profile + room + session
   onUpdateProfile: (patch: { name?: string; color?: string }) => void
   inviteUrl: string
