@@ -77,7 +77,20 @@ class FakeNode {
   updatePosition(x: number, y: number, z: number): void {
     this.positions.push([x, y, z])
   }
-  getNeighbors(): unknown[] {
+  /**
+   * Records the roomId it was asked for. The real wrapper dispatches on it —
+   * `mist_get_neighbors_in_room(roomId)` versus the node-wide
+   * `mist_get_neighbors()` — and the page shares one node across the user's
+   * room, the discovery lobby and the AI Network room, so which one
+   * RoomSession calls is a correctness question, not a detail.
+   * `neighborsThrow` reproduces the real "Room not joined" throw that happens
+   * between joinRoom() and the join taking effect.
+   */
+  neighborQueries: Array<string | undefined> = []
+  neighborsThrow = false
+  getNeighbors(roomId?: string): unknown[] {
+    this.neighborQueries.push(roomId)
+    if (this.neighborsThrow) throw new Error('Room not joined: ' + roomId)
     return this.neighbors
   }
   sendMessage(toId: string | null, bytes: Uint8Array, delivery: number): void {
@@ -263,6 +276,31 @@ describe('presence reconciliation', () => {
     fakeNode.neighbors = []
     vi.advanceTimersByTime(4500) // past PEER_TIMEOUT_MS
     expect(onLeft).toHaveBeenCalledWith('p1')
+  })
+
+  it('polls only OUR room, never the whole node', () => {
+    // The page shares one MistNode across the user's room, the always-on
+    // discovery lobby and the AI Network room. A node-wide poll would greet
+    // every lobby peer and every AI peer — including things that are not
+    // players at all, like another tc-* tab or a `mistl ai provide` daemon —
+    // as players, count them in "N online", and never reap them, since they
+    // stay in the node's neighbour list forever.
+    vi.advanceTimersByTime(1500)
+    expect(fakeNode.neighborQueries.length).toBeGreaterThan(0)
+    for (const roomId of fakeNode.neighborQueries) {
+      expect(roomId).toBe(fakeNode.joinedRooms[0])
+    }
+  })
+
+  it('does not reap anyone on a round where the topology could not be read', () => {
+    const onLeft = vi.fn()
+    session.onPeerLeft = onLeft
+    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
+    // The room-scoped query throws until the join takes effect. Treating that
+    // as "the room is empty" would tell the reaper everyone left.
+    fakeNode.neighborsThrow = true
+    vi.advanceTimersByTime(10000)
+    expect(onLeft).not.toHaveBeenCalled()
   })
 
   it('keeps a peer alive while it is listed in getNeighbors()', () => {
