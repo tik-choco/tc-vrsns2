@@ -278,6 +278,14 @@ body {
   box-shadow: var(--shadow-1);
 }
 .btn-primary:hover:not(:disabled) {
+  /* Re-assert the gradient: the generic .btn:hover rule's background wins on
+     specificity alone (0,2,0 vs. plain .btn-primary's 0,1,0) even though it
+     comes first in the file, silently swapping the accent gradient for the
+     translucent --fill-3 overlay on hover. That leaves --accent-contrast
+     (white in light theme) text on a near-white background — unreadable.
+     Caught by scripts/e2e-behaviour.mjs screenshotting Apply/Generate right
+     after a click, with the pointer still resting on the button. */
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   transform: translateY(-1px);
   box-shadow: var(--shadow-2);
 }
@@ -1805,4 +1813,157 @@ body {
 .script-ui-stack-row {
   flex-direction: row;
   align-items: center;
+}
+
+/* --- Behaviour dialog (R3: "describe it" natural-language scripting) ------
+   Opened from the edit toolbar's Behavior picker (BehaviourDialog.tsx).
+   Reuses .panel/.panel-note/.btn for its chrome so it reads as part of the
+   same design system; this section only adds the layout specific to its two
+   steps — the prompt form, and the approval step, where the model's own
+   claim and the structurally-derived summary are deliberately kept visually
+   distinct (see .behaviour-dialog-claim vs .behaviour-dialog-check). */
+
+.behaviour-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.behaviour-dialog-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.behaviour-dialog-textarea {
+  resize: vertical;
+  min-block-size: 5rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.behaviour-dialog-textarea::placeholder {
+  color: var(--text-faint);
+}
+.behaviour-dialog-textarea:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: var(--ring);
+}
+.behaviour-dialog-textarea:disabled {
+  opacity: 0.6;
+}
+.behaviour-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.behaviour-dialog-generating {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+}
+.behaviour-dialog-spinner {
+  flex: none;
+  inline-size: 1.3rem;
+  block-size: 1.3rem;
+  border-radius: var(--r-pill);
+  border: 3px solid var(--fill-2);
+  border-top-color: var(--accent);
+  animation: resume-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .behaviour-dialog-spinner {
+    animation: none;
+  }
+}
+/* Failure banner (unconfigured / unparsable / invalid / unsafe) — a column
+   layout so the message, the details disclosure and (for 'unconfigured') the
+   settings button stack cleanly without relying on <p> margins. */
+.behaviour-dialog-failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.behaviour-dialog-failure p {
+  margin: 0;
+}
+.behaviour-dialog-details {
+  inline-size: 100%;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.behaviour-dialog-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.behaviour-dialog-details ul {
+  margin: 0.4rem 0;
+  padding-inline-start: 1.2rem;
+}
+.behaviour-dialog-details pre {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem;
+  border-radius: var(--r-sm);
+  background: var(--fill-1);
+  max-block-size: 10rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.75rem;
+}
+.behaviour-dialog-approve {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.behaviour-dialog-section-label {
+  margin: 0 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+/* The model's own claim about what it built — a headline to read, not a
+   verified fact. Tinted like the picker's other advisory notes so it never
+   reads as more authoritative than it is. */
+.behaviour-dialog-claim {
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--r-md);
+  background: var(--accent-tint);
+}
+.behaviour-dialog-claim-text {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+/* What the graph structurally does (describeGraph() output) — the list the
+   claim above is checked against, kept in a visually separate, neutral block
+   so the two are never mistaken for one merged statement. */
+.behaviour-dialog-check {
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+.behaviour-dialog-summary {
+  margin: 0;
+  max-block-size: 14rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-dim);
 }

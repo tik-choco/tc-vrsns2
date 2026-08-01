@@ -44,9 +44,25 @@ function formatKnownArgs(node: ScriptNode, desc: NodeDesc): string {
   return parts.length > 0 ? ` [${parts.join(', ')}]` : ''
 }
 
-/** One line describing what a single non-control-flow node does, straight from its own doc string. */
+/**
+ * The first sentence of a catalogue doc string, without its full stop.
+ *
+ * Catalogue docs are written for whoever is CHOOSING a node, so they often
+ * carry authoring advice after the first sentence ("Use it for continuous
+ * motion; prefer a trigger event for anything that happens once."). That advice
+ * is noise in a summary of a graph that has already been built, and it made
+ * the approval step's "what it actually does" text — the thing a user is
+ * supposed to check the AI's claim against — genuinely hard to read.
+ */
+function leadSentence(doc: string): string {
+  const end = doc.search(/[.!?](\s|$)/)
+  const lead = end < 0 ? doc : doc.slice(0, end)
+  return lead.trim()
+}
+
+/** One line describing what a single non-control-flow node does, from its own doc string. */
 function describeAction(node: ScriptNode, desc: NodeDesc): string {
-  return `${desc.doc}${formatKnownArgs(node, desc)}`
+  return `${leadSentence(desc.doc)}${formatKnownArgs(node, desc)}`
 }
 
 /**
