@@ -19,6 +19,8 @@ export class RemotePlayerView {
   private stateMachine: CharacterStateMachine
   private nameTag: NameTag
   private chatBubble: ChatBubble
+  /** Cached so World.tick() can key the script occupant map by name without a lookup elsewhere. */
+  private name: string
 
   private targetPosition = new THREE.Vector3()
   private targetYaw = 0
@@ -34,10 +36,17 @@ export class RemotePlayerView {
     this.chatBubble = new ChatBubble()
     this.root.add(this.nameTag.sprite)
     this.root.add(this.chatBubble.sprite)
+    this.name = profile.name
     this.setProfile(profile)
   }
 
+  /** This peer's current display name — what event/onTriggerEnter hands a script (see ScriptRuntime.tick). */
+  get displayName(): string {
+    return this.name
+  }
+
   setProfile(profile: PlayerProfile): void {
+    this.name = profile.name
     this.nameTag.setLabel(profile.name, profile.color)
     this.rig.setColor(profile.color)
   }

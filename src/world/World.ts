@@ -6,6 +6,9 @@
 // procedurally in code and the default avatar is built from three.js
 // primitives (no assets from the predecessor app are used).
 import * as THREE from 'three'
+import type { ScriptEffect } from '../net/protocol'
+import type { ScriptError, UiAnchor, ScriptWindow, Vec3 } from '../script/ir'
+import { ScriptRuntime } from '../script/ScriptRuntime'
 import type { AnimState, PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
 import { AvatarRig } from './AvatarRig'
 import { loadBakedSourceClips } from './bakedClips'
@@ -14,6 +17,7 @@ import { CharacterController } from './CharacterController'
 import { CharacterStateMachine } from './stateMachine'
 import { ChatBubble, NameTag } from './overheadSprites'
 import { RemotePlayerView } from './RemotePlayerView'
+import { WorldScriptBridge } from './scriptBridge'
 import { disposeVrm, loadVrmFromBytes, vrmMetaSummary, type VrmMeta } from './vrmLoader'
 import { WorldManager } from './WorldManager'
 import { WorldObjects, type PlacementSource } from './WorldObjects'
@@ -59,6 +63,22 @@ export class World {
   private grid!: THREE.GridHelper
   private ground!: THREE.Mesh
 
+  // In-world scripting (R1: local only — see ScriptRuntime for the sync/tick split).
+  private scriptRuntime: ScriptRuntime
+  /**
+   * Maintained by syncScripts() (change-driven), read by tick() every frame.
+   * This is the whole "zero cost when nothing is scripted" story: tick()
+   * checks this one boolean before building an occupant map or calling into
+   * ScriptRuntime at all, so a room with no scripts pays nothing per frame.
+   */
+  private hasScripts = false
+  private soundResolver: ((cid: string) => Promise<Uint8Array | null>) | null = null
+  private scriptSayListener: ((objectId: string, text: string) => void) | null = null
+  /** The caller's onObjectEdited callback, invoked after this class's own script sync. */
+  private objectEditedListener: ((state: PlacedObject) => void) | null = null
+  /** Cached from setLocalProfile: what event/onTriggerEnter and onInteract hand a script for "who". */
+  private localProfileName = ''
+
   // Remote players.
   private remotes = new Map<string, RemotePlayerView>()
   private remoteAvatarTokens = new Map<string, number>()
@@ -66,6 +86,45 @@ export class World {
   // Local state notification (fixed ~10Hz).
   private stateListeners: Array<(s: PlayerState) => void> = []
   private lastEmitAt = 0
+
+  /**
+   * Clicking fires event/onInteract, but ONLY outside edit mode — the left
+   * button belongs to ObjectEditor's picking/gizmo there (see
+   * CameraController.setEditMode). Raycasts from the center of the viewport
+   * rather than the click coordinates: this world has no crosshair sprite
+   * (dropped along with top-down mode, see CameraController's header
+   * comment), but once the pointer is locked for normal play its clientX/Y
+   * freezes wherever the cursor happened to be when the lock engaged, so the
+   * screen center is the only aim point that is meaningful (and correct)
+   * both locked and unlocked.
+   */
+  /** Reused across clicks — a Raycaster per pointerdown is pure garbage churn. */
+  private readonly interactRaycaster = new THREE.Raycaster()
+  private readonly interactNdc = new THREE.Vector2()
+
+  private readonly onInteractPointerDown = (e: PointerEvent): void => {
+    if (!this.hasScripts || this.objectEditor.isEnabled || e.button !== 0) return
+    // Where the ray comes from depends on whether there is a cursor to aim
+    // with. Pointer-locked play has none — clientX/Y freeze wherever the
+    // cursor was when the lock engaged — so the viewport centre IS the aim
+    // point. Unlocked (a panel is open, a touch device, or before the first
+    // lock) the user is pointing at something specific, and firing from the
+    // centre would activate whatever happens to be straight ahead instead of
+    // what they actually tapped.
+    if (document.pointerLockElement === this.canvas) {
+      this.interactNdc.set(0, 0)
+    } else {
+      const rect = this.canvas.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+      this.interactNdc.set(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      )
+    }
+    this.interactRaycaster.setFromCamera(this.interactNdc, this.camera)
+    const hit = this.worldObjects.raycast(this.interactRaycaster)
+    if (hit) this.scriptRuntime.interact(hit, this.localProfileName)
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -103,6 +162,31 @@ export class World {
     this.camera.add(this.audioListener)
     this.worldObjects = new WorldObjects(this.scene, this.audioListener)
     this.objectEditor = new ObjectEditor(this.scene, this.camera, canvas, this.worldObjects)
+    // Wrap the editor's own commit callback: a committed edit changes a
+    // placement's transform, which is exactly the kind of change sync() must
+    // see (a script's trigger volume follows its object's origin — see
+    // triggers.ts), so this class's own sync runs before whatever the caller
+    // installs via onObjectEdited() below.
+    this.objectEditor.onCommit = (state) => {
+      this.syncScripts()
+      this.objectEditedListener?.(state)
+    }
+
+    this.scriptRuntime = new ScriptRuntime(
+      new WorldScriptBridge(
+        this.worldObjects,
+        () =>
+          this.started
+            ? {
+                x: this.localRoot.position.x,
+                y: this.localRoot.position.y,
+                z: this.localRoot.position.z,
+              }
+            : null,
+        () => this.localProfileName,
+      ),
+    )
+    canvas.addEventListener('pointerdown', this.onInteractPointerDown)
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize())
     this.resizeObserver.observe(canvas.parentElement ?? canvas)
@@ -122,6 +206,7 @@ export class World {
   }
 
   setLocalProfile(profile: PlayerProfile): void {
+    this.localProfileName = profile.name
     this.localNameTag.setLabel(profile.name, profile.color)
     this.localRig.setColor(profile.color)
   }
@@ -337,14 +422,16 @@ export class World {
    * distance is left to WorldObjects, which spaces media further out than
    * props.
    */
-  placeObject(bytes: Uint8Array, source: PlacementSource): Promise<PlacedObject> {
+  async placeObject(bytes: Uint8Array, source: PlacementSource): Promise<PlacedObject> {
     const p = this.localRoot.position
     const h = this.characterController.heading
     const anchor = {
       position: [p.x, 0, p.z] as [number, number, number],
       forward: [Math.sin(h), 0, Math.cos(h)] as [number, number, number],
     }
-    return this.worldObjects.place(bytes, source, anchor)
+    const state = await this.worldObjects.place(bytes, source, anchor)
+    this.syncScripts()
+    return state
   }
 
   /**
@@ -352,11 +439,12 @@ export class World {
    * The caller passes the union across owners — WorldObjects tracks one set,
    * so any id absent from `states` is removed.
    */
-  syncObjects(
+  async syncObjects(
     states: PlacedObject[],
     resolveBytes: (cid: string) => Promise<Uint8Array | null>,
   ): Promise<void> {
-    return this.worldObjects.syncRemote(states, resolveBytes)
+    await this.worldObjects.syncRemote(states, resolveBytes)
+    this.syncScripts()
   }
 
   /** Snapshot of every placed object currently in the scene. */
@@ -367,6 +455,21 @@ export class World {
   /** Remove every placed object from the local scene view. */
   clearObjects(): void {
     this.worldObjects.clearAll()
+    this.syncScripts()
+  }
+
+  /**
+   * Reconciles ScriptRuntime to the current placed-object set and refreshes
+   * the cheap `hasScripts` flag tick() early-outs on. CHANGE-driven only —
+   * see the file header of ScriptRuntime for why calling sync() every frame
+   * would silently reset every script's variables. The only call sites are
+   * the ones above (place/sync/clear) and a committed edit, wired in the
+   * constructor onto objectEditor.onCommit.
+   */
+  private syncScripts(): void {
+    const objects = this.worldObjects.list()
+    this.scriptRuntime.sync(objects)
+    this.hasScripts = objects.some((o) => o.script !== undefined)
   }
 
   // --- editing placed objects ----------------------------------------------
@@ -399,9 +502,78 @@ export class World {
     this.objectEditor.onSelectionChange = cb
   }
 
-  /** Notified with the placement's new state each time a gizmo drag finishes. */
+  /**
+   * Notified with the placement's new state each time a gizmo drag finishes.
+   * Fires after this class's own script sync (see the constructor's wrapping
+   * of objectEditor.onCommit) — the caller sees a world that already
+   * reflects the edit.
+   */
   onObjectEdited(cb: (state: PlacedObject) => void): void {
-    this.objectEditor.onCommit = cb
+    this.objectEditedListener = cb
+  }
+
+  // --- in-world scripting (R1: local only) ---------------------------------
+
+  /** Installs the resolver used to fetch bytes for a script's `sound` effect (see WorldObjects.playOneShot). */
+  setSoundResolver(resolve: (cid: string) => Promise<Uint8Array | null>): void {
+    this.soundResolver = resolve
+  }
+
+  /** Every script window to render right now (local scripts only in R1; ScriptRuntime already merges remote in R2). */
+  scriptWindows(): ScriptWindow[] {
+    return this.scriptRuntime.windows()
+  }
+
+  /**
+   * Projects a script UI window's anchor (ir.ts UiAnchor) to CSS pixel
+   * coordinates in the canvas's own coordinate space, for the UI layer to
+   * position an overlay with. `mode: 'object'` follows a placed object
+   * (returns null once it is gone, `visible: false` once it is behind the
+   * camera); `mode: 'screen'` is a fixed normalized 0..1 position and is
+   * always visible.
+   */
+  projectAnchor(anchor: UiAnchor): { x: number; y: number; visible: boolean } | null {
+    const rect = this.canvas.getBoundingClientRect()
+    const width = rect.width || this.canvas.width
+    const height = rect.height || this.canvas.height
+    if (width <= 0 || height <= 0) return null
+
+    if (anchor.mode === 'screen') {
+      return { x: anchor.x * width, y: anchor.y * height, visible: true }
+    }
+
+    const state = this.worldObjects.stateOf(anchor.id)
+    if (!state) return null
+    const worldPos = new THREE.Vector3(state.x, state.y + (anchor.oy ?? 0), state.z)
+
+    // Vector3.project()'s NDC z/w alone is not a reliable "is this behind
+    // me" test near the camera plane (w can flip sign, which also flips x/y
+    // into a mirrored on-screen position rather than just failing). A plain
+    // dot product against the camera's forward vector has neither problem.
+    const camForward = new THREE.Vector3()
+    this.camera.getWorldDirection(camForward)
+    const toPoint = worldPos.clone().sub(this.camera.position)
+    const visible = camForward.dot(toPoint) > 0
+
+    const ndc = worldPos.clone().project(this.camera)
+    const x = (ndc.x * 0.5 + 0.5) * width
+    const y = (1 - (ndc.y * 0.5 + 0.5)) * height
+    return { x, y, visible }
+  }
+
+  /** A player pressed a button inside one of a script's windows; fires event/onUiEvent on that script. */
+  fireScriptUiEvent(scriptId: string, event: string): void {
+    this.scriptRuntime.uiEvent(scriptId, event, this.localProfileName)
+  }
+
+  /** Notified whenever a script's `say` effect fires, so the UI can post it as a chat line. World never touches chat UI itself. */
+  onScriptSay(cb: (objectId: string, text: string) => void): void {
+    this.scriptSayListener = cb
+  }
+
+  /** Why a script isn't running — failed validation, or halted as runaway — keyed by object id. Empty when everything is healthy. */
+  scriptProblems(): Map<string, ScriptError[]> {
+    return this.scriptRuntime.problems()
   }
 
   // --- input relays (mobile UI + view toggle) ------------------------------
@@ -427,6 +599,7 @@ export class World {
     if (this.disposed) return
     this.disposed = true
     this.renderer.setAnimationLoop(null)
+    this.canvas.removeEventListener('pointerdown', this.onInteractPointerDown)
     this.resizeObserver.disconnect()
     this.characterController.dispose()
     this.cameraController.dispose()
@@ -517,8 +690,66 @@ export class World {
     this.worldManager.update(delta)
     this.worldObjects.update(delta)
     this.objectEditor.update()
+    this.tickScripts(delta)
     this.emitLocalState()
     this.renderer.render(this.scene, this.camera)
+  }
+
+  /**
+   * Runs one frame of every attached script. `hasScripts` (maintained by
+   * syncScripts(), change-driven) is checked FIRST and is the entire cost
+   * for the overwhelming majority of rooms, which have no scripts at all —
+   * the occupant map is never allocated and ScriptRuntime.tick() is never
+   * called when it is false.
+   */
+  private tickScripts(delta: number): void {
+    if (!this.hasScripts) return
+
+    // Keyed by DISPLAY NAME, not peer/session id: that is what
+    // event/onTriggerEnter and event/onInteract hand a script (see
+    // ScriptRuntime.tick's doc comment). Two occupants sharing a name
+    // collapse into one entry, same tradeoff ScriptRuntime already accepts.
+    const occupants = new Map<string, Vec3>()
+    occupants.set(this.localProfileName, {
+      x: this.localRoot.position.x,
+      y: this.localRoot.position.y,
+      z: this.localRoot.position.z,
+    })
+    for (const view of this.remotes.values()) {
+      occupants.set(view.displayName, {
+        x: view.root.position.x,
+        y: view.root.position.y,
+        z: view.root.position.z,
+      })
+    }
+
+    const effects = this.scriptRuntime.tick(delta, occupants)
+    if (effects.length > 0) this.applyScriptEffects(effects)
+  }
+
+  /**
+   * Applies one frame's script effects locally (R1). Written so R2 can
+   * broadcast this exact array as a MSG_EVENT frame at this same seam without
+   * changing how a single effect is applied: `window`/`closeWindow` need
+   * nothing done here (the host already holds them; scriptWindows() is the
+   * accessor), and `emit` is already fully handled inside ScriptRuntime.
+   */
+  private applyScriptEffects(effects: ScriptEffect[]): void {
+    for (const effect of effects) {
+      if (effect.t === 'say') {
+        this.scriptSayListener?.(effect.objectId, effect.text)
+      } else if (effect.t === 'sound') {
+        void this.playScriptSound(effect.objectId, effect.cid)
+      }
+    }
+  }
+
+  /** Resolves a `sound` effect's bytes through the installed resolver and plays them as a one-shot at the object. */
+  private async playScriptSound(objectId: string, cid: string): Promise<void> {
+    if (!this.soundResolver) return
+    const bytes = await this.soundResolver(cid)
+    if (!bytes || this.disposed) return
+    this.worldObjects.playOneShot(objectId, bytes)
   }
 
   private emitLocalState(): void {

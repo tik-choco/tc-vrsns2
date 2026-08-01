@@ -271,6 +271,38 @@ export class WorldObjects {
     entry.state = { ...entry.state, ...state }
   }
 
+  /**
+   * Plays a one-shot positional sound at a placed object, for a script's
+   * `sound` effect (see ScriptEffect in net/protocol.ts). Reuses the exact
+   * PositionalAudio-on-AudioListener pipeline built for placed video/audio
+   * (attachPositionalAudio) rather than a second audio path, and the same
+   * autoplay handling (startMedia): a script can fire this with no user
+   * gesture on this tab, so playback must start muted and never throw or
+   * leave the AudioContext stuck suspended. A no-op if the object is gone or
+   * the world has no listener. The PositionalAudio is parented to the
+   * object's own scene node, so the sound tracks it if it moves, and is torn
+   * down when playback ends.
+   */
+  playOneShot(objectId: string, bytes: Uint8Array, mime?: string): void {
+    const object = this.objectFor(objectId)
+    if (!object || !this.listener) return
+    const url = blobUrl(bytes, mime)
+    const audio = document.createElement('audio')
+    audio.src = url
+    const sound = this.attachPositionalAudio(object, audio)
+    if (!sound) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    const cleanup = (): void => {
+      object.remove(sound)
+      sound.disconnect()
+      stopMedia(audio, url)
+    }
+    audio.addEventListener('ended', cleanup, { once: true })
+    startMedia(audio, this.listener)
+  }
+
   /** Animates the "now playing" pulse on audio markers. Safe to call every frame. */
   update(delta: number): void {
     if (this.objects.size === 0) return

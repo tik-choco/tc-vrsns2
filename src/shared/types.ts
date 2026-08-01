@@ -1,5 +1,12 @@
 // Shared contract types between the world (3D), net (P2P), and UI layers.
 // Keep this file dependency-free: it must be importable from any layer.
+//
+// The one exception is script/ir.ts, which is itself types-and-frozen-constants
+// only (no imports, no runtime behaviour) — importing its types here does not
+// create a real dependency edge, so the "dependency-free" rule still holds in
+// spirit: nothing in this file can ever end up pulling in three.js, the DOM,
+// or the network.
+import type { ScriptGraph, TriggerVolume } from '../script/ir'
 
 /** Animation states driven by the character state machine and mirrored to peers. */
 export type AnimState = 'idle' | 'walk' | 'run' | 'jump' | 'fall'
@@ -101,4 +108,17 @@ export type PlacedObject = {
    * before this field existed.
    */
   placedBy?: string
+  /**
+   * The behaviour attached to this placement, if any. Runs owner-authoritative
+   * (see src/ui/objectRegistry.ts — "publishing an id IS the claim"): a peer
+   * never executes another peer's script, only the one currently publishing
+   * this object does. Absent on placements without a script and on placements
+   * from a peer predating scripting.
+   */
+  script?: ScriptGraph
+  /**
+   * The region that fires event/onTriggerEnter and event/onTriggerExit for
+   * this placement's script. Absent means the placement has no trigger.
+   */
+  trigger?: TriggerVolume
 }

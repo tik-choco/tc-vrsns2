@@ -10,6 +10,7 @@ import {
   Boxes,
   Home,
   Compass,
+  Bot,
   Settings as SettingsIcon,
   LogOut,
   Lock,
@@ -21,14 +22,16 @@ import type { GameOverlayProps } from './uiContract'
 import { ChatPanel } from './ChatPanel'
 import { EditToolbar } from './EditToolbar'
 import { MobileControls } from './MobileControls'
+import { ScriptWindowsHost } from './ScriptWindowsHost'
 import { AvatarPanel } from './panels/AvatarPanel'
 import { WorldPanel } from './panels/WorldPanel'
 import { ObjectsPanel } from './panels/ObjectsPanel'
 import { RoomPanel } from './panels/RoomPanel'
 import { DiscoveryPanel } from './panels/DiscoveryPanel'
 import { SettingsPanel } from './panels/SettingsPanel'
+import { AiPanel } from './panels/AiPanel'
 
-type PanelId = 'avatar' | 'world' | 'objects' | 'room' | 'discover' | 'settings'
+type PanelId = 'avatar' | 'world' | 'objects' | 'room' | 'discover' | 'ai' | 'settings'
 
 // All lucide-preact icons share one component type; borrow it from any import.
 type IconComponent = typeof Menu
@@ -40,6 +43,7 @@ const MENU: MenuEntry[] = [
   { id: 'objects', icon: Boxes, labelKey: 'menu.objects' },
   { id: 'room', icon: Home, labelKey: 'menu.room' },
   { id: 'discover', icon: Compass, labelKey: 'discover.title' },
+  { id: 'ai', icon: Bot, labelKey: 'menu.ai' },
   { id: 'settings', icon: SettingsIcon, labelKey: 'menu.settings' },
   { id: 'leave', icon: LogOut, labelKey: 'menu.leave' },
 ]
@@ -247,8 +251,20 @@ export function GameOverlay(props: GameOverlayProps) {
           onSetEditTool={props.onSetEditTool}
           onDeleteSelectedObject={props.onDeleteSelectedObject}
           onSetEditMode={props.onSetEditMode}
+          onSetObjectScript={props.onSetObjectScript}
+          scriptProblems={props.scriptProblems}
         />
       )}
+
+      {/* Windows opened by in-world scripts (ui/showWindow), reprojected every
+          frame so they never lag the object they follow. Takes no pointer
+          events of its own outside each window's box — see ScriptWindow.tsx. */}
+      <ScriptWindowsHost
+        getWindows={props.getScriptWindows}
+        project={props.projectScriptAnchor}
+        resolveImage={props.resolveScriptImage}
+        onUiEvent={props.onScriptUiEvent}
+      />
 
       {/* Mobile on-screen controls (CSS-gated to touch devices) */}
       <MobileControls
@@ -297,6 +313,7 @@ export function GameOverlay(props: GameOverlayProps) {
       {panel === 'objects' && <ObjectsPanel {...props} onClose={closePanel} />}
       {panel === 'room' && <RoomPanel {...props} onClose={closePanel} />}
       {panel === 'discover' && <DiscoveryPanel {...props} onClose={closePanel} />}
+      {panel === 'ai' && <AiPanel onClose={closePanel} />}
       {panel === 'settings' && <SettingsPanel {...props} onClose={closePanel} />}
     </div>
   )

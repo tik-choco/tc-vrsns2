@@ -13,6 +13,9 @@ import type {
 import { World } from '../world/World'
 import type { EditTool } from '../world/ObjectEditor'
 import { detectWorldFormat } from '../world/worldFormat'
+import type { ScriptError, ScriptWindow, UiAnchor } from '../script/ir'
+import { scriptPreset, type ScriptPresetId } from '../script/presets'
+import type { ScreenProjection } from './ScriptWindow'
 import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat'
 import { captureMediaThumbnail } from '../world/mediaThumbnail'
 import { RoomSession } from '../net/RoomSession'
@@ -140,6 +143,19 @@ export type SessionApi = {
   setEditMode: (enabled: boolean) => void
   setEditTool: (tool: EditTool) => void
   deleteSelectedObject: () => void
+  // scripting: attach a preset behaviour, render its windows, surface problems
+  /** Attaches a built-in preset (src/script/presets.ts) to a placement, or clears its script when null. Gated the same as any other edit. */
+  setObjectScript: (id: string, presetId: ScriptPresetId | null) => void
+  /** Validation/runaway problems per placement id, polled while joined (see the effect below — this is inherently dynamic, not event-driven). */
+  scriptProblems: Map<string, ScriptError[]>
+  /** Every script window currently open. Call fresh each frame — never memoize the result. */
+  getScriptWindows: () => ScriptWindow[]
+  /** Projects a script window's anchor to screen space this frame. */
+  projectScriptAnchor: (anchor: UiAnchor) => ScreenProjection | null
+  /** Resolves a script's ui/image `cid` to a blob URL via the same content store avatars/media use. */
+  resolveScriptImage: (cid: string) => string | null
+  /** A button inside one of a script's windows was pressed. */
+  onScriptUiEvent: (scriptId: string, event: string) => void
   // profile + camera + mobile
   updateProfile: (patch: { name?: string; color?: string }) => void
   toggleView: () => void
@@ -150,6 +166,16 @@ export type SessionApi = {
 }
 
 const MAX_MESSAGES = 200
+/** Chat name color for script `say` output — the same muted gray used for an
+ * as-yet-unprofiled remote player, so a script's line reads as "not a
+ * person" without needing its own palette entry. */
+const SCRIPT_CHAT_COLOR = '#8a8f9d'
+/** How often scriptProblems() is re-polled from the World while joined. It is
+ * a dynamic fact (a script can go from healthy to runaway-halted between
+ * frames), but the editor's warning icon does not need frame-rate accuracy —
+ * this just needs to be fast enough that "I attached a broken behaviour" is
+ * visibly flagged, not fast enough to animate. */
+const SCRIPT_PROBLEMS_POLL_MS = 500
 /**
  * How long a join waits for the peers' MSG_WORLD / MSG_LOCK replay before
  * restoring the room-wide half of its own autosave. Anyone already in the room
@@ -235,6 +261,17 @@ export function useSession(): SessionApi {
   const [worldBusy, setWorldBusy] = useState(false)
   const [objectBusy, setObjectBusy] = useState(false)
   const [objectError, setObjectError] = useState<ObjectUploadError | null>(null)
+  const [scriptProblems, setScriptProblems] = useState<Map<string, ScriptError[]>>(new Map())
+
+  // cid -> blob URL cache for script ui/image nodes, through the same
+  // content-store path avatars and placed media already resolve bytes from.
+  // resolveScriptImage must be synchronous (ScriptWindowLayer calls it at
+  // render time), so a cache miss kicks off the async fetch in the
+  // background and returns null for this frame; the image appears once the
+  // fetch resolves and bumps scriptImageTick to force a re-render.
+  const scriptImageCache = useRef(new Map<string, string>())
+  const scriptImagePending = useRef(new Set<string>())
+  const [, setScriptImageTick] = useState(0)
 
   // Guards catalog-thumb hydration (below) against setting state after unmount.
   const mountedRef = useRef(true)
@@ -439,6 +476,21 @@ export function useSession(): SessionApi {
     })
     world.onObjectSelected(setSelectedObject)
     world.onObjectEdited((state) => objectEditedRef.current(state))
+    world.setSoundResolver(resolveBytes)
+    // A script's chat/say output is attributed to the object, not a player —
+    // fromId is namespaced under a prefix no peer id can produce, and the
+    // name is bracketed so it reads as "not a person" at a glance even
+    // without inspecting color or fromId.
+    world.onScriptSay((objectId, text) => {
+      const objectName = world.listPlacedObjects().find((o) => o.id === objectId)?.name ?? ''
+      pushMessage({
+        fromId: `script:${objectId}`,
+        name: objectName ? `[${objectName}]` : '[object]',
+        color: SCRIPT_CHAT_COLOR,
+        text,
+        at: Date.now(),
+      })
+    })
     worldRef.current = world
     if (vrsnsDebug) {
       vrsnsDebug.objects = () => world.listPlacedObjects()
@@ -1105,6 +1157,97 @@ export function useSession(): SessionApi {
     reconcileObjects()
   }, [commitOwnObjects, reconcileObjects])
 
+  // --- scripting: attach a preset behaviour, render its windows, surface problems ---
+
+  /**
+   * Attaches a built-in preset (see src/script/presets.ts) to a placement, or
+   * clears its script/trigger when presetId is null. Gated exactly like any
+   * other edit — editableIds() already encodes "own placements only" under
+   * 'owner' and "anything currently published" under 'everyone' — and flows
+   * through claim()/commitOwnObjects(), the same single path every other
+   * object edit uses, so the attach is published, autosaved (worldSave.ts)
+   * and (once room sync lands) broadcast without a second storage path.
+   * reconcileObjects() re-syncs the World from the updated union so its
+   * ScriptRuntime picks the change up this frame, the same way placing or
+   * clearing objects already does.
+   */
+  const setObjectScript = useCallback(
+    (id: string, presetId: ScriptPresetId | null) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current) return
+      const preset = presetId ? scriptPreset(presetId) : null
+      const next: PlacedObject = { ...current }
+      if (preset) {
+        next.script = preset.graph
+        next.trigger = preset.trigger
+      } else {
+        delete next.script
+        delete next.trigger
+      }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /** Every script window currently open. Called fresh every frame by ScriptWindowsHost — never memoize the result. */
+  const getScriptWindows = useCallback((): ScriptWindow[] => worldRef.current?.scriptWindows() ?? [], [])
+
+  /** Projects a script window's anchor to screen space this frame. */
+  const projectScriptAnchor = useCallback(
+    (anchor: UiAnchor): ScreenProjection | null => worldRef.current?.projectAnchor(anchor) ?? null,
+    [],
+  )
+
+  const onScriptUiEvent = useCallback((scriptId: string, event: string) => {
+    worldRef.current?.fireScriptUiEvent(scriptId, event)
+  }, [])
+
+  /**
+   * Resolves a script's ui/image `cid` to a blob URL, synchronously — see the
+   * cache declared above. ScriptWindowLayer calls this at render time, so a
+   * miss kicks off the fetch and returns null for this frame; the image
+   * appears once the fetch resolves and bumps the tick to force a re-render.
+   * The cache is bounded by how many distinct cids a script author actually
+   * shows, and is revoked wholesale on unmount (see the disposal effect
+   * below) rather than per-entry, since a script may reuse the same cid
+   * across several windows or show it again after hiding it.
+   */
+  const resolveScriptImage = useCallback((cid: string): string | null => {
+    const cached = scriptImageCache.current.get(cid)
+    if (cached) return cached
+    if (!scriptImagePending.current.has(cid)) {
+      scriptImagePending.current.add(cid)
+      void catalogBytes(cid)
+        .then((bytes) => {
+          const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+          const url = URL.createObjectURL(new Blob([buffer]))
+          scriptImageCache.current.set(cid, url)
+          setScriptImageTick((n) => n + 1)
+        })
+        .catch((e) => console.debug('script image resolve failed', cid, e))
+        .finally(() => scriptImagePending.current.delete(cid))
+    }
+    return null
+  }, [])
+
+  // Problems (validation failures, runaway halts) are a dynamic fact of the
+  // running VM, not something any single event produces — so they're polled
+  // rather than pushed, same rationale as SCRIPT_PROBLEMS_POLL_MS's comment.
+  useEffect(() => {
+    if (phase !== 'joined') {
+      setScriptProblems(new Map())
+      return
+    }
+    const id = setInterval(() => {
+      setScriptProblems(worldRef.current?.scriptProblems() ?? new Map())
+    }, SCRIPT_PROBLEMS_POLL_MS)
+    return () => clearInterval(id)
+  }, [phase])
+
   // --- camera + mobile -------------------------------------------------------
 
   const toggleView = useCallback(() => worldRef.current?.toggleView(), [])
@@ -1118,6 +1261,8 @@ export function useSession(): SessionApi {
       audioRef.current?.dispose()
       worldRef.current?.dispose()
       worldRef.current = null
+      for (const url of scriptImageCache.current.values()) URL.revokeObjectURL(url)
+      scriptImageCache.current.clear()
     }
   }, [])
 
@@ -1224,6 +1369,12 @@ export function useSession(): SessionApi {
     setEditMode,
     setEditTool,
     deleteSelectedObject,
+    setObjectScript,
+    scriptProblems,
+    getScriptWindows,
+    projectScriptAnchor,
+    resolveScriptImage,
+    onScriptUiEvent,
     updateProfile,
     toggleView,
     setMobileMove,
