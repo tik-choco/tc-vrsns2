@@ -700,27 +700,47 @@ export class RoomSession {
    * liveness for those still in the topology, reaps peers that are both
    * missing from it and silent past PEER_TIMEOUT_MS, and keeps re-greeting
    * peers whose profile hasn't arrived (lost hello race).
+   *
+   * The poll MUST be scoped to our room. The page runs one MistNode shared by
+   * every room it is in (lib/mistNode.ts), and a bare getNeighbors() asks the
+   * NODE, not the room — `mist_get_neighbors()` versus
+   * `mist_get_neighbors_in_room(roomId)` in the vendored wrapper. Unscoped, it
+   * also returns everyone in the always-on discovery lobby and everyone in the
+   * AI Network room, which since the LLM integration includes peers that are
+   * not players at all (other tc-* tabs on this origin, a `mistl ai provide`
+   * daemon). Each of those would be greeted as a player, counted in "N
+   * online", and never reaped — they stay in the node's neighbour list
+   * forever, so lastSeen keeps refreshing and the PEER_TIMEOUT_MS reap can
+   * never fire.
    */
   private syncPresence(): void {
     if (this.closed) return
-    let neighborIds: Set<string>
-    try {
-      neighborIds = normalizePeerIds(this.node.getNeighbors(), this.selfId)
-    } catch (err) {
-      console.debug('[net] getNeighbors failed', err)
-      neighborIds = new Set()
+    // null = the topology could not be read this round, which is NOT the same
+    // as "the room is empty". The room-scoped query throws ("Room not joined")
+    // between joinRoom() being called and the join actually taking effect, and
+    // feeding that in as an empty list would tell the reaper below that
+    // everyone left. Skip both passes instead and try again in 500 ms.
+    let neighborIds: Set<string> | null = null
+    if (this.fullRoomId) {
+      try {
+        neighborIds = normalizePeerIds(this.node.getNeighbors(this.fullRoomId), this.selfId)
+      } catch {
+        neighborIds = null
+      }
     }
 
     const now = Date.now()
-    for (const id of neighborIds) {
-      const entry = this.peers.get(id)
-      if (entry) entry.lastSeen = now
-      else this.discoverPeer(id)
-    }
+    if (neighborIds) {
+      for (const id of neighborIds) {
+        const entry = this.peers.get(id)
+        if (entry) entry.lastSeen = now
+        else this.discoverPeer(id)
+      }
 
-    for (const [id, entry] of [...this.peers]) {
-      if (!neighborIds.has(id) && now - entry.lastSeen > PEER_TIMEOUT_MS) {
-        this.dropPeer(id)
+      for (const [id, entry] of [...this.peers]) {
+        if (!neighborIds.has(id) && now - entry.lastSeen > PEER_TIMEOUT_MS) {
+          this.dropPeer(id)
+        }
       }
     }
 
