@@ -154,6 +154,7 @@ export function App() {
           onSetEditTool={session.setEditTool}
           onDeleteSelectedObject={session.deleteSelectedObject}
           onSetObjectScript={session.setObjectScript}
+          onGenerateBehaviour={session.generateBehaviour}
           scriptProblems={session.scriptProblems}
           getScriptWindows={session.getScriptWindows}
           projectScriptAnchor={session.projectScriptAnchor}

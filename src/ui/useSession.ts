@@ -13,8 +13,15 @@ import type {
 import { World } from '../world/World'
 import type { EditTool } from '../world/ObjectEditor'
 import { detectWorldFormat } from '../world/worldFormat'
+import {
+  generateBehaviour,
+  type GenerateOutcome,
+  type GenerateProgress,
+  type GenerateRequest,
+} from '../script/generate'
 import type { ScriptError, ScriptWindow, UiAnchor } from '../script/ir'
-import { scriptPreset, type ScriptPresetId } from '../script/presets'
+import { scriptPreset } from '../script/presets'
+import type { ObjectScriptInput } from './uiContract'
 import type { ScreenProjection } from './ScriptWindow'
 import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat'
 import { captureMediaThumbnail } from '../world/mediaThumbnail'
@@ -143,9 +150,19 @@ export type SessionApi = {
   setEditMode: (enabled: boolean) => void
   setEditTool: (tool: EditTool) => void
   deleteSelectedObject: () => void
-  // scripting: attach a preset behaviour, render its windows, surface problems
-  /** Attaches a built-in preset (src/script/presets.ts) to a placement, or clears its script when null. Gated the same as any other edit. */
-  setObjectScript: (id: string, presetId: ScriptPresetId | null) => void
+  // scripting: attach a preset or generated behaviour, render its windows, surface problems
+  /** Attaches a built-in preset or a generated graph (src/script/generate.ts) to a placement, or clears its script when null. Gated the same as any other edit. */
+  setObjectScript: (id: string, script: ObjectScriptInput) => void
+  /**
+   * Runs the natural-language "describe it" generator against the configured
+   * model. Exposed straight from src/script/generate.ts (no session state
+   * involved) so the UI layer never imports that module itself — see
+   * uiContract.ts's onGenerateBehaviour.
+   */
+  generateBehaviour: (
+    request: GenerateRequest,
+    onProgress?: (progress: GenerateProgress) => void,
+  ) => Promise<GenerateOutcome>
   /** Validation/runaway problems per placement id, polled while joined (see the effect below — this is inherently dynamic, not event-driven). */
   scriptProblems: Map<string, ScriptError[]>
   /** Every script window currently open. Call fresh each frame — never memoize the result. */
@@ -1225,31 +1242,58 @@ export function useSession(): SessionApi {
   // --- scripting: attach a preset behaviour, render its windows, surface problems ---
 
   /**
-   * Attaches a built-in preset (see src/script/presets.ts) to a placement, or
-   * clears its script/trigger when presetId is null. Gated exactly like any
-   * other edit — editableIds() already encodes "own placements only" under
-   * 'owner' and "anything currently published" under 'everyone' — and flows
-   * through claim()/commitOwnObjects(), the same single path every other
-   * object edit uses, so the attach is published, autosaved (worldSave.ts)
-   * and (once room sync lands) broadcast without a second storage path.
-   * reconcileObjects() re-syncs the World from the updated union so its
-   * ScriptRuntime picks the change up this frame, the same way placing or
-   * clearing objects already does.
+   * Attaches a built-in preset OR an arbitrary generated graph (the R3
+   * "describe it" path — see src/script/generate.ts and ui/BehaviourDialog)
+   * to a placement, or clears its script/trigger when `script` is null.
+   * Gated exactly like any other edit — editableIds() already encodes "own
+   * placements only" under 'owner' and "anything currently published" under
+   * 'everyone' — and flows through claim()/commitOwnObjects(), the same
+   * single path every other object edit uses (presets and generated graphs
+   * alike), so the attach is published, autosaved (worldSave.ts) and
+   * broadcast without a second storage path. reconcileObjects() re-syncs the
+   * World from the updated union so its ScriptRuntime picks the change up
+   * this frame, the same way placing or clearing objects already does.
+   *
+   * A generated graph carries its own `name` (see ScriptGraph.name) rather
+   * than a preset id, so presetIdOf() naturally reports it as 'custom' in the
+   * picker — nothing extra needed here to avoid mislabelling it as a preset.
    */
+  /**
+   * Thin adapter onto src/script/generate.ts: the module takes a whole
+   * GenerateDeps object (its test seam for injecting a fake LLM), while the UI
+   * only ever needs the progress callback. Narrowing it here keeps that test
+   * seam out of the props contract, where it would read like something the UI
+   * is allowed to substitute.
+   */
+  const runGenerateBehaviour = useCallback(
+    (request: GenerateRequest, onProgress?: (progress: GenerateProgress) => void) =>
+      generateBehaviour(request, onProgress ? { onProgress } : {}),
+    [],
+  )
+
   const setObjectScript = useCallback(
-    (id: string, presetId: ScriptPresetId | null) => {
+    (id: string, script: ObjectScriptInput) => {
       if (worldPolicyRef.current === 'locked') return
       if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
       const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
       if (!current) return
-      const preset = presetId ? scriptPreset(presetId) : null
       const next: PlacedObject = { ...current }
-      if (preset) {
-        next.script = preset.graph
-        next.trigger = preset.trigger
-      } else {
+      if (script === null) {
         delete next.script
         delete next.trigger
+      } else if (typeof script === 'string') {
+        const preset = scriptPreset(script)
+        if (preset) {
+          next.script = preset.graph
+          next.trigger = preset.trigger
+        } else {
+          delete next.script
+          delete next.trigger
+        }
+      } else {
+        next.script = script.graph
+        if (script.trigger) next.trigger = script.trigger
+        else delete next.trigger
       }
       commitOwnObjects(objects.current.claim(next))
       reconcileObjects()
@@ -1435,6 +1479,7 @@ export function useSession(): SessionApi {
     setEditTool,
     deleteSelectedObject,
     setObjectScript,
+    generateBehaviour: runGenerateBehaviour,
     scriptProblems,
     getScriptWindows,
     projectScriptAnchor,

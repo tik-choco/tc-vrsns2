@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:e2e": "node scripts/e2e-sync.mjs",
     "test:e2e:script": "node scripts/e2e-script.mjs",
-    "test:e2e:script-sync": "node scripts/e2e-script-sync.mjs"
+    "test:e2e:script-sync": "node scripts/e2e-script-sync.mjs",
+    "test:e2e:behaviour": "node scripts/e2e-behaviour.mjs"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",

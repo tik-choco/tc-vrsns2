@@ -13,11 +13,21 @@ import type {
 import type { CharacterIndexEntry } from '../interop/townCharacters'
 import type { DiscoveredRoom } from '../net/DiscoverySession'
 import type { EditTool } from '../world/ObjectEditor'
-import type { ScriptError, ScriptWindow, UiAnchor } from '../script/ir'
+import type { GenerateOutcome, GenerateProgress, GenerateRequest } from '../script/generate'
+import type { ScriptError, ScriptGraph, ScriptWindow, TriggerVolume, UiAnchor } from '../script/ir'
 import type { ScriptPresetId } from '../script/presets'
 import type { ScreenProjection } from './ScriptWindow'
 
 export type { DiscoveredRoom, EditTool, WorldEditPolicy }
+
+/**
+ * What onSetObjectScript may attach to a placement: a built-in preset id
+ * (src/script/presets.ts), a freshly generated or hand-edited graph with its
+ * optional trigger volume (the R3 "describe it" path — see BehaviourDialog),
+ * or null to clear the behaviour entirely. A generated graph is not a
+ * preset, so it never collides with ScriptPresetId's string union.
+ */
+export type ObjectScriptInput = ScriptPresetId | { graph: ScriptGraph; trigger?: TriggerVolume } | null
 
 export type MicState = 'off' | 'on' | 'pending' | 'error'
 export type RoomVisibility = 'public' | 'private'
@@ -82,8 +92,18 @@ export type GameOverlayProps = {
   // thin, presentational layer, but a live window's position and a script's
   // pass/fail state are inherently imperative, frame-by-frame facts about the
   // 3D world, not render-time props.
-  /** Attaches a built-in preset to a placement the local player may edit, or removes its script when null. */
-  onSetObjectScript: (id: string, presetId: ScriptPresetId | null) => void
+  /** Attaches a built-in preset or a generated graph to a placement the local player may edit, or removes its script when null. */
+  onSetObjectScript: (id: string, script: ObjectScriptInput) => void
+  /**
+   * Runs the natural-language "describe it" generator (src/script/generate.ts)
+   * against the configured model. A stateless pass-through — the UI owns no AI
+   * state itself, it only renders the returned outcome (see BehaviourDialog)
+   * and, on approval, feeds the result to onSetObjectScript above.
+   */
+  onGenerateBehaviour: (
+    request: GenerateRequest,
+    onProgress?: (progress: GenerateProgress) => void,
+  ) => Promise<GenerateOutcome>
   /** Validation/runaway problems per placement id, refreshed periodically while joined. */
   scriptProblems: Map<string, ScriptError[]>
   /** Every script window currently open, local and remote — call fresh each frame, never memoized. */

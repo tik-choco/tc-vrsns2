@@ -19,6 +19,7 @@ import {
 import { useTranslation } from '../i18n'
 import type { TranslationKey } from '../i18n'
 import type { GameOverlayProps } from './uiContract'
+import { BehaviourDialog } from './BehaviourDialog'
 import { ChatPanel } from './ChatPanel'
 import { EditToolbar } from './EditToolbar'
 import { MobileControls } from './MobileControls'
@@ -54,6 +55,12 @@ export function GameOverlay(props: GameOverlayProps) {
   const [panel, setPanel] = useState<PanelId | null>(null)
   const [chatFocus, setChatFocus] = useState(0)
   const [chatFocused, setChatFocused] = useState(false)
+  // The "Describe it…" dialog (R3), opened from EditToolbar's Behavior
+  // picker. Owned here (not by EditToolbar) because, like a panel, it must
+  // gate world input and take over Escape/Delete/V while it's up — see the
+  // keydown handler below.
+  const [describeOpen, setDescribeOpen] = useState(false)
+  const selected = props.selectedObject
 
   const menuRef = useRef(menuOpen)
   menuRef.current = menuOpen
@@ -76,6 +83,15 @@ export function GameOverlay(props: GameOverlayProps) {
   editModeRef.current = props.editMode
   const editKeysRef = useRef({ exit: props.onSetEditMode, remove: props.onDeleteSelectedObject })
   editKeysRef.current = { exit: props.onSetEditMode, remove: props.onDeleteSelectedObject }
+  const describeOpenRef = useRef(describeOpen)
+  describeOpenRef.current = describeOpen
+
+  // The dialog only ever opens while editing a selection; if either goes
+  // away out from under it (leaving edit mode, the selection being cleared)
+  // there is nothing left for it to apply to.
+  useEffect(() => {
+    if (!props.editMode || !selected) setDescribeOpen(false)
+  }, [props.editMode, selected])
 
   // Keyboard operability, mirroring the predecessor (tc-vrsns AppUiBinder):
   //  - Enter  -> open/focus chat (when nothing else is open)
@@ -104,6 +120,18 @@ export function GameOverlay(props: GameOverlayProps) {
     }
     const onKey = (e: KeyboardEvent) => {
       if (isEditableFocused()) return
+      // The describe dialog is modal over edit mode: while it's open (and
+      // focus isn't in its own text field — that case already returned
+      // above), Escape closes IT rather than falling through to "leave edit
+      // mode" below, and everything else (Delete, V, Enter) is swallowed so
+      // it can't reach through to the object being described.
+      if (describeOpenRef.current) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setDescribeOpen(false)
+        }
+        return
+      }
       // Delete removes the selected object while editing; Escape leaves the
       // mode (checked below, after any open panel has had its turn).
       if (editModeRef.current && (e.key === 'Delete' || e.key === 'Backspace')) {
@@ -151,8 +179,8 @@ export function GameOverlay(props: GameOverlayProps) {
   // input) is active — the predecessor's InputMode.UIOnly. Driven through the
   // same setInputEnabled path as chat focus (also releases pointer lock).
   useEffect(() => {
-    gateInputRef.current(menuOpen || panel !== null || chatFocused)
-  }, [menuOpen, panel, chatFocused])
+    gateInputRef.current(menuOpen || panel !== null || chatFocused || describeOpen)
+  }, [menuOpen, panel, chatFocused, describeOpen])
 
   const openPanel = (id: PanelId) => {
     setPanel(id)
@@ -253,6 +281,28 @@ export function GameOverlay(props: GameOverlayProps) {
           onSetEditMode={props.onSetEditMode}
           onSetObjectScript={props.onSetObjectScript}
           scriptProblems={props.scriptProblems}
+          onDescribeBehaviour={() => setDescribeOpen(true)}
+        />
+      )}
+
+      {/* "Describe it…" (R3): natural-language behaviour generation for the
+          selected object, gated the same as the panels below (see the
+          keydown handler and the input-gating effect above). */}
+      {describeOpen && selected && (
+        <BehaviourDialog
+          objectName={selected.name || t('objects.title')}
+          current={selected.script}
+          currentTrigger={selected.trigger}
+          onGenerate={props.onGenerateBehaviour}
+          onApply={(graph, trigger) => {
+            props.onSetObjectScript(selected.id, { graph, trigger })
+            setDescribeOpen(false)
+          }}
+          onOpenAiSettings={() => {
+            setDescribeOpen(false)
+            openPanel('ai')
+          }}
+          onClose={() => setDescribeOpen(false)}
         />
       )}
 
