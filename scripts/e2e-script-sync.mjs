@@ -23,6 +23,7 @@
 // relays it names must be reachable, so this is a manual/dev check, not CI.
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import zlib from 'node:zlib'
@@ -34,9 +35,10 @@ const EXTERNAL_URL = urlArgIndex >= 0 ? process.argv[urlArgIndex + 1] : null
 const PORT = 4173
 const BASE_URL = EXTERNAL_URL ?? `http://127.0.0.1:${PORT}`
 
-const SHOTS_DIR =
-  process.env.E2E_SCRIPT_SYNC_SHOTS_DIR ??
-  '.e2e-shots'
+/** Where failure screenshots land. Defaults under the OS temp dir so a run
+ * never writes into the repo (and never bakes one machine's paths into it);
+ * override with E2E_SCRIPT_SYNC_SHOTS_DIR to collect them somewhere durable. */
+const SHOTS_DIR = process.env.E2E_SCRIPT_SYNC_SHOTS_DIR ?? path.join(tmpdir(), 'tc-vrsns2-e2e-script-sync')
 
 const POLL_MS = 200
 const DEFAULT_TIMEOUT_MS = 15_000
