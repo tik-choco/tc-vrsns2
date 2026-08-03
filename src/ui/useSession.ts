@@ -21,9 +21,10 @@ import {
 } from '../script/generate'
 import type { ScriptError, ScriptWindow, UiAnchor } from '../script/ir'
 import { scriptPreset } from '../script/presets'
-import type { ObjectScriptInput } from './uiContract'
+import { clampNpcRadius, type ObjectScriptInput } from './uiContract'
 import type { ScreenProjection } from './ScriptWindow'
 import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat'
+import { shrinkImageForPlacement } from '../storage/imageResize'
 import { captureMediaThumbnail } from '../world/mediaThumbnail'
 import { RoomSession } from '../net/RoomSession'
 import { DiscoverySession, type DiscoveredRoom } from '../net/DiscoverySession'
@@ -31,18 +32,21 @@ import { RemoteAudioSink } from './remoteAudio'
 import { vrsnsDebug } from '../lib/debugHook'
 import { loadRoomVisibility, saveRoomVisibility } from './roomVisibility'
 import {
+  addForeignToCatalog,
   addToCatalog,
   catalogBytes,
   catalogHasThumb,
   hydrateCatalogThumbs,
   listCatalog,
+  localUploadBytes,
   placeableAssetOf,
   removeFromCatalog,
   setCatalogThumb,
   worldFormatOf,
   type CatalogKind,
 } from '../storage/catalog'
-import { vrmBytesFromCid } from '../storage/vrmSource'
+import { migrateLegacyForeignAvatars } from '../storage/foreignMigration'
+import { publishVrmBytes, vrmBytesFromCid } from '../storage/vrmSource'
 import { ObjectRegistry } from './objectRegistry'
 import { loadWorldSave, saveWorldSave } from '../storage/worldSave'
 import {
@@ -60,11 +64,17 @@ import {
 } from '../profile/resumeState'
 import {
   listTownCharacters,
+  loadTownCharacterPersona,
   subscribeTownCharacters,
   type CharacterIndexEntry,
 } from '../interop/townCharacters'
 import { MAX_VRM_BYTES, sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibrary'
 import { syncLocationToUrl, withoutRoomParam, withRoomParam } from './roomUrl'
+import { NpcRuntime, type NpcPlacement, type NpcSpeaker } from '../npc/NpcRuntime'
+import { NPC_LIMITS } from '../npc/limits'
+import { createNpcVoice } from '../npc/NpcVoice'
+import { createLoudnessSource } from '../lib/audioLoudness'
+import { runLlmTask } from '../lib/aiClient'
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
@@ -145,6 +155,8 @@ export type SessionApi = {
   // objects
   uploadObject: (file: File) => Promise<void>
   placeObject: (cid: string) => Promise<void>
+  /** Places a tc-town character into the world as an NPC (R5) — see CharactersPanel's "Place in world". */
+  placeTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
   clearObjects: () => void
   // editing already-placed objects (own placements only)
   setEditMode: (enabled: boolean) => void
@@ -153,6 +165,17 @@ export type SessionApi = {
   // scripting: attach a preset or generated behaviour, render its windows, surface problems
   /** Attaches a built-in preset or a generated graph (src/script/generate.ts) to a placement, or clears its script when null. Gated the same as any other edit. */
   setObjectScript: (id: string, script: ObjectScriptInput) => void
+  /** Edits an NPC placement's hearing radius (R5 follow-up), clamped to NPC_LIMITS. Gated the same as any other edit. */
+  setNpcRadius: (id: string, radius: number) => void
+  /**
+   * Edits an NPC placement's TTS voice override, in-world. `voiceName` empty
+   * clears the override — that means "use whatever the shared LLM config's
+   * TTS default resolves to" (see src/lib/ttsClient.ts), NOT "re-inherit the
+   * tc-town character's voice": the tc-town value was copied into the
+   * placement once, at placement time, and only re-placing the character
+   * re-reads it. Gated the same as any other edit.
+   */
+  setNpcVoice: (id: string, voiceName: string) => void
   /**
    * Runs the natural-language "describe it" generator against the configured
    * model. Exposed straight from src/script/generate.ts (no session state
@@ -201,6 +224,12 @@ const SCRIPT_PROBLEMS_POLL_MS = 500
 const RESUME_WORLD_WAIT_MS = 2000
 /** How often the local player's pose is snapshotted into the resume record while joined. */
 const RESUME_POSITION_SAVE_INTERVAL_MS = 5000
+/** How often NpcRuntime.observe() is fed fresh player positions for proximity greetings — a per-second cadence is plenty for "someone just walked up", see the R5 contract's §3. */
+const NPC_OBSERVE_INTERVAL_MS = 1000
+/** Loudness at or below which an NPC's TTS is treated as silence rather than speech. Well above the analyser's noise floor, well below any voiced sound. */
+const NPC_SILENCE_LEVEL = 0.02
+/** How long an NPC's voice must stay silent before its utterance is considered over. Longer than the gap between words, so a pause mid-sentence never ends the line early. */
+const NPC_SILENCE_HOLD_MS = 1200
 
 /** Schedules a thumbnail capture one rendered frame out (rAF, or a short timeout where unavailable). */
 function scheduleNextFrame(cb: () => void): void {
@@ -219,6 +248,68 @@ async function resolveBytes(cid: string): Promise<Uint8Array | null> {
     console.debug('resolveBytes failed', cid, e)
     return null
   }
+}
+
+/**
+ * Resolves a tc-town character's VRM to bytes plus a citable mistlib cid — the
+ * single source of truth equipTownCharacter and placeTownCharacter both build
+ * on, so this resolution exists exactly once (R5 contract §6).
+ *
+ * `vrmChecksum` is the ONLY field either side actually verifies, so it drives
+ * the whole resolution. The shared tc-vrm-viewer library is tried first: it is
+ * a same-origin IndexedDB read with no network or mist involved, and
+ * interop/vrmLibrary.ts re-verifies the digest itself before returning bytes.
+ * A `vrmCid` is only a fallback for a character whose model this browser has
+ * never held locally, and bytes fetched that way are hashed and checked
+ * against the same checksum before being trusted — a cid names content we did
+ * not produce, so "tc-town published it" is not on its own a reason to load it
+ * into a VRM parser. Null when neither carrier resolves to anything usable.
+ *
+ * The `publishVrmBytes` call on the local-IndexedDB branch stays — it is what
+ * makes this character's model resolvable to any peer at all, and R6 does not
+ * touch it. That publish is a SHARE the user is deliberately making by
+ * equipping or placing this character in a room peers can see. It is not the
+ * same act as filing the character in this device's own avatar catalog as if
+ * it were something the user uploaded — that second act is laundering, and is
+ * what moved to addForeignToCatalog in equipTownCharacter below.
+ */
+async function resolveTownCharacterVrm(
+  entry: CharacterIndexEntry,
+): Promise<{ cid: string; bytes: Uint8Array } | null> {
+  if (!entry.vrmChecksum) return null
+  const local = await vrmBytesByChecksum(entry.vrmChecksum)
+  if (local) {
+    const cid = await publishVrmBytes(entry.name || entry.vrmFileName || 'Character', local)
+    return { cid, bytes: local }
+  }
+  if (!entry.vrmCid) return null
+  const fetched = await vrmBytesFromCid(entry.vrmCid)
+  // Capped the way avatar equip has always bounded an externally-cited asset:
+  // an oversized blob must not be pulled into memory unbounded, and checking
+  // before hashing keeps a hostile cid from costing us a digest over it.
+  if (fetched.byteLength > MAX_VRM_BYTES) {
+    throw new Error('tc-town character VRM exceeds the maximum accepted size')
+  }
+  if ((await sha256Hex(fetched)) !== entry.vrmChecksum) {
+    throw new Error('vrm checksum mismatch for tc-town character')
+  }
+  return { cid: entry.vrmCid, bytes: fetched }
+}
+
+/**
+ * Our own NPCs, capped at NPC_LIMITS.maxOwnedNpcs — what feeds
+ * NpcRuntime.setPlacements() whenever the owned set changes (see
+ * commitOwnObjects below). Array order, not Map iteration order, decides
+ * which NPCs get dropped if a session somehow exceeds the cap.
+ */
+function ownNpcPlacements(own: PlacedObject[]): NpcPlacement[] {
+  const out: NpcPlacement[] = []
+  for (const o of own) {
+    if (o.kind !== 'npc' || !o.npc) continue
+    out.push({ objectId: o.id, characterId: o.npc.characterId, name: o.name, radius: o.npc.radius, x: o.x, y: o.y, z: o.z })
+    if (out.length >= NPC_LIMITS.maxOwnedNpcs) break
+  }
+  return out
 }
 
 /**
@@ -241,6 +332,29 @@ function mergeCatalogThumbs(prev: CatalogItem[], hydrated: CatalogItem[]): Catal
     return { ...item, thumb: match.thumb }
   })
   return changed ? next : prev
+}
+
+/**
+ * True when two script-problem snapshots carry the same diagnostics: same
+ * object ids, each with the same errors (code/message/node) in the same
+ * order. ScriptRuntime.problems() builds a brand-new Map on every call even
+ * when nothing changed, so the poll below needs this to avoid pushing a
+ * fresh (but equivalent) Map into state every SCRIPT_PROBLEMS_POLL_MS —
+ * which would re-render the unmemoized problem-overlay tree forever, on a
+ * healthy room, for nothing.
+ */
+function sameScriptProblems(a: Map<string, ScriptError[]>, b: Map<string, ScriptError[]>): boolean {
+  if (a.size !== b.size) return false
+  for (const [id, errorsA] of a) {
+    const errorsB = b.get(id)
+    if (!errorsB || errorsA.length !== errorsB.length) return false
+    for (let i = 0; i < errorsA.length; i++) {
+      const x = errorsA[i]
+      const y = errorsB[i]
+      if (x.code !== y.code || x.message !== y.message || x.node !== y.node) return false
+    }
+  }
+  return true
 }
 
 export function useSession(): SessionApi {
@@ -320,6 +434,21 @@ export function useSession(): SessionApi {
     hydrateThumbs('object', listCatalog('object'), setObjectModels)
   }, [hydrateThumbs])
 
+  // One-time background pass to relabel pre-R6 town-character equips that
+  // were filed as plain uploads (see foreignMigration.ts). Fire-and-forget:
+  // it never throws/rejects and must never gate or delay mount. Only worth
+  // re-rendering for if it actually promoted something, since a promoted
+  // entry needs to re-render to show its provenance label.
+  useEffect(() => {
+    void migrateLegacyForeignAvatars().then((promoted) => {
+      if (promoted > 0 && mountedRef.current) {
+        const list = listCatalog('avatar')
+        setAvatars(list)
+        hydrateThumbs('avatar', list, setAvatars)
+      }
+    })
+  }, [hydrateThumbs])
+
   // --- discovery (public room gossip lobby) -----------------------------------
   const discoverySessionRef = useRef<DiscoverySession | null>(null)
   const [discoveredRooms, setDiscoveredRooms] = useState<DiscoveredRoom[]>([])
@@ -350,9 +479,173 @@ export function useSession(): SessionApi {
   const peerPolicySeenRef = useRef(false)
   /** Latest gizmo-commit handler, so the World's callback never goes stale. */
   const objectEditedRef = useRef<(state: PlacedObject) => void>(() => {})
+  /** Same, for "edit this one" asked from the world (right-click / long press). */
+  const editRequestRef = useRef<(id: string) => void>(() => {})
+  /**
+   * Avatar cid we have already fetched for each peer. A profile message
+   * repeats (see onPeerProfile), and re-fetching an unchanged avatar means
+   * re-downloading tens of megabytes and re-parsing it for nothing.
+   */
+  const remoteAvatarCids = useRef(new Map<string, string>())
   /** Current selection, so the delete action doesn't need it as a dependency. */
   const selectedObjectRef = useRef<PlacedObject | null>(null)
   selectedObjectRef.current = selectedObject
+
+  // --- NPCs (R5): owner-authoritative characters placed into the world ------
+  /**
+   * Position of every known remote player, kept in step by
+   * session.onRemoteState. NpcRuntime.observe() needs every player's position
+   * ~1Hz and heard() needs the speaker's, neither of which the render-mirrored
+   * `messages`/`selectedObject` state exposes at call time — same "read an
+   * imperative ref inside an async/interval callback" reasoning as the world
+   * mirrors above.
+   */
+  const remotePositions = useRef(new Map<string, { x: number; y: number; z: number }>())
+  /**
+   * objectId -> Date.now() of its most recent NPC reply, recorded by the
+   * `say` dep below. NpcRuntime keeps this internally but exposes no public
+   * accessor for it, so window.__vrsnsDebug.npcs() (the e2e harness's only
+   * way to observe "did it actually reply") is fed from here instead.
+   */
+  const npcLastReplyAt = useRef(new Map<string, number>())
+  /**
+   * One NpcRuntime for the whole hook lifetime (constructed once, like
+   * `objects` above) — say/face/chat below read refs at call time rather than
+   * close over anything from this render, so they stay correct across
+   * leave/join without re-registering. Only the peer that PUBLISHES an npc
+   * placement ever drives it (see commitOwnObjects's setPlacements call
+   * below) — every other peer just renders the VRM and hears whatever `say`
+   * effect eventually arrives.
+   */
+  const npcRuntimeRef = useRef(
+    new NpcRuntime({
+      loadPersona: loadTownCharacterPersona,
+      chat: (messages) => runLlmTask('npc', messages),
+      say: (objectId, text) => {
+        npcLastReplyAt.current.set(objectId, Date.now())
+        // The exact channel a script's `say` effect takes: World.applyRemoteScriptEffect's
+        // 'say' case just forwards to the onScriptSay listener wired in
+        // attachCanvas below, which is what renders the `[Name]` chat line —
+        // calling it directly here is "apply locally" without a second
+        // rendering path. sendScriptEffects broadcasts the same effect so
+        // peers see the identical line via their own onScriptSay.
+        worldRef.current?.applyRemoteScriptEffect({ t: 'say', objectId, text })
+        sessionRef.current?.sendScriptEffects([{ t: 'say', objectId, text }])
+      },
+      face: (objectId, yaw) => worldRef.current?.faceObject(objectId, yaw),
+      now: () => Date.now(),
+    }),
+  )
+
+  /**
+   * TTS for NPC lines (R5.1). Runs on EVERY peer, not just the owner: the
+   * `say` effect carries the text to everyone, and each tab synthesizes
+   * locally rather than the owner shipping audio bytes over the room (see
+   * lib/ttsClient.ts). A tab with no TTS configured simply gets a silent NPC
+   * with a speech bubble — synthesizeSpeech returns null rather than throwing.
+   *
+   * `analyze` runs on the AudioContext three's AudioListener already owns, so
+   * lipsync analysis shares a clock with the audible playback instead of
+   * drifting against it. Reading worldRef at call time (not closing over a
+   * world) keeps this valid across leave/join.
+   */
+  const npcVoiceRef = useRef(
+    createNpcVoice((clip) => {
+      const world = worldRef.current
+      if (!world) return { read: () => 0, dispose: () => {} }
+      return createLoudnessSource(world.audioContext(), clip.bytes, clip.mime)
+    }),
+  )
+  /**
+   * NPCs whose utterance is currently playing, driving the rAF pump below.
+   * The pump only runs while this is non-empty: lipsync needs a per-FRAME
+   * loudness reading (the envelope follower in world/npcPresence.ts is
+   * frame-rate based), but an idle room must not pay for a permanent extra
+   * rAF loop on top of World's own.
+   */
+  const npcSpeakingIds = useRef(new Map<string, number>())
+  const npcLevelPump = useRef<number | null>(null)
+
+  /**
+   * Feeds each speaking NPC's live loudness into its lipsync every frame, and
+   * stops itself once nobody is speaking.
+   *
+   * Ending an utterance is inferred from sustained silence rather than from a
+   * "playback finished" event, because neither side actually offers one we can
+   * trust: NpcVoice keeps `seq` advancing for as long as its source exists
+   * (it has no idea when the audio ran out), and the audible route is a
+   * separate HTMLAudioElement inside WorldObjects. NPC_SILENCE_HOLD_MS is
+   * comfortably longer than the gaps between words, so a pause mid-sentence
+   * never reads as the end of the line. Once it does fire, stop() disposes
+   * the analysis graph and freezes `seq`, which is exactly the signal the
+   * world layer's own staleness timer needs to close the mouth.
+   */
+  const pumpNpcLevels = useCallback(() => {
+    npcLevelPump.current = null
+    const world = worldRef.current
+    if (!world || npcSpeakingIds.current.size === 0) return
+    const now = Date.now()
+    for (const [objectId, lastAudibleAt] of [...npcSpeakingIds.current]) {
+      const reading = npcVoiceRef.current.read(objectId)
+      world.setNpcSpeakingLevel(objectId, reading)
+      if (reading.level > NPC_SILENCE_LEVEL) {
+        npcSpeakingIds.current.set(objectId, now)
+      } else if (now - lastAudibleAt > NPC_SILENCE_HOLD_MS) {
+        npcVoiceRef.current.stop(objectId)
+        npcSpeakingIds.current.delete(objectId)
+      }
+    }
+    if (npcSpeakingIds.current.size > 0) {
+      npcLevelPump.current = requestAnimationFrame(pumpNpcLevels)
+    }
+  }, [])
+
+  const startNpcLevelPump = useCallback(
+    (objectId: string) => {
+      // Seeded with `now` so a clip that never produces any audible level at
+      // all (a decode failure, a still-suspended AudioContext) still times out
+      // and releases the pump instead of spinning forever at level 0.
+      npcSpeakingIds.current.set(objectId, Date.now())
+      if (npcLevelPump.current === null) {
+        npcLevelPump.current = requestAnimationFrame(pumpNpcLevels)
+      }
+    },
+    [pumpNpcLevels],
+  )
+
+  /**
+   * Speaks one NPC line aloud. Called from the `say` listener below, which
+   * fires on every peer for both local and remote effects — the same single
+   * trigger that raises the speech bubble, so bubble and voice can never
+   * disagree about what was said. A non-NPC placement (an ordinary scripted
+   * prop saying something) is ignored: those have no voice identity.
+   */
+  const speakNpcLine = useCallback((objectId: string, text: string) => {
+    const world = worldRef.current
+    if (!world) return
+    const placement = world.listPlacedObjects().find((o) => o.id === objectId)
+    if (!placement?.npc) return
+    const pose = world.getLocalPose()
+    // No pose yet means the world has not started; treat that as "can't tell
+    // how far away we are" and let NpcVoice's own distance gate see 0 rather
+    // than silently skipping the line.
+    const distance = pose ? Math.hypot(placement.x - pose.x, placement.y - pose.y, placement.z - pose.z) : 0
+    const request = {
+      text,
+      voiceModel: placement.npc.voiceModel,
+      voiceName: placement.npc.voiceName,
+    }
+    void npcVoiceRef.current
+      .speak(objectId, request, distance)
+      .then((clip) => {
+        if (!clip) return
+        worldRef.current?.playNpcSpeech(objectId, clip.bytes, clip.mime)
+        startNpcLevelPump(objectId)
+      })
+      .catch((e) => {
+        console.debug('npc speech failed', objectId, e)
+      })
+  }, [startNpcLevelPump])
 
   const setWorldEnv = useCallback((env: WorldEnvironment | null) => {
     currentWorldRef.current = env
@@ -386,6 +679,42 @@ export function useSession(): SessionApi {
   }, [])
 
   /**
+   * Turns in-world editing on or off. Only placements the local player may
+   * edit are made selectable, so an edit can never touch what a peer owns —
+   * their objects stay exactly where their owner put them.
+   *
+   * Defined here, well above the rest of the editing section below, because
+   * placing an object drops straight into editing it (see placeObject).
+   */
+  const setEditMode = useCallback(
+    (enabled: boolean) => {
+      const world = worldRef.current
+      if (!world) return
+      if (enabled && worldPolicyRef.current === 'locked') return
+      refreshEditable()
+      world.setEditMode(enabled)
+      setEditModeState(enabled)
+      if (!enabled) setSelectedObject(null)
+    },
+    [refreshEditable],
+  )
+
+  /**
+   * "Edit this one", asked from the world itself: a right-click or long press
+   * on something we may edit (World.onObjectEditRequested). Enters the mode
+   * with that object already selected, so the gizmo is on the thing that was
+   * pointed at rather than on nothing.
+   */
+  const requestEditObject = useCallback(
+    (id: string) => {
+      setEditMode(true)
+      worldRef.current?.selectObject(id)
+    },
+    [setEditMode],
+  )
+  editRequestRef.current = requestEditObject
+
+  /**
    * Publishes our owned set: peers, autosave, the editor's pick list, and —
    * via World.setOwnedObjects — ScriptRuntime's ownership. That last one
    * matters even when the objects list itself hasn't changed: an id joining
@@ -399,6 +728,7 @@ export function useSession(): SessionApi {
       objects.current.setOwn(own)
       sessionRef.current?.setObjects(own)
       worldRef.current?.setOwnedObjects(own.map((o) => o.id))
+      npcRuntimeRef.current.setPlacements(ownNpcPlacements(own))
       setOwnPlacedCount(own.length)
       refreshEditable()
       persistWorld({ objects: own })
@@ -501,6 +831,7 @@ export function useSession(): SessionApi {
       sessionRef.current?.sendState(s)
     })
     world.onObjectSelected(setSelectedObject)
+    world.onObjectEditRequested((id) => editRequestRef.current(id))
     world.onObjectEdited((state) => objectEditedRef.current(state))
     world.setSoundResolver(resolveBytes)
     // A script's chat/say output is attributed to the object, not a player —
@@ -516,6 +847,10 @@ export function useSession(): SessionApi {
         text,
         at: Date.now(),
       })
+      // Same trigger raises the bubble (inside World) and the voice, for both
+      // our own NPCs and other peers' — so what is written and what is heard
+      // can never disagree about which line was said.
+      speakNpcLine(objectId, text)
     })
     // Closes the owner-authoritative loop's local half: World already applied
     // these effects to itself (say/sound/window/emit) before calling this —
@@ -541,6 +876,11 @@ export function useSession(): SessionApi {
       vrsnsDebug.objects = () => world.listPlacedObjects()
       vrsnsDebug.owned = () => objects.current.own()
       vrsnsDebug.editable = () => objects.current.editableIds(worldPolicyRef.current)
+      vrsnsDebug.npcs = () =>
+        objects.current
+          .own()
+          .filter((o) => o.kind === 'npc' && o.npc)
+          .map((o) => ({ ...o, lastReplyAt: npcLastReplyAt.current.get(o.id) ?? null }))
     }
     // Restore a previously equipped avatar so the local player isn't a primitive.
     if (profileRef.current.avatarCid) {
@@ -576,20 +916,57 @@ export function useSession(): SessionApi {
         // attached (they're never in anyone's ownedIds again), which falls
         // out of ownership-driven sync() with no extra code.
         if (objects.current.orphan(id)) reconcileObjects()
+        // Their next join must load the avatar again — the view holding it was
+        // just disposed, so a remembered cid would leave them as a primitive.
+        remoteAvatarCids.current.delete(id)
+        // Stale position would otherwise let observe() keep "seeing" a player
+        // who already left, which could fire a greeting nobody is there to hear.
+        remotePositions.current.delete(id)
         if (vrsnsDebug) vrsnsDebug.peers = vrsnsDebug.peers.filter((p) => p !== id)
       }
       session.onPeerProfile = (id, p) => {
         world.upsertRemotePlayer(id, p)
-        if (p.avatarCid) void loadRemoteAvatar(world, id, p.avatarCid)
+        if (!p.avatarCid) return
+        // A profile is NOT a one-shot: greetPeer re-sends ours every couple of
+        // seconds until a peer answers, syncPresence keeps re-greeting anyone
+        // whose profile hasn't arrived, and a peer republishes on any profile
+        // change. Without this guard each of those re-ran the whole avatar
+        // pipeline for bytes we already have — a full VRM (tens of MB) pulled
+        // over the data channel again, then parsed on the main thread again,
+        // only for setRemoteAvatar's token check to throw the result away as
+        // stale. That is both halves of "heavy": the transfer saturates the
+        // channel (bufferedAmount congestion) and the parse stalls the frame.
+        if (remoteAvatarCids.current.get(id) === p.avatarCid) return
+        remoteAvatarCids.current.set(id, p.avatarCid)
+        void loadRemoteAvatar(world, id, p.avatarCid).then((ok) => {
+          // Failed load forgets the cid, so the next profile retries instead
+          // of leaving the peer permanently avatarless.
+          if (!ok && remoteAvatarCids.current.get(id) === p.avatarCid) {
+            remoteAvatarCids.current.delete(id)
+          }
+        })
       }
       session.onRemoteState = (id, s) => {
         world.updateRemoteState(id, s)
+        // Feeds NpcRuntime's heard()/observe() below — the render-mirrored
+        // world state has no per-peer position accessor, so this is the one
+        // place a fresh position for `id` is ever seen.
+        remotePositions.current.set(id, { x: s.x, y: s.y, z: s.z })
         if (vrsnsDebug) vrsnsDebug.states[id] = s
       }
       session.onChat = (m) => {
         pushMessage(m)
         world.showChatBubble(m.fromId, m.text)
         if (vrsnsDebug) vrsnsDebug.chats.push({ fromId: m.fromId, text: m.text })
+        // NPCs must hear real player chat only — never their own or another
+        // NPC's `say` line. That never arrives on this channel today (a
+        // script's say is a local pushMessage, not a chat broadcast — see
+        // world.onScriptSay above), but the guard is the R5 contract's
+        // explicit brake against ever wiring that up by accident, since NPCs
+        // answering NPCs is an unthrottled reliable-broadcast loop.
+        if (m.fromId.startsWith('script:')) return
+        const pos = remotePositions.current.get(m.fromId)
+        if (pos) npcRuntimeRef.current.heard({ id: m.fromId, name: m.name, x: pos.x, y: pos.y, z: pos.z }, m.text)
       }
       session.onRemoteAudio = (id, media) => audio.set(id, media)
       session.onWorldChange = (_fromId, env) => {
@@ -713,6 +1090,7 @@ export function useSession(): SessionApi {
           vrsnsDebug.selfId = session.selfId
           vrsnsDebug.phase = 'joined'
           vrsnsDebug.stats = () => session.nodeStats()
+          vrsnsDebug.peerScopes = () => session.neighborScopes()
         }
         if (nextProfile.avatarCid) void loadLocalAvatar(world, nextProfile.avatarCid)
         // Bring back whatever this room looked like when we last left it.
@@ -748,6 +1126,18 @@ export function useSession(): SessionApi {
     // has been autosaved on every change, so nothing is lost by dropping it.
     activeRoomIdRef.current = ''
     peerPolicySeenRef.current = false
+    // Every remote view is torn down below, so the avatars they were holding
+    // have to be loaded again if we meet the same peers in the next room.
+    remoteAvatarCids.current.clear()
+    remotePositions.current.clear()
+    // Room left: drop every NPC's history/cooldown state so the next room's
+    // NPCs (even one reusing the same characterId) start with a clean slate.
+    npcRuntimeRef.current.reset()
+    // Aborts any in-flight synthesis and releases every analysis graph; the
+    // rAF pump stops on its own next frame once the map is empty.
+    npcVoiceRef.current.reset()
+    npcSpeakingIds.current.clear()
+    npcLastReplyAt.current.clear()
     objects.current.clear()
     worldRef.current?.setEditMode(false)
     worldRef.current?.setEditableObjects([])
@@ -819,6 +1209,17 @@ export function useSession(): SessionApi {
       if (echo) {
         pushMessage(echo)
         worldRef.current?.showChatBubble(echo.fromId, echo.text)
+        // The local player's own line must reach nearby NPCs exactly like a
+        // remote player's does (R5 contract §6) — session.onChat above never
+        // fires for it (RoomSession drops the relayed echo of our own
+        // message), so this is the only place it can be fed to heard().
+        const pose = worldRef.current?.getLocalPose()
+        if (pose) {
+          npcRuntimeRef.current.heard(
+            { id: echo.fromId, name: profileRef.current.name, x: pose.x, y: pose.y, z: pose.z },
+            echo.text,
+          )
+        }
       }
     },
     [pushMessage],
@@ -878,7 +1279,10 @@ export function useSession(): SessionApi {
       setAvatarBusy(true)
       try {
         const bytes = new Uint8Array(await file.arrayBuffer())
-        const item = await addToCatalog('avatar', file.name, bytes)
+        // localUploadBytes brands these as having come from a file the user
+        // picked on THIS device — the only thing that makes them theirs to
+        // publish under this node's cid (see catalog.ts's module header).
+        const item = await addToCatalog('avatar', file.name, localUploadBytes(bytes))
         const list = listCatalog('avatar')
         setAvatars(list)
         hydrateThumbs('avatar', list, setAvatars)
@@ -915,37 +1319,37 @@ export function useSession(): SessionApi {
   )
 
   /**
-   * Equips a tc-town character as the local avatar. A character is only
-   * equippable when it carries a well-formed vrmChecksum (validated in
-   * interop/townCharacters.ts) — that's the one thing we can actually verify
-   * bytes against, so an entry with only a vrmCid and no checksum is treated
-   * as not equippable (mirrors AvatarPanel's isEquippable check). Resolves
-   * bytes from the shared tc-vrm-viewer library by checksum first (no
-   * network/mist involved, and vrmLibrary.ts re-verifies the checksum itself
-   * before returning bytes); falls back to the character's mist CID
-   * (best-effort enrichment from tc-town) when no local copy is found,
-   * size-capping and verifying the fetched bytes against the published
-   * checksum before trusting them. Then reuses the normal upload path so the
-   * avatar gets a local CID and profile sync to peers works unchanged.
+   * Equips a tc-town character as the local avatar. The panels gate this
+   * action on `entry.vrmChecksum` being present (AvatarPanel/CharactersPanel's
+   * isEquippable), so resolveTownCharacterVrm is only ever reached here for
+   * an entry that carries one; every path through it is checksum-verified —
+   * see that function's doc comment. Files it via addForeignToCatalog, not
+   * the normal upload path: this device did not author this model, so it
+   * must not become a plaintext catalog entry — re-shareable and
+   * indistinguishable from an upload — in the user's own avatar catalog
+   * (R6's ownership rule); that used to be exactly what addToCatalog here
+   * did. The bytes themselves may already be plaintext elsewhere (mistlib's
+   * OPFS cache, if resolveTownCharacterVrm fetched them by cid) — this only
+   * keeps the catalog from laundering them as this device's own. resolved.cid (the
+   * original publisher's cid, from resolveTownCharacterVrm) is what the item
+   * gets filed under and what equipAvatarBytes below hands to peers, so the
+   * avatar still equips and still syncs unchanged; only where the bytes come
+   * to rest locally changes.
    */
   const equipTownCharacter = useCallback(
     async (entry: CharacterIndexEntry) => {
       setAvatarBusy(true)
       try {
-        if (!entry.vrmChecksum) throw new Error('tc-town character has no verified VRM checksum')
-        let bytes = await vrmBytesByChecksum(entry.vrmChecksum)
-        if (!bytes && entry.vrmCid) {
-          const fetched = await vrmBytesFromCid(entry.vrmCid)
-          if (fetched.byteLength > MAX_VRM_BYTES) {
-            throw new Error('tc-town character VRM exceeds the maximum accepted size')
-          }
-          if ((await sha256Hex(fetched)) !== entry.vrmChecksum) {
-            throw new Error('vrm checksum mismatch for tc-town character')
-          }
-          bytes = fetched
-        }
-        if (!bytes) throw new Error('tc-town character has no equippable VRM avatar')
-        const item = await addToCatalog('avatar', entry.name || entry.vrmFileName || 'Character', bytes)
+        const resolved = await resolveTownCharacterVrm(entry)
+        if (!resolved) throw new Error('tc-town character has no equippable VRM avatar')
+        const bytes = resolved.bytes
+        const item = await addForeignToCatalog(
+          'avatar',
+          entry.name || entry.vrmFileName || 'Character',
+          resolved.cid,
+          bytes,
+          { characterId: entry.id, name: entry.name, vrmChecksum: entry.vrmChecksum },
+        )
         const list = listCatalog('avatar')
         setAvatars(list)
         hydrateThumbs('avatar', list, setAvatars)
@@ -976,7 +1380,7 @@ export function useSession(): SessionApi {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
       const format = detectWorldFormat(file.name, bytes)
-      await addToCatalog('world', file.name, bytes, { format })
+      await addToCatalog('world', file.name, localUploadBytes(bytes), { format })
       const list = listCatalog('world')
       setWorlds(list)
       hydrateThumbs('world', list, setWorlds)
@@ -1148,11 +1552,28 @@ export function useSession(): SessionApi {
         return
       }
       const asset = detectPlacedAsset(file.name, bytes, file.type)
+      // Publish-time shrink, BEFORE anything derives from these bytes: what
+      // goes into the content store is what every peer in the room has to
+      // pull over the data channel, and a 24 MB placement measurably pins
+      // that channel over its buffer for as long as the transfer runs (see
+      // scripts/e2e-netload.mjs). Returns null whenever shrinking is not a
+      // clear win, so `published` is simply "the bytes to publish".
+      const shrunk = await shrinkImageForPlacement(bytes, asset.kind, asset.mime)
+      const published = shrunk?.bytes ?? bytes
+      const publishedMime = shrunk?.mime ?? asset.mime
+      if (shrunk) {
+        console.debug(
+          `object image shrunk: ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB -> ` +
+            `${(published.byteLength / 1024 / 1024).toFixed(2)} MB`,
+        )
+      }
       // Best-effort: a thumbnail that fails to render never blocks the upload.
-      const thumb = (await captureMediaThumbnail(bytes, asset.kind, asset.mime)) ?? undefined
-      await addToCatalog('object', file.name, bytes, {
+      // Taken from the PUBLISHED bytes so it can never describe something the
+      // room will not actually receive.
+      const thumb = (await captureMediaThumbnail(published, asset.kind, publishedMime)) ?? undefined
+      await addToCatalog('object', file.name, localUploadBytes(published), {
         asset: asset.kind,
-        mime: asset.mime,
+        mime: publishedMime,
         thumb,
       })
       const list = listCatalog('object')
@@ -1186,13 +1607,76 @@ export function useSession(): SessionApi {
         })
         commitOwnObjects([...objects.current.own(), state])
         refreshPlacedCount()
+        // A new object lands at the placer's feet and almost always has to be
+        // moved, so placing IS the start of editing it: drop into the mode
+        // with it selected instead of making the player come back and find it.
+        // commitOwnObjects above has already made it selectable.
+        setEditMode(true)
+        worldRef.current?.selectObject(state.id)
       } catch (e) {
         console.debug('object place failed', cid, e)
       } finally {
         setObjectBusy(false)
       }
     },
-    [commitOwnObjects, refreshPlacedCount],
+    [commitOwnObjects, refreshPlacedCount, setEditMode],
+  )
+
+  /**
+   * Places a tc-town character into the world as an NPC (R5 contract §6):
+   * resolves its VRM the same way equipTownCharacter does
+   * (resolveTownCharacterVrm), then drops it in front of the local player
+   * through World.placeObject exactly like any other placement — same anchor/
+   * scale math, no parallel positioning logic.
+   *
+   * placeObject()'s PlacementSource carries no `npc` field (it is not a thing
+   * an arbitrary catalog placement has), so the npc binding is added to the
+   * PlacedObject it returns and folded in via commitOwnObjects + an explicit
+   * reconcileObjects(): WorldObjects already tracked the object from the
+   * placeObject() call above with no npc field, and syncRemote's
+   * stateDiffers/applyTransform (which does compare npc — see WorldObjects.ts)
+   * is what actually merges it into the tracked copy, the same "attach
+   * metadata to something already placed" path setObjectScript uses for
+   * scripts. From here on this is an ordinary placement: same 'self' owner
+   * set, same MSG_OBJECTS broadcast, same persistWorld autosave.
+   */
+  const placeTownCharacter = useCallback(
+    async (entry: CharacterIndexEntry) => {
+      const world = worldRef.current
+      if (!world || worldPolicyRef.current === 'locked') return
+      setObjectBusy(true)
+      try {
+        const resolved = await resolveTownCharacterVrm(entry)
+        if (!resolved) throw new Error('tc-town character has no placeable VRM avatar')
+        const state = await world.placeObject(resolved.bytes, {
+          cid: resolved.cid,
+          name: entry.name,
+          kind: 'npc',
+          placedBy: profileRef.current.name,
+        })
+        // voiceModel/voiceName ride the wire (unlike the persona, which stays
+        // owner-local) because every peer synthesizes this NPC's speech itself
+        // — without them each tab would voice the same character differently.
+        const npcState: PlacedObject = {
+          ...state,
+          npc: {
+            characterId: entry.id,
+            radius: NPC_LIMITS.defaultRadius,
+            ...(entry.voiceModel ? { voiceModel: entry.voiceModel } : {}),
+            ...(entry.voiceName ? { voiceName: entry.voiceName } : {}),
+          },
+        }
+        commitOwnObjects([...objects.current.own(), npcState])
+        reconcileObjects()
+        setEditMode(true)
+        worldRef.current?.selectObject(npcState.id)
+      } catch (e) {
+        console.debug('town character place failed', entry.id, e)
+      } finally {
+        setObjectBusy(false)
+      }
+    },
+    [commitOwnObjects, reconcileObjects, setEditMode],
   )
 
   const clearObjects = useCallback(() => {
@@ -1202,24 +1686,7 @@ export function useSession(): SessionApi {
   }, [commitOwnObjects, reconcileObjects])
 
   // --- editing already-placed objects ----------------------------------------
-
-  /**
-   * Turns in-world editing on or off. Only our own placements are made
-   * selectable, so an edit can never touch what a peer placed — their objects
-   * stay exactly where their owner put them.
-   */
-  const setEditMode = useCallback(
-    (enabled: boolean) => {
-      const world = worldRef.current
-      if (!world) return
-      if (enabled && worldPolicyRef.current === 'locked') return
-      refreshEditable()
-      world.setEditMode(enabled)
-      setEditModeState(enabled)
-      if (!enabled) setSelectedObject(null)
-    },
-    [refreshEditable],
-  )
+  // (setEditMode / requestEditObject live further up — placeObject needs them.)
 
   const setEditTool = useCallback((tool: EditTool) => {
     setEditToolState(tool)
@@ -1302,6 +1769,60 @@ export function useSession(): SessionApi {
     [commitOwnObjects, reconcileObjects],
   )
 
+  /**
+   * Edits an NPC's hearing radius from EditToolbar. Same shape as
+   * setObjectScript above: gate on worldPolicy + editableIds, read the live
+   * placement off worldRef (not the render-time `objects` state, which can be
+   * stale), clamp, claim + commitOwnObjects (which republishes MSG_OBJECTS,
+   * refreshes NpcRuntime.setPlacements, and autosaves), then reconcile.
+   */
+  const setNpcRadius = useCallback(
+    (id: string, radius: number) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current?.npc) return
+      const clamped = clampNpcRadius(radius, current.npc.radius)
+      if (clamped === current.npc.radius) return
+      const next: PlacedObject = { ...current, npc: { ...current.npc, radius: clamped } }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Edits an NPC's TTS voice override from EditToolbar. Same shape as
+   * setNpcRadius above — gate on worldPolicy + editableIds, read the live
+   * placement off worldRef (not the render-time `objects` state, which can be
+   * stale), claim + commitOwnObjects, then reconcile. Unlike radius there is
+   * no numeric range to clamp to; the wire decoder (src/net/protocol.ts)
+   * already trims/caps whatever lands in voiceName. An empty string clears
+   * the override (deletes the field) rather than storing '' — voiceName's
+   * contract is "absent means the shared default" (src/shared/types.ts), and
+   * ttsClient.ts's own `trim() || …` fallback only sees that if the key is
+   * actually gone.
+   */
+  const setNpcVoice = useCallback(
+    (id: string, voiceName: string) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current?.npc) return
+      const trimmed = voiceName.trim()
+      if (trimmed === (current.npc.voiceName ?? '')) return
+      const npc = { ...current.npc }
+      if (trimmed) npc.voiceName = trimmed
+      else delete npc.voiceName
+      const next: PlacedObject = { ...current, npc }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
   /** Every script window currently open. Called fresh every frame by ScriptWindowsHost — never memoize the result. */
   const getScriptWindows = useCallback((): ScriptWindow[] => worldRef.current?.scriptWindows() ?? [], [])
 
@@ -1352,8 +1873,34 @@ export function useSession(): SessionApi {
       return
     }
     const id = setInterval(() => {
-      setScriptProblems(worldRef.current?.scriptProblems() ?? new Map())
+      const next = worldRef.current?.scriptProblems() ?? new Map()
+      // Functional form on purpose: comparing against the previous snapshot
+      // (sameScriptProblems) means this closure never needs scriptProblems
+      // itself, so it stays out of this effect's dependency list.
+      setScriptProblems((prev) => (sameScriptProblems(prev, next) ? prev : next))
     }, SCRIPT_PROBLEMS_POLL_MS)
+    return () => clearInterval(id)
+  }, [phase])
+
+  // Feeds NpcRuntime.observe() ~1Hz with every known player position (local +
+  // remote), for proximity greetings. NpcRuntime itself owns the outside-
+  // >inside edge detection and per-(npc,player) cooldown — this effect only
+  // supplies fresh positions on a cadence, same "dynamic fact, not an event"
+  // reasoning as the scriptProblems poll above.
+  useEffect(() => {
+    if (phase !== 'joined') return
+    const id = setInterval(() => {
+      const world = worldRef.current
+      const session = sessionRef.current
+      if (!world || !session) return
+      const speakers: NpcSpeaker[] = []
+      const pose = world.getLocalPose()
+      if (pose) speakers.push({ id: session.selfId, name: profileRef.current.name, x: pose.x, y: pose.y, z: pose.z })
+      for (const [peerId, pos] of remotePositions.current) {
+        speakers.push({ id: peerId, name: world.remoteDisplayName(peerId) ?? peerId, x: pos.x, y: pos.y, z: pos.z })
+      }
+      npcRuntimeRef.current.observe(speakers)
+    }, NPC_OBSERVE_INTERVAL_MS)
     return () => clearInterval(id)
   }, [phase])
 
@@ -1370,6 +1917,7 @@ export function useSession(): SessionApi {
       audioRef.current?.dispose()
       worldRef.current?.dispose()
       worldRef.current = null
+      npcRuntimeRef.current.reset()
       for (const url of scriptImageCache.current.values()) URL.revokeObjectURL(url)
       scriptImageCache.current.clear()
     }
@@ -1474,11 +2022,14 @@ export function useSession(): SessionApi {
     setWorldPolicy,
     uploadObject,
     placeObject,
+    placeTownCharacter,
     clearObjects,
     setEditMode,
     setEditTool,
     deleteSelectedObject,
     setObjectScript,
+    setNpcRadius,
+    setNpcVoice,
     generateBehaviour: runGenerateBehaviour,
     scriptProblems,
     getScriptWindows,
@@ -1503,11 +2054,23 @@ async function loadLocalAvatar(world: World, cid: string): Promise<void> {
   }
 }
 
-async function loadRemoteAvatar(world: World, id: string, cid: string): Promise<void> {
+/** Returns false when the avatar could not be loaded, so the caller can allow a retry. */
+async function loadRemoteAvatar(world: World, id: string, cid: string): Promise<boolean> {
   try {
+    // Deliberately no vault write here — NOT because a peer's avatar stays
+    // memory-only (it doesn't: catalogBytes -> vrmBytesFromCid -> storage_get
+    // hits mistlib's resolve_or_fetch, which verifies, track_blocks and
+    // store_blocks the fetched chunks into OPFS as plaintext and serves them
+    // onward from there; see mistlib-core/src/storage/engine.rs). R6's vault
+    // exists to encrypt persistence tc-vrsns2 itself performs, and there is
+    // no delete API for what mistlib already cached, so a vault copy here
+    // would only be a second resting place on top of one we cannot remove —
+    // not a replacement for it.
     const bytes = await catalogBytes(cid)
     await world.setRemoteAvatar(id, bytes)
+    return true
   } catch (e) {
     console.debug('remote avatar load failed', id, e)
+    return false
   }
 }

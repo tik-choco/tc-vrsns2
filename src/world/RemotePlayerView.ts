@@ -55,6 +55,11 @@ export class RemotePlayerView {
     this.rig.setVrm(vrm)
   }
 
+  /** This avatar's measured height, so an NPC can aim its gaze at THIS player's eye line rather than an assumed one (see World.collectNearbyPlayers). Tracks the equipped VRM, so it updates when a peer swaps avatars. */
+  eyeHeight(): number {
+    return this.rig.getHeight()
+  }
+
   applyState(s: PlayerState): void {
     this.targetPosition.set(s.x, s.y, s.z)
     this.targetYaw = normalizeAngle(s.ry)

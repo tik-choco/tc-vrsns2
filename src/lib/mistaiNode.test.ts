@@ -21,7 +21,40 @@ class FakeNode {
   leaveRoom(roomId: string): void {
     this.leftRooms.push(roomId)
   }
+  /** Set by a test to reproduce mistlib's "Room not joined" throw — the transient window between joinRoom() and the join actually taking effect (see RoomSession.test.ts's identical fixture). */
+  sendThrows: string | null = null
+  /**
+   * Deferred completions for joinRoomAsync(), keyed by room — a test resolves
+   * or rejects one to decide exactly when (or whether) a join finishes, which
+   * is the whole window this adapter has to sequence sends behind.
+   * `joinRoomAsync` itself is left undefined unless a test opts in, so the
+   * pre-existing tests keep exercising the no-joinRoomAsync fallback path.
+   */
+  joinCompletions = new Map<string, { resolve: () => void; reject: (err: unknown) => void }>()
+  joinRoomAsync?: (roomId: string) => Promise<unknown>
+
+  /** Opts this fake into the awaitable-join API mistlib really exposes. */
+  enableAsyncJoin(): void {
+    this.joinRoomAsync = (roomId: string) =>
+      new Promise((resolve, reject) => {
+        this.joinCompletions.set(roomId, { resolve: () => resolve(undefined), reject })
+      })
+  }
+
+  /** Completes a pending join and lets the adapter's flush microtasks run. */
+  async completeJoin(roomId: string): Promise<void> {
+    this.joinCompletions.get(roomId)?.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  async failJoin(roomId: string, err: unknown): Promise<void> {
+    this.joinCompletions.get(roomId)?.reject(err)
+    await Promise.resolve()
+    await Promise.resolve()
+  }
   sendMessage(toId: string | null | undefined, payload: Uint8Array, delivery?: number, roomId?: string): void {
+    if (this.sendThrows) throw new Error(this.sendThrows)
     this.sent.push({ toId, payload, delivery, roomId })
   }
 }
@@ -80,7 +113,112 @@ beforeEach(() => {
   fakeNode.joinedRooms = []
   fakeNode.leftRooms = []
   fakeNode.sent = []
+  fakeNode.sendThrows = null
+  fakeNode.joinCompletions.clear()
+  fakeNode.joinRoomAsync = undefined
   roomSubscribers.clear()
+})
+
+// The first-launch JOIN_FAILED bug in full: mistlib's joinRoom() is
+// fire-and-forget, mistai's Network.join() treats its return as "joined" and
+// resolves, and every mistai role then sends its hello announce in the very
+// next microtask — inside the window where room-scoped sends still throw
+// "Room not joined". That throw escaped mistai's un-try/catched
+// network.send() into the .then() resolving the join, turning a good join
+// into a hard error. These cover the sequencing that fixes it.
+describe('sends during the join window', () => {
+  it('holds a send until the join actually completes, then delivers it', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+
+    handle.sendMessage(null, new Uint8Array([1]), 0)
+    expect(fakeNode.sent).toEqual([]) // queued, NOT dropped and NOT thrown
+
+    await fakeNode.completeJoin(roomId)
+    expect(fakeNode.sent).toHaveLength(1)
+    expect(fakeNode.sent[0].payload).toEqual(new Uint8Array([1]))
+    expect(fakeNode.sent[0].roomId).toBe(roomId)
+  })
+
+  it('replays held sends oldest-first', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+
+    handle.sendMessage(null, new Uint8Array([1]), 0)
+    handle.sendMessage('peer-a', new Uint8Array([2]), 0)
+    await fakeNode.completeJoin(roomId)
+
+    expect(fakeNode.sent.map((s) => s.payload[0])).toEqual([1, 2])
+  })
+
+  it('sends straight through once the room is ready', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+    await fakeNode.completeJoin(roomId)
+
+    handle.sendMessage(null, new Uint8Array([9]), 0)
+    expect(fakeNode.sent).toHaveLength(1)
+  })
+
+  it('drops what it held when the join genuinely fails, rather than replaying into a room we never entered', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+    handle.sendMessage(null, new Uint8Array([1]), 0)
+
+    await fakeNode.failJoin(roomId, new Error('join rejected'))
+    expect(fakeNode.sent).toEqual([])
+  })
+
+  it('bounds the hold queue so a never-completing join cannot grow it without limit', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+
+    for (let i = 0; i < 40; i += 1) handle.sendMessage(null, new Uint8Array([i]), 0)
+    await fakeNode.completeJoin(roomId)
+
+    // 32 kept, oldest evicted first — so the last 32 of 0..39 survive.
+    expect(fakeNode.sent).toHaveLength(32)
+    expect(fakeNode.sent[0].payload[0]).toBe(8)
+    expect(fakeNode.sent[31].payload[0]).toBe(39)
+  })
+
+  it('discards anything still held for a room it leaves', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+    handle.sendMessage(null, new Uint8Array([1]), 0)
+
+    handle.leaveRoom(roomId)
+    await fakeNode.completeJoin(roomId)
+    expect(fakeNode.sent).toEqual([])
+  })
+
+  it('still sends immediately on a build with no joinRoomAsync', async () => {
+    const roomId = freshRoomId()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+
+    handle.sendMessage(null, new Uint8Array([7]), 0)
+    expect(fakeNode.sent).toHaveLength(1)
+  })
 })
 
 describe('mistaiNodeId', () => {
@@ -122,6 +260,43 @@ describe('createMistaiNode', () => {
     handle.sendMessage('peer-1', bytes, 0)
 
     expect(fakeNode.sent).toEqual([{ toId: 'peer-1', payload: bytes, delivery: 0, roomId: roomA }])
+  })
+
+  it('sendMessage() swallows the join-window "Room not joined" transient instead of throwing', async () => {
+    // Reproduces the AI Network "first launch always shows JOIN_FAILED" bug:
+    // mistai's own createSession()/useNetworkProvider call network.send()
+    // (a "hello" broadcast) synchronously right after network.join(roomId)
+    // resolves, without awaiting mistlib's joinRoom() (fire-and-forget)
+    // actually taking effect. If sendMessage() rethrows here, that exception
+    // surfaces in mistai's un-try/catched network.send() -> propagates into
+    // the very .then() that was about to resolve the join -> mistai reports
+    // JOIN_FAILED even though the join itself succeeded. Swallowing it here
+    // (mirroring RoomSession's identical handling of the same mistlib
+    // transient) keeps that join promise resolving cleanly.
+    const roomA = freshRoomId()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomA)
+    fakeNode.sendThrows = 'Room not joined: ' + roomA
+
+    expect(() => handle.sendMessage(null, new Uint8Array([1]))).not.toThrow()
+    expect(fakeNode.sent).toEqual([])
+
+    // Once the transient clears (the join has taken effect), sends go through again.
+    fakeNode.sendThrows = null
+    const bytes = new Uint8Array([2])
+    handle.sendMessage('peer-1', bytes, 0)
+    expect(fakeNode.sent).toEqual([{ toId: 'peer-1', payload: bytes, delivery: 0, roomId: roomA }])
+  })
+
+  it('sendMessage() still rethrows an unrelated failure', async () => {
+    const roomA = freshRoomId()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomA)
+    fakeNode.sendThrows = 'some other mistlib failure'
+
+    expect(() => handle.sendMessage(null, new Uint8Array([1]))).toThrow(/some other mistlib failure/)
   })
 
   it('sendMessage() before any joinRoom() is a safe no-op', async () => {

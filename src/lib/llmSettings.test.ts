@@ -11,6 +11,8 @@ import {
   setDefaultReasoningEffort,
   setNetworkProviderEnabled,
   setNetworkProviderPresetIds,
+  setNpcPresetId,
+  setNpcReasoningEffort,
   setScriptPresetId,
   setScriptReasoningEffort,
   type LlmProviderSettings,
@@ -65,6 +67,8 @@ describe('loadLlmProviderSettings', () => {
       defaultReasoningEffort: 'high',
       scriptPresetId: 'preset-c',
       scriptReasoningEffort: 'low',
+      npcPresetId: 'preset-d',
+      npcReasoningEffort: 'medium',
     }
     saveLlmProviderSettings(settings)
     expect(loadLlmProviderSettings()).toEqual(settings)
@@ -80,9 +84,29 @@ describe('loadLlmProviderSettings', () => {
         defaultReasoningEffort: 'ludicrous',
         scriptPresetId: 42,
         scriptReasoningEffort: null,
+        npcPresetId: 42,
+        npcReasoningEffort: null,
       }),
     )
     expect(loadLlmProviderSettings()).toEqual(DEFAULT_LLM_PROVIDER_SETTINGS)
+  })
+
+  it('defaults npcPresetId/npcReasoningEffort when the key is entirely missing (migration from a pre-NPC record)', () => {
+    storage.raw.set(
+      'tc-vrsns2-provider-settings-v1',
+      JSON.stringify({
+        connection: 'api',
+        networkProviderEnabled: false,
+        networkProviderPresetIds: [],
+        defaultReasoningEffort: 'none',
+        scriptPresetId: 'preset-c',
+        scriptReasoningEffort: 'low',
+      }),
+    )
+    const loaded = loadLlmProviderSettings()
+    expect(loaded.npcPresetId).toBe('')
+    expect(loaded.npcReasoningEffort).toBe('none')
+    expect(loaded.scriptPresetId).toBe('preset-c')
   })
 
   it('drops non-string entries from networkProviderPresetIds', () => {
@@ -103,6 +127,8 @@ describe('setters', () => {
     expect(setDefaultReasoningEffort(base, 'medium')).toEqual({ ...base, defaultReasoningEffort: 'medium' })
     expect(setScriptPresetId(base, 'p1')).toEqual({ ...base, scriptPresetId: 'p1' })
     expect(setScriptReasoningEffort(base, 'high')).toEqual({ ...base, scriptReasoningEffort: 'high' })
+    expect(setNpcPresetId(base, 'p2')).toEqual({ ...base, npcPresetId: 'p2' })
+    expect(setNpcReasoningEffort(base, 'medium')).toEqual({ ...base, npcReasoningEffort: 'medium' })
     // Original is untouched (immutable update).
     expect(base).toEqual(DEFAULT_LLM_PROVIDER_SETTINGS)
   })

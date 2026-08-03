@@ -34,8 +34,8 @@ import { loadLlmProviderSettings, type ReasoningEffort } from './llmSettings'
 
 export type { ChatMessage }
 
-/** The task keys tc-vrsns2 exposes to runLlmTask — 'default' resolves through the shared config's own default preset (app-local presetId is always ''); 'script' is the one app task (llm-settings-common-v1.md §5.3 checklist item 3 — no internal roles exposed as tasks). */
-export type LlmTaskKey = 'default' | 'script'
+/** The task keys tc-vrsns2 exposes to runLlmTask — 'default' resolves through the shared config's own default preset (app-local presetId is always ''); 'script' and 'npc' are this app's two tasks (llm-settings-common-v1.md §5.3 checklist item 3 — no internal roles exposed as tasks). 'npc' is the in-character reply an owner-run NpcRuntime generates for a placed tc-town character (see src/npc/NpcRuntime.ts). */
+export type LlmTaskKey = 'default' | 'script' | 'npc'
 
 export interface RunLlmTaskOptions {
   /** Invoked for each streamed content fragment, on both transports. */
@@ -85,6 +85,9 @@ function taskPresetAndEffort(task: LlmTaskKey): { presetId: string; reasoningEff
   const settings = loadLlmProviderSettings()
   if (task === 'script') {
     return { presetId: settings.scriptPresetId, reasoningEffort: settings.scriptReasoningEffort }
+  }
+  if (task === 'npc') {
+    return { presetId: settings.npcPresetId, reasoningEffort: settings.npcReasoningEffort }
   }
   return { presetId: '', reasoningEffort: settings.defaultReasoningEffort }
 }

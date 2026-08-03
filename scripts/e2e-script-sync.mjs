@@ -170,13 +170,17 @@ async function uploadAndPlace(page) {
 }
 
 /**
- * Enters edit mode and clicks the canvas to select the one placed object.
- * Tries a small spiral of points around the canvas centre — see
- * e2e-script.mjs's enterEditModeAndSelect, which this mirrors exactly.
+ * Waits for edit mode (placing an object enters it, with that object already
+ * selected) and falls back to clicking a small spiral of points around the
+ * canvas centre — see e2e-script.mjs's enterEditModeAndSelect, which this
+ * mirrors exactly.
  */
 async function enterEditModeAndSelect(page) {
-  await page.getByRole('button', { name: 'Edit placed' }).click()
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
+  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+    log('[A] placing selected the object — no canvas click needed')
+    return
+  }
 
   const canvas = page.locator('.world-canvas')
   const box = await canvas.boundingBox()

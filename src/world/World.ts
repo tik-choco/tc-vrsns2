@@ -22,13 +22,15 @@ import { loadBakedSourceClips } from './bakedClips'
 import { CameraController } from './CameraController'
 import { CharacterController } from './CharacterController'
 import { CharacterStateMachine } from './stateMachine'
+import type { SpeakingLevelReading, Vec3 } from './npcPresence'
+import { eyePosition } from './npcPresence'
 import { ChatBubble, NameTag } from './overheadSprites'
 import { RemotePlayerView } from './RemotePlayerView'
 import { WorldScriptBridge } from './scriptBridge'
 import { disposeVrm, loadVrmFromBytes, vrmMetaSummary, type VrmMeta } from './vrmLoader'
 import { WorldManager } from './WorldManager'
 import { WorldObjects, type PlacementSource } from './WorldObjects'
-import { ObjectEditor, type EditTool } from './ObjectEditor'
+import { ObjectEditor, LONG_PRESS_MS, POINTER_SLOP_PX, type EditTool } from './ObjectEditor'
 
 // Light-theme scene palette, matching the light UI. Grid tones follow
 // ../tc-vrm-viewer's light theme (soft grey lines on a near-white ground).
@@ -124,6 +126,8 @@ export class World {
   /** Reused across clicks — a Raycaster per pointerdown is pure garbage churn. */
   private readonly interactRaycaster = new THREE.Raycaster()
   private readonly interactNdc = new THREE.Vector2()
+  /** A touch that hit something but hasn't been released yet — see below. */
+  private pendingInteract: { pointerId: number; objectId: string; x: number; y: number; at: number } | null = null
 
   private readonly onInteractPointerDown = (e: PointerEvent): void => {
     if (!this.hasScripts || this.objectEditor.isEnabled || e.button !== 0) return
@@ -146,7 +150,32 @@ export class World {
     }
     this.interactRaycaster.setFromCamera(this.interactNdc, this.camera)
     const hit = this.worldObjects.raycast(this.interactRaycaster)
-    if (hit) this.scriptRuntime.interact(hit, this.localProfileName)
+    if (!hit) return
+    // A mouse click is unambiguous — the editor's way in is the RIGHT button,
+    // so the left one is ours the moment it goes down. A touch is not: the
+    // same press, held, is how the editor is reached on a device with no
+    // second button (ObjectEditor's long press). So a touch waits to see what
+    // it becomes. A tap — released quickly, near where it started — interacts;
+    // a hold belongs to the editor and never reaches the script at all.
+    if (e.pointerType === 'mouse') {
+      this.scriptRuntime.interact(hit, this.localProfileName)
+      return
+    }
+    this.pendingInteract = { pointerId: e.pointerId, objectId: hit, x: e.clientX, y: e.clientY, at: performance.now() }
+  }
+
+  private readonly onInteractPointerUp = (e: PointerEvent): void => {
+    const pending = this.pendingInteract
+    if (!pending || e.pointerId !== pending.pointerId) return
+    this.pendingInteract = null
+    if (e.type !== 'pointerup') return // cancelled (scrolled away, lost capture)
+    // Edit mode opened during the press (the hold above, or a key/HUD toggle):
+    // the press is the editor's now, exactly as it would have been had the
+    // mode already been on when the finger went down.
+    if (this.objectEditor.isEnabled) return
+    if (performance.now() - pending.at >= LONG_PRESS_MS) return
+    if (Math.abs(e.clientX - pending.x) > POINTER_SLOP_PX || Math.abs(e.clientY - pending.y) > POINTER_SLOP_PX) return
+    this.scriptRuntime.interact(pending.objectId, this.localProfileName)
   }
 
   constructor(canvas: HTMLCanvasElement) {
@@ -185,6 +214,15 @@ export class World {
     this.camera.add(this.audioListener)
     this.worldObjects = new WorldObjects(this.scene, this.audioListener)
     this.objectEditor = new ObjectEditor(this.scene, this.camera, canvas, this.worldObjects)
+    // An NPC's runtime-driven turn (see faceObject) must yield to a user
+    // actively dragging that same placement's gizmo — see WorldObjects'
+    // setDragGuard doc for why this can't be wired the other way around.
+    this.worldObjects.setDragGuard((id) => this.objectEditor.isDragging && this.objectEditor.selection === id)
+    // An NPC's own presence (see WorldObjects.update) must only drive its
+    // body-turn on the tab that actually owns the placement — see that
+    // method's doc for why a non-owner running it too would fight the
+    // authoritative transform arriving over MSG_OBJ_STATE.
+    this.worldObjects.setOwnershipGuard((id) => this.ownedObjectIds.has(id))
     // Wrap the editor's own commit callback: a committed edit changes a
     // placement's transform, which is exactly the kind of change sync() must
     // see (a script's trigger volume follows its object's origin — see
@@ -210,6 +248,10 @@ export class World {
       ),
     )
     canvas.addEventListener('pointerdown', this.onInteractPointerDown)
+    // The release that completes a tap can land anywhere (a finger drifts off
+    // the canvas), so it is watched on the document like the editor's is.
+    document.addEventListener('pointerup', this.onInteractPointerUp)
+    document.addEventListener('pointercancel', this.onInteractPointerUp)
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize())
     this.resizeObserver.observe(canvas.parentElement ?? canvas)
@@ -475,6 +517,20 @@ export class World {
     return this.worldObjects.list()
   }
 
+  /** Snapshot of currently placed NPCs (kind: 'npc') — what the session layer feeds NpcRuntime.setPlacements. */
+  listNpcObjects(): PlacedObject[] {
+    return this.worldObjects.list().filter((o) => o.kind === 'npc')
+  }
+
+  /**
+   * Turn a placement toward `yaw` radians, smoothly over the next few frames
+   * — the runtime side of NpcRuntime's `face` dep (see WorldObjects.faceTowards
+   * for the interpolation and its ObjectEditor drag guard).
+   */
+  faceObject(id: string, yaw: number): void {
+    this.worldObjects.faceTowards(id, yaw)
+  }
+
   /** Remove every placed object from the local scene view. */
   clearObjects(): void {
     this.worldObjects.clearAll()
@@ -525,6 +581,15 @@ export class World {
   /** Notified when the edited selection changes (null = nothing selected). */
   onObjectSelected(cb: (state: PlacedObject | null) => void): void {
     this.objectEditor.onSelectionChange = cb
+  }
+
+  /**
+   * Notified when an editable placement is right-clicked / long-pressed while
+   * edit mode is OFF: "edit this one", straight from the world. The caller
+   * turns the mode on and selects the id (see ObjectEditor.onEditRequest).
+   */
+  onObjectEditRequested(cb: (id: string) => void): void {
+    this.objectEditor.onEditRequest = cb
   }
 
   /**
@@ -611,12 +676,16 @@ export class World {
         break
       case 'say':
         this.scriptSayListener?.(effect.objectId, effect.text)
+        // Same single trigger as applyScriptEffects below — see WorldObjects
+        // .npcSpeak's doc for why this must fire for a REMOTE say too, not
+        // just a locally-produced one: every peer sees the bubble.
+        this.worldObjects.npcSpeak(effect.objectId, effect.text)
         break
       case 'sound':
         void this.playScriptSound(effect.objectId, effect.cid)
         break
       case 'emit':
-        this.scriptRuntime.deliverCustom(effect.event, effect.payload)
+        this.scriptRuntime.deliverCustom(effect.event, effect.payload, effect.hops)
         break
     }
   }
@@ -705,6 +774,42 @@ export class World {
     this.scriptSayListener = cb
   }
 
+  /**
+   * Feeds a fresh TTS loudness reading for an NPC's current utterance into
+   * its lipsync (see npcPresence.ts's envelope follower). World never
+   * touches TTS/fetch/LLM-config itself — the session layer synthesizes
+   * speech and taps an AnalyserNode entirely outside src/world, and this is
+   * the one seam it uses to hand the numbers back for the same utterance
+   * its `say` effect already triggered a bubble for. A no-op for an id that
+   * isn't a currently tracked NPC placement.
+   */
+  setNpcSpeakingLevel(objectId: string, level: SpeakingLevelReading): void {
+    this.worldObjects.setNpcSpeakingLevel(objectId, level)
+  }
+
+  /**
+   * Plays a synthesized NPC line at its placement, through the very same
+   * one-shot PositionalAudio path a script's `sound` effect uses — so an NPC
+   * voice attenuates with distance and tracks the body if it moves, with no
+   * second audio route to keep in sync. Bytes come from the session layer
+   * (src/lib/ttsClient.ts); World neither synthesizes nor caches them.
+   */
+  playNpcSpeech(objectId: string, bytes: Uint8Array, mime?: string): void {
+    if (this.disposed) return
+    this.worldObjects.playOneShot(objectId, bytes, mime)
+  }
+
+  /**
+   * The AudioContext three's AudioListener already owns. Exposed so the
+   * session layer's loudness analyser can decode and run on THIS context
+   * rather than opening a second one: browsers cap how many a page may have,
+   * and a shared clock keeps the lipsync analysis in step with the audible
+   * playback instead of drifting against it.
+   */
+  audioContext(): AudioContext {
+    return this.audioListener.context as AudioContext
+  }
+
   /** Why a script isn't running — failed validation, or halted as runaway — keyed by object id. Empty when everything is healthy. */
   scriptProblems(): Map<string, ScriptError[]> {
     return this.scriptRuntime.problems()
@@ -734,6 +839,8 @@ export class World {
     this.disposed = true
     this.renderer.setAnimationLoop(null)
     this.canvas.removeEventListener('pointerdown', this.onInteractPointerDown)
+    document.removeEventListener('pointerup', this.onInteractPointerUp)
+    document.removeEventListener('pointercancel', this.onInteractPointerUp)
     this.resizeObserver.disconnect()
     this.characterController.dispose()
     this.cameraController.dispose()
@@ -822,7 +929,7 @@ export class World {
     this.cameraController.update(delta)
 
     this.worldManager.update(delta)
-    this.worldObjects.update(delta)
+    this.worldObjects.update(delta, this.collectNearbyPlayers())
     this.objectEditor.update()
     this.tickScripts(delta)
     this.emitObjectStates()
@@ -872,6 +979,7 @@ export class World {
     for (const effect of effects) {
       if (effect.t === 'say') {
         this.scriptSayListener?.(effect.objectId, effect.text)
+        this.worldObjects.npcSpeak(effect.objectId, effect.text)
       } else if (effect.t === 'sound') {
         void this.playScriptSound(effect.objectId, effect.cid)
       }
@@ -884,6 +992,32 @@ export class World {
     const bytes = await this.soundResolver(cid)
     if (!bytes || this.disposed) return
     this.worldObjects.playOneShot(objectId, bytes)
+  }
+
+  /**
+   * Every player position this tab currently knows about — the local player
+   * (once started) plus every remote — for each NPC's own nearest-player
+   * gaze pick (see WorldObjects.update). Recomputed every frame
+   * unconditionally rather than gated behind a hasNpcs-style flag the way
+   * tickScripts/emitObjectStates gate on hasScripts: unlike those, this is
+   * O(remote count) — a handful of Vector3 reads — not O(placed objects),
+   * so the always-on cost is negligible even in a room with no NPCs at all.
+   *
+   * These are EYE positions, not the avatars' ground origins: an NPC looking
+   * at a raw PlayerState position would be aiming at the player's feet and
+   * visibly tilting its head down at conversational range. Each avatar's own
+   * measured rig height feeds eyePosition(), so a short and a tall avatar are
+   * both met at their own eye line rather than at one assumed height.
+   */
+  private collectNearbyPlayers(): Vec3[] {
+    const players: Vec3[] = []
+    if (this.started) {
+      players.push(eyePosition(this.localRoot.position, this.localRig.getHeight()))
+    }
+    for (const view of this.remotes.values()) {
+      players.push(eyePosition(view.root.position, view.eyeHeight()))
+    }
+    return players
   }
 
   private emitLocalState(): void {
@@ -969,3 +1103,4 @@ function sameObjectTransform(a: ObjectState, b: ObjectState): boolean {
 export type { AnimState, ObjectState, PlayerProfile, PlayerState }
 export type { VrmMeta }
 export type { EditTool }
+export type { SpeakingLevelReading }

@@ -280,6 +280,75 @@ describe('value pull-evaluation', () => {
     // unresolved leg, so the write goes through rather than hanging.
     expect(typeof runner.get('s1')?.vars.get('x')).toBe('number')
   })
+
+  it('evaluates a nested value chain correctly (math/add(math/mul(a,b), math/mul(c,d)))', () => {
+    // Regression guard for the pooled ValueCtx: evaluating the add node pulls
+    // both mul nodes as its inputs, and both mul evaluations reuse the same
+    // depth-1 slot one after another. If the pool were shared instead of
+    // depth-indexed (or a later mul's dispatch clobbered the earlier one's
+    // still-pending state), this would silently produce the wrong sum instead
+    // of throwing.
+    const graph: ScriptGraph = {
+      v: 1,
+      nodes: [
+        { op: 'event/onStart', next: { out: 1 } },
+        {
+          op: 'flow/setVar',
+          cfg: { var: 'result' },
+          in: { value: { k: 'out', n: 2, s: 'out' } },
+        },
+        {
+          op: 'math/add',
+          in: { a: { k: 'out', n: 3, s: 'out' }, b: { k: 'out', n: 4, s: 'out' } },
+        },
+        { op: 'math/mul', in: { a: { k: 'lit', v: 2 }, b: { k: 'lit', v: 3 } } }, // 2*3 = 6
+        { op: 'math/mul', in: { a: { k: 'lit', v: 4 }, b: { k: 'lit', v: 5 } } }, // 4*5 = 20
+      ],
+      vars: [{ name: 'result', type: 'number', init: -1 }],
+    }
+    const host = createHost()
+    const runner = new ScriptRunner(host)
+    runner.attach('s1', graph)
+    runner.tick(1 / 60)
+    expect(runner.get('s1')?.vars.get('result')).toBe(26) // 6 + 20
+  })
+
+  it('evaluates a three-level-deep value chain without cross-depth corruption', () => {
+    // math/add(math/mul(math/add(1,2), 10), math/mul(math/add(3,4), 100))
+    // exercises three recursion depths (0/1/2) with two siblings sharing each
+    // depth's pooled slot in turn.
+    const graph: ScriptGraph = {
+      v: 1,
+      nodes: [
+        { op: 'event/onStart', next: { out: 1 } },
+        {
+          op: 'flow/setVar',
+          cfg: { var: 'result' },
+          in: { value: { k: 'out', n: 2, s: 'out' } },
+        },
+        {
+          op: 'math/add', // depth 1
+          in: { a: { k: 'out', n: 3, s: 'out' }, b: { k: 'out', n: 5, s: 'out' } },
+        },
+        {
+          op: 'math/mul', // depth 2, left: (1+2) * 10 = 30
+          in: { a: { k: 'out', n: 4, s: 'out' }, b: { k: 'lit', v: 10 } },
+        },
+        { op: 'math/add', in: { a: { k: 'lit', v: 1 }, b: { k: 'lit', v: 2 } } }, // depth 3: 1+2=3
+        {
+          op: 'math/mul', // depth 2, right: (3+4) * 100 = 700
+          in: { a: { k: 'out', n: 6, s: 'out' }, b: { k: 'lit', v: 100 } },
+        },
+        { op: 'math/add', in: { a: { k: 'lit', v: 3 }, b: { k: 'lit', v: 4 } } }, // depth 3: 3+4=7
+      ],
+      vars: [{ name: 'result', type: 'number', init: -1 }],
+    }
+    const host = createHost()
+    const runner = new ScriptRunner(host)
+    runner.attach('s1', graph)
+    runner.tick(1 / 60)
+    expect(runner.get('s1')?.vars.get('result')).toBe(730) // 30 + 700
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -633,6 +702,32 @@ describe('host wiring', () => {
 
     expect(runner.get('s1')?.vars.get('lastPlayer')).toBe('Rin')
     expect(callsTo(host, 'log').map((c) => c.args[1])).toEqual(['entered', 'kaboom'])
+  })
+
+  it('fires event/onUiEvent only for the node whose cfg.event matches the pressed button', () => {
+    // Regression guard for the event index (attach()-built op -> node indices):
+    // both onUiEvent nodes share the same op, so the index must hand back both
+    // as candidates and let cfg.event filtering pick the right one, rather
+    // than only ever finding the first node with that op.
+    const graph: ScriptGraph = {
+      v: 1,
+      nodes: [
+        { op: 'event/onUiEvent', cfg: { event: 'confirm' }, next: { out: 1 } },
+        { op: 'debug/log', in: { text: { k: 'lit', v: 'confirmed' } } },
+        { op: 'event/onUiEvent', cfg: { event: 'cancel' }, next: { out: 3 } },
+        { op: 'debug/log', in: { text: { k: 'lit', v: 'cancelled' } } },
+      ],
+      vars: [],
+    }
+    const host = createHost()
+    const runner = new ScriptRunner(host)
+    runner.attach('s1', graph)
+
+    runner.fire('s1', 'event/onUiEvent', { player: 'p' }, 'confirm')
+    runner.fire('s1', 'event/onUiEvent', { player: 'p' }, 'something-else')
+    runner.tick(1 / 60)
+
+    expect(callsTo(host, 'log').map((c) => c.args[1])).toEqual(['confirmed'])
   })
 })
 

@@ -331,8 +331,15 @@ export interface ScriptHost {
   /** Developer output, surfaced in the script editor's console. */
   log(scriptId: string, text: string): void
 
-  /** Fires a named custom event, delivered to every script's event/onCustom. */
-  emit(scriptId: string, event: string, payload: string): void
+  /**
+   * Fires a named custom event, delivered to every script's event/onCustom.
+   * `hops` is how many custom events deep the chain that produced this one
+   * is (see SCRIPT_LIMITS.maxEventHops): 1 from a flow started by anything
+   * other than onCustom, one more for each onCustom link after that. The
+   * host drops an emit past the budget rather than the VM, so a cut chain
+   * costs nothing on the wire.
+   */
+  emit(scriptId: string, event: string, payload: string, hops: number): void
 
   /** Seeded pseudo-random in [0,1). Seeded per script so a replay is reproducible. */
   random(scriptId: string): number
@@ -382,8 +389,46 @@ export const SCRIPT_LIMITS = {
   maxWindows: 4,
   /** Dynamic: chat lines one script may send per second. */
   chatPerSecond: 1,
+  /**
+   * Dynamic: audio/play calls one script may make per second.
+   *
+   * Every effect-producing op needs a brake, because each one that gets
+   * through is a RELIABLE MSG_EVENT to the whole room: chat/say has
+   * chatPerSecond, event/emit has emitsPerTick and maxEventHops, and
+   * ui/showWindow is deduplicated by content. audio/play had none, so
+   * `event/onTick -> audio/play` broadcast a sound effect 60 times a second
+   * for as long as the object existed — and 60 overlapping copies of one clip
+   * is not what that graph was trying to do anyway. Well above chatPerSecond
+   * because rapid sound genuinely is a thing a script wants (footsteps, a
+   * counter ticking); low enough that it can never be the reason a channel
+   * backs up.
+   */
+  soundsPerSecond: 8,
   /** Dynamic: custom events one script may emit per frame. */
   emitsPerTick: 8,
+  /**
+   * Dynamic: how far a chain of custom events may propagate before it is cut.
+   *
+   * Every other dynamic limit here is a PER-FRAME budget, and an emit is the
+   * one effect that survives the frame it was produced in: it is delivered on
+   * the NEXT tick (see ScriptRuntime.tick) and to every peer, where the
+   * budgets have all just reset. So `event/onCustom -> event/emit` — the
+   * obvious way to write a relay, and a shape the generator produces — is a
+   * perpetual motion machine that no per-frame limit can ever catch: one
+   * script relaying to itself broadcasts a reliable MSG_EVENT every frame
+   * forever, and two relaying to each other ramp to emitsPerTick apiece and
+   * stay there, across peers, until someone leaves the room.
+   *
+   * A hop count is what makes that terminate. An emit produced by a flow that
+   * an onCustom started inherits its hop count plus one; anything started by
+   * onTick/onStart/a trigger/a click begins at zero. Past this many hops the
+   * emit is dropped at the source (it never reaches the wire) and logged
+   * against the script that produced it. A periodically emitting script is
+   * unaffected — it emits at hop 1 every time, forever, by design. Only a
+   * chain feeding itself is bounded, which is exactly the thing that has no
+   * other brake.
+   */
+  maxEventHops: 8,
   /** Dynamic: consecutive frames a script may exhaust its fuel before it is halted as runaway. */
   runawayFrames: 180,
 } as const

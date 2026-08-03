@@ -38,6 +38,7 @@ export const ru: Dict = {
   'hud.hintChat': 'Чат',
   'hud.hintMic': 'Микрофон',
   'hud.hintView': 'Обзор',
+  'hud.hintEdit': 'Правка',
   'hud.hintJump': 'Прыжок',
   'hud.hintSprint': 'Бег',
   'hud.hintMenu': 'Меню',
@@ -49,6 +50,7 @@ export const ru: Dict = {
   'menu.avatar': 'Аватар',
   'menu.world': 'Мир',
   'menu.objects': 'Объекты',
+  'panel.characters': 'Персонажи',
   'menu.room': 'Комната',
   'menu.settings': 'Настройки',
   'menu.leave': 'Выйти',
@@ -69,6 +71,31 @@ export const ru: Dict = {
   'avatar.license': 'Лицензия',
   'avatar.invalid': 'Этот файл не является корректным VRM.',
   'avatar.saved': 'Сохранено в ваших аватарах.',
+  // R6: метка происхождения для аватара, который вы не загружали сами
+  // (персонаж tc-town или загрузка другого человека), чтобы он никогда не
+  // выглядел как ваш собственный.
+  'avatar.foreignSource': 'Персонаж {name}',
+  'avatar.foreignUnknown': 'другого человека',
+
+  // Characters panel (R5: разместить персонажа из tc-town в мире как NPC)
+  'characters.title': 'Персонажи',
+  'characters.empty': 'Пока нет персонажей.',
+  'characters.hint': 'Персонажи создаются в tc-town. Как только вы создадите там персонажа, он появится здесь.',
+  'characters.place': 'Разместить в мире',
+  'characters.noVrm': 'Для этого персонажа нет доступного VRM-аватара.',
+  'characters.fromTown': 'Из tc-town',
+
+  // NPC (размещённый персонаж отвечает в чате)
+  'npc.badge': 'NPC',
+  'npc.radius': 'Радиус слышимости',
+  'npc.radiusValue': '{n} м',
+  'npc.voice': 'Голос',
+  'npc.voiceDefault': 'По умолчанию (настройки AI)',
+  'npc.voiceHelp': 'При очистке будет использован голос по умолчанию из настроек AI, а не оригинальный голос персонажа из tc-town.',
+
+  // AI panel
+  'settings.ai.npcPreset': 'Ответы NPC',
+  'settings.ai.npcPresetHelp': 'Отвечает от лица персонажа, когда кто-то говорит рядом с персонажем, которого вы разместили в мире.',
 
   // World panel
   'world.title': 'Мир',

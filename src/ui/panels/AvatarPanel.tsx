@@ -46,25 +46,39 @@ export function AvatarPanel(props: Props) {
           onSelect: () => props.onEquipAvatar(null),
         }}
         onUpload={props.onUploadAvatar}
-        renderActions={(item, isCurrent) => (
-          <div class="preview-actions">
-            <button
-              class="btn btn-primary"
-              disabled={isCurrent || props.avatarBusy}
-              onClick={() => props.onEquipAvatar(item.cid)}
-            >
-              {isCurrent ? t('avatar.equipped') : t('avatar.equip')}
-            </button>
-            <button
-              class="btn btn-ghost btn-danger"
-              disabled={props.avatarBusy}
-              onClick={() => props.onRemoveAvatar(item.cid)}
-            >
-              <Trash2 size={16} aria-hidden="true" />
-              {t('avatar.remove')}
-            </button>
-          </div>
-        )}
+        renderActions={(item, isCurrent) => {
+          // A foreign avatar (tc-town character, peer's upload) must read as
+          // not-the-user's-own here — this is the visible half of the R6
+          // vault; the storage layer keeps the bytes encrypted, but a user
+          // who can't tell a foreign item from an upload is still being
+          // laundered into thinking it's theirs.
+          const { origin, source } = item
+          const isForeign = origin === 'foreign'
+          return (
+            <div class="preview-actions">
+              {isForeign && (
+                <span class="cat-format" style="align-self: center;">
+                  {t('avatar.foreignSource', { name: source?.name || t('avatar.foreignUnknown') })}
+                </span>
+              )}
+              <button
+                class="btn btn-primary"
+                disabled={isCurrent || props.avatarBusy}
+                onClick={() => props.onEquipAvatar(item.cid)}
+              >
+                {isCurrent ? t('avatar.equipped') : t('avatar.equip')}
+              </button>
+              <button
+                class="btn btn-ghost btn-danger"
+                disabled={props.avatarBusy}
+                onClick={() => props.onRemoveAvatar(item.cid)}
+              >
+                <Trash2 size={16} aria-hidden="true" />
+                {t('avatar.remove')}
+              </button>
+            </div>
+          )
+        }}
       />
 
       {props.townCharacters.length > 0 && (

@@ -117,7 +117,7 @@ export class CharacterController {
       this.velocity.z = 0
     }
     // In first person, always face where the camera looks.
-    if (this.cameraController.isFirstPerson) targetYaw = cameraYaw
+    if (this.cameraController.isFirstPerson) targetYaw = cameraLookHeading(cameraYaw)
 
     const turnStep = 1 - Math.exp(-TURN_RATE * delta)
     this.yaw = normalizeAngle(this.yaw + shortestAngleDelta(this.yaw, targetYaw) * turnStep)
@@ -151,6 +151,21 @@ export class CharacterController {
     window.removeEventListener('keydown', this.onKeyDown)
     window.removeEventListener('keyup', this.onKeyUp)
   }
+}
+
+/**
+ * Body heading that faces the same way the camera is looking, for a camera
+ * yaw of `cameraYaw`.
+ *
+ * The +π is load-bearing and easy to lose: a three.js camera looks down its
+ * local -Z, so at yaw θ it faces `(-sinθ, 0, -cosθ)`, while avatars here face
+ * +Z, so a heading h faces `(sin h, 0, cos h)`. Those agree only at h = θ + π.
+ * The movement path arrives at the same answer implicitly — `move.z -= 1` for
+ * forward, rotated by the camera yaw, then `atan2(move.x, move.z)` — which is
+ * why third person always looked right while first person was reversed.
+ */
+export function cameraLookHeading(cameraYaw: number): number {
+  return normalizeAngle(cameraYaw + Math.PI)
 }
 
 export function normalizeAngle(angle: number): number {

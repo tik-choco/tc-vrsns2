@@ -40,6 +40,7 @@ export const en = {
   'hud.hintChat': 'Chat',
   'hud.hintMic': 'Mic',
   'hud.hintView': 'View',
+  'hud.hintEdit': 'Edit',
   'hud.hintJump': 'Jump',
   'hud.hintSprint': 'Sprint',
   'hud.hintMenu': 'Menu',
@@ -51,6 +52,7 @@ export const en = {
   'menu.avatar': 'Avatar',
   'menu.world': 'World',
   'menu.objects': 'Objects',
+  'panel.characters': 'Characters',
   'menu.room': 'Room',
   'menu.ai': 'AI',
   'menu.settings': 'Settings',
@@ -75,6 +77,26 @@ export const en = {
   'avatar.townTitle': 'Characters from tc-town',
   'avatar.townEquip': 'Equip',
   'avatar.townNoModel': 'No VRM avatar available for this character.',
+  // R6: label shown on a foreign (not locally authored) avatar — a tc-town
+  // character or another peer's upload — so it never reads as the user's own.
+  'avatar.foreignSource': "{name}'s character",
+  'avatar.foreignUnknown': 'someone else',
+
+  // Characters panel (R5: place a tc-town character into the world as an NPC)
+  'characters.title': 'Characters',
+  'characters.empty': 'No characters yet.',
+  'characters.hint': 'Characters are created in tc-town. Once you make one there, it shows up here.',
+  'characters.place': 'Place in world',
+  'characters.noVrm': 'No VRM avatar available for this character.',
+  'characters.fromTown': 'From tc-town',
+
+  // NPC (a placed character that replies in chat)
+  'npc.badge': 'NPC',
+  'npc.radius': 'Hearing radius',
+  'npc.radiusValue': '{n} m',
+  'npc.voice': 'Voice',
+  'npc.voiceDefault': 'Default (AI settings)',
+  'npc.voiceHelp': "Clearing uses the default voice from AI settings, not the character's original tc-town voice.",
 
   // World (environment) panel
   'world.title': 'World',
@@ -256,6 +278,8 @@ export const en = {
   'ai.task.script.tip': 'Turns a natural-language request into an in-world behavior script.',
   'ai.network.modelNotShared': 'That model is not shared by this device.',
   'ai.network.notConfigured': 'AI is not configured yet.',
+  'settings.ai.npcPreset': 'NPC replies',
+  'settings.ai.npcPresetHelp': 'Answers in character when someone talks near a character you placed in the world.',
 
   // Settings panel
   'settings.title': 'Settings',

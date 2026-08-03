@@ -14,11 +14,13 @@ import {
   Settings as SettingsIcon,
   LogOut,
   Lock,
+  Pencil,
   Users as UsersIcon,
+  Drama,
 } from 'lucide-preact'
 import { useTranslation } from '../i18n'
 import type { TranslationKey } from '../i18n'
-import type { GameOverlayProps } from './uiContract'
+import { editableObjectCount, type GameOverlayProps } from './uiContract'
 import { BehaviourDialog } from './BehaviourDialog'
 import { ChatPanel } from './ChatPanel'
 import { EditToolbar } from './EditToolbar'
@@ -28,12 +30,13 @@ import { ScriptWindowsHost } from './ScriptWindowsHost'
 import { AvatarPanel } from './panels/AvatarPanel'
 import { WorldPanel } from './panels/WorldPanel'
 import { ObjectsPanel } from './panels/ObjectsPanel'
+import { CharactersPanel } from './panels/CharactersPanel'
 import { RoomPanel } from './panels/RoomPanel'
 import { DiscoveryPanel } from './panels/DiscoveryPanel'
 import { SettingsPanel } from './panels/SettingsPanel'
 import { AiPanel } from './panels/AiPanel'
 
-type PanelId = 'avatar' | 'world' | 'objects' | 'room' | 'discover' | 'ai' | 'settings'
+type PanelId = 'avatar' | 'world' | 'objects' | 'characters' | 'room' | 'discover' | 'ai' | 'settings'
 
 // All lucide-preact icons share one component type; borrow it from any import.
 type IconComponent = typeof Menu
@@ -43,6 +46,7 @@ const MENU: MenuEntry[] = [
   { id: 'avatar', icon: PersonStanding, labelKey: 'menu.avatar' },
   { id: 'world', icon: Globe, labelKey: 'menu.world' },
   { id: 'objects', icon: Boxes, labelKey: 'menu.objects' },
+  { id: 'characters', icon: Drama, labelKey: 'panel.characters' },
   { id: 'room', icon: Home, labelKey: 'menu.room' },
   { id: 'discover', icon: Compass, labelKey: 'discover.title' },
   { id: 'ai', icon: Bot, labelKey: 'menu.ai' },
@@ -69,6 +73,8 @@ export function GameOverlay(props: GameOverlayProps) {
   // handler below or the object being edited — see GraphEditor.tsx's header).
   const [graphEditorOpen, setGraphEditorOpen] = useState(false)
   const selected = props.selectedObject
+  /** Is there anything to edit? Gates the HUD toggle and the E shortcut. */
+  const canEdit = editableObjectCount(props) > 0
 
   const menuRef = useRef(menuOpen)
   menuRef.current = menuOpen
@@ -85,14 +91,18 @@ export function GameOverlay(props: GameOverlayProps) {
   const suppressAutoMenuUntil = useRef(0)
   const chatFocusedRef = useRef(chatFocused)
   chatFocusedRef.current = chatFocused
-  // Edit-mode shortcuts (Delete / Escape) read through refs for the same
+  // Edit-mode shortcuts (E / Delete / Escape) read through refs for the same
   // reason the mic toggle does: the keydown listener is registered once.
   const editModeRef = useRef(props.editMode)
   editModeRef.current = props.editMode
-  const editKeysRef = useRef({ exit: props.onSetEditMode, remove: props.onDeleteSelectedObject })
-  editKeysRef.current = { exit: props.onSetEditMode, remove: props.onDeleteSelectedObject }
+  const canEditRef = useRef(canEdit)
+  canEditRef.current = canEdit
+  const editKeysRef = useRef({ setMode: props.onSetEditMode, remove: props.onDeleteSelectedObject })
+  editKeysRef.current = { setMode: props.onSetEditMode, remove: props.onDeleteSelectedObject }
   const describeOpenRef = useRef(describeOpen)
   describeOpenRef.current = describeOpen
+  const graphEditorOpenRef = useRef(graphEditorOpen)
+  graphEditorOpenRef.current = graphEditorOpen
 
   // Neither dialog ever opens while not editing a selection; if either goes
   // away out from under one (leaving edit mode, the selection being cleared)
@@ -156,7 +166,7 @@ export function GameOverlay(props: GameOverlayProps) {
           return
         }
         if (editModeRef.current) {
-          editKeysRef.current.exit(false)
+          editKeysRef.current.setMode(false)
           return
         }
         const willOpen = !menuRef.current
@@ -166,6 +176,19 @@ export function GameOverlay(props: GameOverlayProps) {
       }
       if (e.code === 'KeyV') {
         toggleMicRef.current()
+        return
+      }
+      // E enters/leaves object editing without a detour through the menu and
+      // the Objects panel — the panel's button stays, but reaching your own
+      // props should not cost three screens. Held to the same "nothing else
+      // owns the keyboard" test Enter uses (the graph editor passes on keys it
+      // doesn't claim itself, so it has to be named here too), and refused
+      // when there is nothing editable: a mode that can select nothing is a
+      // dead end, not a state.
+      if (e.code === 'KeyE') {
+        if (panelStateRef.current || menuRef.current || chatFocusedRef.current || graphEditorOpenRef.current) return
+        if (!editModeRef.current && !canEditRef.current) return
+        editKeysRef.current.setMode(!editModeRef.current)
         return
       }
       if (e.key === 'Enter' && !panelStateRef.current && !menuRef.current) {
@@ -247,6 +270,26 @@ export function GameOverlay(props: GameOverlayProps) {
             </span>
             <span class="voice-label">{voiceLabel}</span>
           </button>
+          {/* The direct way into object editing (the other two are a
+              right-click / long press on the object itself, and the Objects
+              panel's button). Hidden outright when there is nothing to edit:
+              a permanently dead control teaches nothing. */}
+          {canEdit && (
+            <button
+              type="button"
+              class={props.editMode ? 'hud-pill edit-pill is-on' : 'hud-pill edit-pill'}
+              onClick={() => props.onSetEditMode(!props.editMode)}
+              aria-pressed={props.editMode}
+              // The label collapses on a narrow screen (style.css), taking the
+              // accessible name with it — so the name is set here, not read
+              // off the text.
+              aria-label={t('objects.edit')}
+              title={t('objects.edit')}
+            >
+              <Pencil size={15} aria-hidden="true" />
+              <span class="edit-pill-label">{t(props.editMode ? 'objects.editDone' : 'objects.edit')}</span>
+            </button>
+          )}
           {props.worldPolicy !== 'owner' && (
             <div
               class="hud-pill lock-pill"
@@ -272,6 +315,7 @@ export function GameOverlay(props: GameOverlayProps) {
         <span class="hint"><kbd class="kbd">Enter</kbd>{t('hud.hintChat')}</span>
         <span class="hint"><kbd class="kbd">V</kbd>{t('hud.hintMic')}</span>
         <span class="hint"><kbd class="kbd">G</kbd>{t('hud.hintView')}</span>
+        {canEdit && <span class="hint"><kbd class="kbd">E</kbd>{t('hud.hintEdit')}</span>}
       </div>
 
       {/* Chat */}
@@ -291,6 +335,8 @@ export function GameOverlay(props: GameOverlayProps) {
           onDeleteSelectedObject={props.onDeleteSelectedObject}
           onSetEditMode={props.onSetEditMode}
           onSetObjectScript={props.onSetObjectScript}
+          onSetNpcRadius={props.onSetNpcRadius}
+          onSetNpcVoice={props.onSetNpcVoice}
           scriptProblems={props.scriptProblems}
           onDescribeBehaviour={() => setDescribeOpen(true)}
           onEditGraph={() => setGraphEditorOpen(true)}
@@ -389,6 +435,7 @@ export function GameOverlay(props: GameOverlayProps) {
       {panel === 'avatar' && <AvatarPanel {...props} onClose={closePanel} />}
       {panel === 'world' && <WorldPanel {...props} onClose={closePanel} />}
       {panel === 'objects' && <ObjectsPanel {...props} onClose={closePanel} />}
+      {panel === 'characters' && <CharactersPanel {...props} onClose={closePanel} />}
       {panel === 'room' && <RoomPanel {...props} onClose={closePanel} />}
       {panel === 'discover' && <DiscoveryPanel {...props} onClose={closePanel} />}
       {panel === 'ai' && <AiPanel onClose={closePanel} />}

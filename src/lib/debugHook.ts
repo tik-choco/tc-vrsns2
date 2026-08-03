@@ -18,6 +18,18 @@ export type VrsnsDebug = {
   events: Record<number, number>
   /** Count of sendMessage() calls that threw. */
   sendErrors: number
+  /**
+   * Bytes WE handed to sendMessage, keyed by message kind (MSG_* in
+   * net/protocol.ts). The point of measuring at this exact seam: compared
+   * against mistlib's own `stats()` byte totals it says whether the traffic
+   * saturating a data channel is traffic this app originates at all, or
+   * something underneath it (the content store serving an asset, overlay
+   * gossip, another room). Guessing which of those it is, from the outside,
+   * is what the congestion warnings do NOT tell you.
+   */
+  sentBytes: Record<number, number>
+  /** Message count per kind, alongside sentBytes — a few huge frames and a flood of small ones need different fixes. */
+  sentCount: Record<number, number>
   /** Snapshot of the node's transport stats (wired up by useSession). */
   stats: (() => unknown) | null
   /**
@@ -29,6 +41,25 @@ export type VrsnsDebug = {
   owned: (() => PlacedObject[]) | null
   /** Ids the local player may currently select and edit, per the room policy. */
   editable: (() => string[]) | null
+  /**
+   * Our own NPC placements (R5), each carrying `lastReplyAt` — the
+   * Date.now() of its most recent `say`, or null if it has never replied.
+   * NpcRuntime keeps no public accessor for that timestamp itself, so
+   * useSession records it at the same `say` callback that broadcasts the
+   * reply; this is how scripts/e2e-npc.mjs polls for "did it actually
+   * answer" without depending on chat-message content.
+   */
+  npcs: (() => Array<PlacedObject & { lastReplyAt: number | null }>) | null
+  /**
+   * Who is actually connected, split the only way that answers "who is
+   * pulling my 27 MB asset": peers in OUR room versus every peer the shared
+   * node is talking to (our room + the discovery lobby + the AI Network
+   * room). A node peer that is not a room peer is not a player — it is
+   * another tab, a daemon, or someone else's client on the same overlay.
+   * Reading this beats inferring it from a congestion warning, which names a
+   * peer id and nothing else.
+   */
+  peerScopes: (() => { room: string[]; node: string[]; strangers: string[] }) | null
 }
 
 export const vrsnsDebug: VrsnsDebug | null = createBag()
@@ -49,10 +80,14 @@ function createBag(): VrsnsDebug | null {
     local: null,
     events: {},
     sendErrors: 0,
+    sentBytes: {},
+    sentCount: {},
     stats: null,
     objects: null,
     owned: null,
     editable: null,
+    npcs: null,
+    peerScopes: null,
   }
   ;(window as unknown as { __vrsnsDebug?: VrsnsDebug }).__vrsnsDebug = bag
   return bag

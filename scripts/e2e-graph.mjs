@@ -100,7 +100,7 @@ function makeTestPng(size = 16, rgb = [0x40, 0xa0, 0x60]) {
 
 // --- app-specific UI helpers, copied/adapted from e2e-behaviour.mjs --------
 
-const EN_LABELS = { objects: 'Objects', place: 'Place in front of me', editPlaced: 'Edit placed' }
+const EN_LABELS = { objects: 'Objects', place: 'Place in front of me' }
 
 async function joinRoom(page, room, name) {
   page.on('pageerror', (err) => log('pageerror', String(err).slice(0, 300)))
@@ -141,9 +141,14 @@ async function uploadAndPlace(page) {
   return placed
 }
 
+/** Placing enters edit mode with the new object selected; the canvas clicks
+ *  below are the fallback for when the selection didn't take. */
 async function enterEditModeAndSelect(page) {
-  await page.getByRole('button', { name: EN_LABELS.editPlaced }).click()
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
+  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+    log('placing selected the object — no canvas click needed')
+    return
+  }
   const canvas = page.locator('.world-canvas')
   const box = await canvas.boundingBox()
   if (!box) throw new Error('canvas has no bounding box')

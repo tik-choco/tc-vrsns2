@@ -38,6 +38,7 @@ export const ko: Dict = {
   'hud.hintChat': '채팅',
   'hud.hintMic': '마이크',
   'hud.hintView': '시점',
+  'hud.hintEdit': '편집',
   'hud.hintJump': '점프',
   'hud.hintSprint': '달리기',
   'hud.hintMenu': '메뉴',
@@ -49,6 +50,7 @@ export const ko: Dict = {
   'menu.avatar': '아바타',
   'menu.world': '월드',
   'menu.objects': '오브젝트',
+  'panel.characters': '캐릭터',
   'menu.room': '방',
   'menu.settings': '설정',
   'menu.leave': '나가기',
@@ -69,6 +71,30 @@ export const ko: Dict = {
   'avatar.license': '라이선스',
   'avatar.invalid': '유효한 VRM 파일이 아니에요.',
   'avatar.saved': '내 아바타에 저장했어요.',
+  // R6: 직접 업로드하지 않은 아바타(tc-town 캐릭터, 다른 사람이 올린 것)에 붙는
+  // 출처 라벨. 내 것처럼 보이지 않게 한다.
+  'avatar.foreignSource': '{name}님의 캐릭터',
+  'avatar.foreignUnknown': '다른 사람',
+
+  // Characters panel (R5: tc-town 캐릭터를 NPC로 월드에 배치)
+  'characters.title': '캐릭터',
+  'characters.empty': '아직 캐릭터가 없어요.',
+  'characters.hint': '캐릭터는 tc-town에서 만들어요. 그곳에서 만들면 여기 나타나요.',
+  'characters.place': '월드에 배치',
+  'characters.noVrm': '이 캐릭터에는 사용할 수 있는 VRM 아바타가 없어요.',
+  'characters.fromTown': 'tc-town에서',
+
+  // NPC (배치된 캐릭터가 채팅으로 답해요)
+  'npc.badge': 'NPC',
+  'npc.radius': '청취 반경',
+  'npc.radiusValue': '{n}m',
+  'npc.voice': '음성',
+  'npc.voiceDefault': '기본값 (AI 설정)',
+  'npc.voiceHelp': '지우면 AI 설정의 기본 음성이 사용되며, 이 캐릭터의 원래 tc-town 음성으로 복원되지 않습니다.',
+
+  // AI panel
+  'settings.ai.npcPreset': 'NPC 응답',
+  'settings.ai.npcPresetHelp': '월드에 배치한 캐릭터 근처에서 누군가 말을 걸면 그 캐릭터가 되어 답해요.',
 
   // World panel
   'world.title': '월드',

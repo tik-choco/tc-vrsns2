@@ -2,9 +2,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ObjectState, PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
 import { SCRIPT_LIMITS } from '../script/ir'
+import { NPC_LIMITS } from '../npc/limits'
 import type { ScriptGraph, ScriptInput, TriggerVolume, UiNode } from '../script/ir'
 import {
   ANNOUNCE_ROOMS_MAX,
+  CID_MAX_LEN,
   EFFECTS_MAX,
   FALLBACK_NAME,
   INPUTS_MAX,
@@ -618,6 +620,118 @@ describe('script graph validation', () => {
   })
 })
 
+describe('NPC binding validation', () => {
+  const base = { id: 'a', cid: 'c', name: 'Mika', x: 0, y: 0, z: 0, rotationY: 0, scale: 1 }
+
+  it('round-trips an npc placement', () => {
+    const objects: PlacedObject[] = [
+      { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6 } },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('clamps a radius a peer set beyond the runtime bounds', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [{ ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 9999 } }],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.radius).toBe(NPC_LIMITS.maxRadius)
+  })
+
+  it('falls back to the default radius when the field is missing or not a number', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1' } },
+          { ...base, id: 'b', kind: 'npc', npc: { characterId: 'char-2', radius: 'near' } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.radius).toBe(NPC_LIMITS.defaultRadius)
+    expect(msg.objects[1].npc?.radius).toBe(NPC_LIMITS.defaultRadius)
+  })
+
+  it('drops a malformed binding but keeps the placement visible', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: '   ' } },
+          { ...base, id: 'b', kind: 'npc', npc: 'nonsense' },
+          { ...base, id: 'c2', kind: 'npc' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(3)
+    for (const object of msg.objects) {
+      expect(object.kind).toBe('npc')
+      expect(object.npc).toBeUndefined()
+      expect(object.name).toBe('Mika')
+    }
+  })
+
+  it('caps an oversized characterId rather than rejecting the placement', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [{ ...base, kind: 'npc', npc: { characterId: 'x'.repeat(500), radius: 6 } }],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.characterId).toHaveLength(CID_MAX_LEN)
+  })
+
+  it('round-trips voiceModel/voiceName', () => {
+    const objects: PlacedObject[] = [
+      { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, voiceModel: 'tts-1', voiceName: 'alloy' } },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('trims and caps an oversized voiceModel/voiceName rather than rejecting the binding', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          {
+            ...base,
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, voiceModel: `  ${'m'.repeat(500)}  `, voiceName: `  ${'v'.repeat(500)}  ` },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.voiceModel).toHaveLength(CID_MAX_LEN)
+    expect(msg.objects[0].npc?.voiceModel).toBe('m'.repeat(CID_MAX_LEN))
+    expect(msg.objects[0].npc?.voiceName).toHaveLength(CID_MAX_LEN)
+    expect(msg.objects[0].npc?.voiceName).toBe('v'.repeat(CID_MAX_LEN))
+  })
+
+  it('drops only a malformed voiceModel/voiceName, keeping the rest of the binding', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, voiceModel: '   ', voiceName: 42 } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc).toEqual({ characterId: 'char-1', radius: 6 })
+  })
+
+  it('omits voiceModel/voiceName entirely when absent (older/plain placements)', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [{ ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6 } }],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc).toEqual({ characterId: 'char-1', radius: 6 })
+  })
+})
+
 describe('trigger volume validation', () => {
   it('round-trips a sphere and a box, and accepts a bare shape', () => {
     expect(parseTriggerVolume({ shape: 'sphere', ox: 1, oy: 2, oz: 3, r: 5 })).toEqual({
@@ -670,7 +784,7 @@ describe('MSG_EVENT / ScriptEffect validation', () => {
         anchor: { mode: 'screen', x: 0.5, y: 0.9 },
       },
       { t: 'closeWindow', scriptId: 'obj1', windowId: 'win1' },
-      { t: 'emit', event: 'door.opened', payload: '{}' },
+      { t: 'emit', event: 'door.opened', payload: '{}', hops: 1 },
     ]
     expect(decode(encode({ kind: MSG_EVENT, effects }))).toEqual({ kind: MSG_EVENT, effects })
   })

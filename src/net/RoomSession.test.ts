@@ -37,7 +37,13 @@ vi.mock('../vendor/mistlib/wrappers/web/index.js', () => ({
 
 const SELF_ID = 'self-node'
 
-type Sent = { toId: string | null; kind: number; delivery: number; bytes: Uint8Array }
+type Sent = {
+  toId: string | null
+  kind: number
+  delivery: number
+  bytes: Uint8Array
+  roomId?: string
+}
 
 class FakeNode {
   // Real signature is (eventType, fromId, payload, roomId) — see
@@ -74,8 +80,18 @@ class FakeNode {
     this.leftRoom = true
     this.leftRoomId = roomId ?? null
   }
-  updatePosition(x: number, y: number, z: number): void {
+  /**
+   * `positionRooms` is kept alongside rather than folded into `positions` so
+   * the existing coordinate assertions stay readable. It matters for the same
+   * reason the roomId does on sendMessage/getNeighbors: without it the
+   * wrapper calls node-wide `mist_update_position`, publishing the player's
+   * position into the discovery lobby and the AI Network room as well — which
+   * is what the AOI overlay uses to decide who we keep links to.
+   */
+  positionRooms: Array<string | undefined> = []
+  updatePosition(x: number, y: number, z: number, roomId?: string): void {
     this.positions.push([x, y, z])
+    this.positionRooms.push(roomId)
   }
   /**
    * Records the roomId it was asked for. The real wrapper dispatches on it —
@@ -93,8 +109,19 @@ class FakeNode {
     if (this.neighborsThrow) throw new Error('Room not joined: ' + roomId)
     return this.neighbors
   }
-  sendMessage(toId: string | null, bytes: Uint8Array, delivery: number): void {
-    this.sent.push({ toId: toId || null, kind: bytes[0], delivery, bytes })
+  /**
+   * `roomId` is recorded for the same reason getNeighbors() above records it,
+   * and it matters more here: the wrapper sends node-wide when it is absent
+   * (`mist_send_message` rather than `mist_send_message_in_room`), so an
+   * unscoped send reaches every peer in the discovery lobby and the AI
+   * Network room too — a full extra copy of the game stream per unrelated
+   * peer. See RoomSession.send().
+   */
+  /** Set to a message to make the next sends throw it, as the wasm boundary does. */
+  sendThrows: string | null = null
+  sendMessage(toId: string | null, bytes: Uint8Array, delivery: number, roomId?: string): void {
+    if (this.sendThrows) throw new Error(this.sendThrows)
+    this.sent.push({ toId: toId || null, kind: bytes[0], delivery, bytes, roomId })
   }
   // Mic surface — unused by these tests but part of the contract.
   setLocalTrackEnabled(): void {}
@@ -190,10 +217,12 @@ beforeEach(async () => {
   fakeNode.mediaHandler = null
   fakeNode.sent = []
   fakeNode.positions = []
+  fakeNode.positionRooms = []
   fakeNode.configs = []
   fakeNode.joinedRooms = []
   fakeNode.neighbors = []
   fakeNode.leftRoom = false
+  fakeNode.sendThrows = null
   session = await RoomSession.join('lobby', PROFILE)
 })
 
@@ -210,6 +239,69 @@ describe('join', () => {
 
   it('rejects invalid room ids', async () => {
     await expect(RoomSession.join('bad room!', PROFILE)).rejects.toThrow(/invalid room id/)
+  })
+})
+
+// The page shares ONE MistNode across the user's room, the discovery lobby and
+// the AI Network room. The wrapper's sendMessage() dispatches on its roomId
+// argument — `mist_send_message_in_room` with it, node-wide `mist_send_message`
+// without — so an unscoped send delivers every frame to peers in rooms that
+// cannot even parse it. That is invisible until an unrelated room happens to
+// be busy, which is exactly how it was found: joining the AI Network made the
+// world unplayable. See RoomSession.send().
+describe('room scoping of outbound frames', () => {
+  const ROOM = 'tc-vrsns2/lobby'
+
+  it('scopes a broadcast to our room, never node-wide', () => {
+    fakeNode.sent = []
+    session.sendState({ x: 1, y: 0, z: 2, ry: 0, anim: 'idle' })
+    session.sendChat('hi')
+    session.setObjects([])
+
+    expect(fakeNode.sent.length).toBeGreaterThanOrEqual(3)
+    expect(fakeNode.sent.every((s) => s.roomId === ROOM)).toBe(true)
+  })
+
+  it('scopes a targeted send too — a peer we greet is a peer in our room', () => {
+    fakeNode.sent = []
+    fakeNode.eventHandler!(5 /* EVENT_PEER_CONNECTED */, 'p1', null)
+
+    const greets = sentTo('p1')
+    expect(greets.length).toBeGreaterThan(0)
+    expect(greets.every((s) => s.roomId === ROOM)).toBe(true)
+  })
+
+  it('scopes the AOI position update, so only our room places us on its map', () => {
+    fakeNode.positionRooms = []
+    session.sendState({ x: 1, y: 0, z: -2, ry: 0, anim: 'idle' })
+    expect(fakeNode.positionRooms).toEqual([ROOM])
+  })
+
+  it('treats the join-window "Room not joined" throw as a transient, not a send error', () => {
+    // The room-scoped call raises this between joinRoom() and the join taking
+    // effect. Every stream through send() resends, so it must not be counted
+    // as a fault — the node-wide call it replaced never threw at all.
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    try {
+      fakeNode.sendThrows = 'Room not joined: ' + ROOM
+      expect(() => session.sendChat('during the join window')).not.toThrow()
+      expect(debugSpy).not.toHaveBeenCalled()
+
+      // Anything else is still a real failure and still reported.
+      fakeNode.sendThrows = 'transport exploded'
+      session.sendChat('a real failure')
+      expect(debugSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      debugSpy.mockRestore()
+      fakeNode.sendThrows = null
+    }
+  })
+
+  it('drops a send once we have left rather than falling back to node-wide', () => {
+    session.leave()
+    fakeNode.sent = []
+    session.sendChat('nobody should hear this')
+    expect(fakeNode.sent).toEqual([])
   })
 })
 

@@ -38,6 +38,7 @@ export const id: Dict = {
   'hud.hintChat': 'Obrolan',
   'hud.hintMic': 'Mikrofon',
   'hud.hintView': 'Tampilan',
+  'hud.hintEdit': 'Edit',
   'hud.hintJump': 'Lompat',
   'hud.hintSprint': 'Lari',
   'hud.hintMenu': 'Menu',
@@ -49,6 +50,7 @@ export const id: Dict = {
   'menu.avatar': 'Avatar',
   'menu.world': 'Dunia',
   'menu.objects': 'Objek',
+  'panel.characters': 'Karakter',
   'menu.room': 'Ruang',
   'menu.settings': 'Pengaturan',
   'menu.leave': 'Keluar',
@@ -69,6 +71,31 @@ export const id: Dict = {
   'avatar.license': 'Lisensi',
   'avatar.invalid': 'File itu bukan VRM yang valid.',
   'avatar.saved': 'Tersimpan ke avatar kamu.',
+  // R6: label sumber untuk avatar yang bukan kamu unggah sendiri (karakter
+  // tc-town atau unggahan orang lain), supaya tidak pernah terlihat seperti
+  // milikmu sendiri.
+  'avatar.foreignSource': 'Karakter {name}',
+  'avatar.foreignUnknown': 'orang lain',
+
+  // Characters panel (R5: menempatkan karakter tc-town sebagai NPC di dunia)
+  'characters.title': 'Karakter',
+  'characters.empty': 'Belum ada karakter.',
+  'characters.hint': 'Karakter dibuat di tc-town. Setelah kamu membuatnya di sana, karakter itu akan muncul di sini.',
+  'characters.place': 'Tempatkan di dunia',
+  'characters.noVrm': 'Tidak ada avatar VRM yang tersedia untuk karakter ini.',
+  'characters.fromTown': 'Dari tc-town',
+
+  // NPC (karakter yang ditempatkan dan membalas di obrolan)
+  'npc.badge': 'NPC',
+  'npc.radius': 'Radius pendengaran',
+  'npc.radiusValue': '{n} m',
+  'npc.voice': 'Suara',
+  'npc.voiceDefault': 'Bawaan (pengaturan AI)',
+  'npc.voiceHelp': 'Mengosongkannya akan menggunakan suara bawaan dari pengaturan AI, bukan suara asli karakter di tc-town.',
+
+  // AI panel
+  'settings.ai.npcPreset': 'Balasan NPC',
+  'settings.ai.npcPresetHelp': 'Menjawab sesuai karakter saat seseorang berbicara di dekat karakter yang kamu tempatkan di dunia.',
 
   // World panel
   'world.title': 'Dunia',

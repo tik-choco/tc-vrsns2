@@ -38,6 +38,7 @@ export const fr: Dict = {
   'hud.hintChat': 'Chat',
   'hud.hintMic': 'Micro',
   'hud.hintView': 'Vue',
+  'hud.hintEdit': 'Éditer',
   'hud.hintJump': 'Sauter',
   'hud.hintSprint': 'Courir',
   'hud.hintMenu': 'Menu',
@@ -49,6 +50,7 @@ export const fr: Dict = {
   'menu.avatar': 'Avatar',
   'menu.world': 'Monde',
   'menu.objects': 'Objets',
+  'panel.characters': 'Personnages',
   'menu.room': 'Salon',
   'menu.settings': 'Paramètres',
   'menu.leave': 'Quitter',
@@ -69,6 +71,31 @@ export const fr: Dict = {
   'avatar.license': 'Licence',
   'avatar.invalid': 'Ce fichier n\'est pas un VRM valide.',
   'avatar.saved': 'Enregistré dans vos avatars.',
+  // R6 : étiquette d'origine pour un avatar que vous n'avez pas importé
+  // vous-même (personnage tc-town ou import d'une autre personne), pour
+  // qu'il ne paraisse jamais vous appartenir.
+  'avatar.foreignSource': 'Personnage de {name}',
+  'avatar.foreignUnknown': "quelqu'un d'autre",
+
+  // Characters panel (R5 : placer un personnage tc-town comme PNJ dans le monde)
+  'characters.title': 'Personnages',
+  'characters.empty': 'Aucun personnage pour l\'instant.',
+  'characters.hint': 'Les personnages sont créés dans tc-town. Une fois que vous en créez un là-bas, il apparaît ici.',
+  'characters.place': 'Placer dans le monde',
+  'characters.noVrm': 'Aucun avatar VRM disponible pour ce personnage.',
+  'characters.fromTown': 'Depuis tc-town',
+
+  // PNJ (un personnage placé qui répond dans le chat)
+  'npc.badge': 'PNJ',
+  'npc.radius': 'Rayon d\'écoute',
+  'npc.radiusValue': '{n} m',
+  'npc.voice': 'Voix',
+  'npc.voiceDefault': 'Par défaut (paramètres AI)',
+  'npc.voiceHelp': "Effacer ce champ utilise la voix par défaut des paramètres AI, pas la voix d'origine du personnage dans tc-town.",
+
+  // AI panel
+  'settings.ai.npcPreset': 'Réponses des PNJ',
+  'settings.ai.npcPresetHelp': 'Répond dans le rôle du personnage quand quelqu\'un parle près d\'un personnage que vous avez placé dans le monde.',
 
   // World panel
   'world.title': 'Monde',

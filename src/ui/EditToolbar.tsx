@@ -6,8 +6,10 @@
 // edited and gate world input, and the behaviour picker below is a native
 // <select> for the same reason: no backdrop, no extra input-gating wiring,
 // and it never steals the global keys GameOverlay listens for.
-import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, AlertTriangle } from 'lucide-preact'
+import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, Ear, Mic, AlertTriangle } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
+import { useTtsVoices } from '../lib/ttsVoices'
+import { NPC_LIMITS } from '../npc/limits'
 import { presetIdOf, SCRIPT_PRESETS, type ScriptPresetId } from '../script/presets'
 import type { EditTool, GameOverlayProps } from './uiContract'
 
@@ -19,6 +21,8 @@ type Props = Pick<
   | 'onDeleteSelectedObject'
   | 'onSetEditMode'
   | 'onSetObjectScript'
+  | 'onSetNpcRadius'
+  | 'onSetNpcVoice'
   | 'scriptProblems'
 > & {
   /**
@@ -56,6 +60,17 @@ const TOOLS: Array<{ id: EditTool; icon: IconComponent; labelKey: TranslationKey
  * onPick — it just never becomes the picker's resting value. */
 type PickerValue = '' | 'custom' | 'describe' | 'editGraph' | ScriptPresetId
 
+/**
+ * A radius edit is a room-wide LLM-traffic knob (see NpcRuntime's `heard`),
+ * so it gets a few coarse presets rather than a free-text field that
+ * encourages "just in case" huge values. Filtered against NPC_LIMITS rather
+ * than hardcoded inline so a future change to the bounds can't leave an
+ * out-of-range option sitting in this list.
+ */
+const RADIUS_STEPS = [3, 6, 10, 15, 20, 30].filter(
+  (r) => r >= NPC_LIMITS.minRadius && r <= NPC_LIMITS.maxRadius,
+)
+
 export function EditToolbar(props: Props) {
   const { t } = useTranslation()
   const selected = props.selectedObject
@@ -79,6 +94,43 @@ export function EditToolbar(props: Props) {
     }
     props.onSetObjectScript(selected.id, value === '' ? null : value)
   }
+
+  // Only rendered when selected.npc is set (see the JSX below), but selected
+  // itself narrows to non-null inside an event handler closure just fine —
+  // guard again anyway since this fires from a live DOM event, not render.
+  const onRadiusChange = (e: Event) => {
+    if (!selected) return
+    const value = Number((e.target as HTMLSelectElement).value)
+    props.onSetNpcRadius(selected.id, value)
+  }
+
+  const npcRadius = selected?.npc?.radius
+  // A radius outside RADIUS_STEPS shouldn't be possible once this control is
+  // the only way to set one, but stay honest about whatever is actually
+  // stored rather than silently snapping the <select> to the nearest preset.
+  const radiusIsCustom = npcRadius != null && !RADIUS_STEPS.includes(npcRadius)
+
+  // Only rendered when selected.npc is set, same guard reasoning as onRadiusChange above.
+  const onVoiceChange = (e: Event) => {
+    if (!selected) return
+    const value = (e.target as HTMLSelectElement).value
+    props.onSetNpcVoice(selected.id, value)
+  }
+
+  // Fetched live from the configured TTS endpoint (falls back to mistai's
+  // static OPENAI_TTS_VOICES when unconfigured or the endpoint has nothing
+  // to offer) — see lib/ttsVoices.ts. Never hardcode OPENAI_TTS_VOICES here
+  // directly: it's OpenAI's own voice names, wrong for any other
+  // OpenAI-compatible backend the user may have configured.
+  const ttsVoices = useTtsVoices()
+
+  const npcVoice = selected?.npc?.voiceName ?? ''
+  // A voice not in the currently offered list (an older/newer fetch result,
+  // a name from a different TTS endpoint, or one set from tc-town directly)
+  // must still show as what it actually is rather than silently falling
+  // back to the empty option — same "stay honest about the stored value"
+  // reasoning as radius.
+  const voiceIsCustom = npcVoice !== '' && !ttsVoices.includes(npcVoice)
 
   return (
     <div class="edit-bar" role="toolbar" aria-label={t('objects.editing')}>
@@ -138,6 +190,36 @@ export function EditToolbar(props: Props) {
           </span>
         )}
       </label>
+      {selected?.npc && (
+        <label class="edit-bar-script">
+          <span class="cat-format">{t('npc.badge')}</span>
+          <Ear size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('npc.radius')}</span>
+          <select class="edit-bar-script-select" value={npcRadius} onChange={onRadiusChange}>
+            {radiusIsCustom && <option value={npcRadius}>{t('npc.radiusValue', { n: npcRadius as number })}</option>}
+            {RADIUS_STEPS.map((r) => (
+              <option key={r} value={r}>
+                {t('npc.radiusValue', { n: r })}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {selected?.npc && (
+        <label class="edit-bar-script" title={t('npc.voiceHelp')}>
+          <Mic size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('npc.voice')}</span>
+          <select class="edit-bar-script-select" value={npcVoice} onChange={onVoiceChange}>
+            <option value="">{t('npc.voiceDefault')}</option>
+            {voiceIsCustom && <option value={npcVoice}>{npcVoice}</option>}
+            {ttsVoices.map((voice) => (
+              <option key={voice} value={voice}>
+                {voice}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <button
         type="button"
         class="btn btn-ghost btn-danger btn-icon-text"

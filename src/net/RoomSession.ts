@@ -235,7 +235,18 @@ export class RoomSession {
     if (now - this.lastPositionSentAt >= POSITION_SYNC_INTERVAL_MS) {
       this.lastPositionSentAt = now
       try {
-        this.node.updatePosition(s.x, s.y, s.z)
+        // Room-scoped for the same reason send() is: the wrapper dispatches on
+        // the roomId argument (`mist_update_position_in_room` with it,
+        // node-wide `mist_update_position` without), and this is the AOI
+        // overlay — the thing that decides which peers we hold links to at
+        // all. Unscoped, our avatar's position was published into EVERY room
+        // on the node once a second, so peers in the discovery lobby and the
+        // AI Network room were placed relative to us on the same map our
+        // players are, inside an aoiRange widened to 64 for the game. They
+        // then read as spatially near, and the overlay maintained links and
+        // routed through them. Scoping this keeps the overlay's idea of "who
+        // is near me" to the room the position actually means something in.
+        this.node.updatePosition(s.x, s.y, s.z, this.fullRoomId ?? undefined)
       } catch (err) {
         console.debug('[net] updatePosition failed', err)
       }
@@ -774,14 +785,94 @@ export class RoomSession {
     }
   }
 
+  /**
+   * Every outbound frame, room-scoped. The roomId argument is NOT optional in
+   * practice — it is the same trap syncPresence() documents, on the sending
+   * side. The page runs ONE MistNode shared by every room it is in, and the
+   * vendored wrapper dispatches on this argument: with it,
+   * `mist_send_message_in_room(roomId, …)`; without it,
+   * `mist_send_message(…)`, which is NODE-wide. Unscoped, a broadcast (an
+   * empty target) therefore went to every peer on the node — our room, plus
+   * the always-on discovery lobby, plus the AI Network room, which since the
+   * LLM integration means every other tc-* tab and every `mistl ai provide`
+   * daemon the user is running.
+   *
+   * That made the cost of playing scale with the size of an unrelated room:
+   * MSG_STATE and MSG_OBJ_STATE go out at ~10 Hz each, and MSG_EVENT /
+   * MSG_INPUT / MSG_OBJECTS are RELIABLE (acked, retransmitted, and up to
+   * SCRIPT_LIMITS.maxGraphBytes per object), so each extra node peer was a
+   * full extra copy of the entire game stream — to a peer that cannot even
+   * parse it (our frames are a 1-byte kind 0x01-0x0b, mistai's are JSON) and
+   * discards every byte. DiscoverySession and lib/mistaiNode.ts both already
+   * scope their sends; this was the one sender that did not.
+   *
+   * Sends before attach() (or after leave()) are dropped rather than falling
+   * back to the node-wide call: with no room there is no correct destination,
+   * and the unscoped call is precisely the thing being avoided.
+   *
+   * The room-scoped call also THROWS "Room not joined" in the window between
+   * joinRoom() and the join actually taking effect — the same transient
+   * syncPresence() guards against, and one the node-wide call never produced
+   * because it needed no room. It is not a failure: every stream through here
+   * is self-healing by design (state re-sends at ~10 Hz, greetPeer re-sends
+   * until a profile answers, and the world/objects/policy a newcomer missed
+   * are replayed on MSG_STATE_REQ), so the frames dropped in that window are
+   * all resent moments later. Counting them as send errors would make a
+   * normal join look like a fault and bury a real one.
+   */
+  /**
+   * Who the node is connected to, split by scope: peers in OUR room versus
+   * every peer the shared node holds a link to (ours + the discovery lobby +
+   * the AI Network room). `strangers` is the difference — connections that
+   * are not players here.
+   *
+   * Diagnostics only, and worth having because a congestion warning names a
+   * peer id and nothing else: whether that id is a second player or a daemon
+   * on an unrelated room changes the diagnosis completely, and there is
+   * otherwise no way to tell from the outside.
+   */
+  neighborScopes(): { room: string[]; node: string[]; strangers: string[] } {
+    const read = (roomId?: string): string[] => {
+      try {
+        return [...normalizePeerIds(this.node.getNeighbors(roomId), this.selfId)]
+      } catch {
+        return []
+      }
+    }
+    const room = this.fullRoomId ? read(this.fullRoomId) : []
+    const node = read()
+    const inRoom = new Set(room)
+    return { room, node, strangers: node.filter((id) => !inRoom.has(id)) }
+  }
+
   private send(toId: string | null, bytes: Uint8Array, delivery: DeliveryMethod): void {
+    const roomId = this.fullRoomId
+    if (!roomId) return
     try {
-      this.node.sendMessage(toId, bytes, delivery)
+      this.node.sendMessage(toId, bytes, delivery, roomId)
+      if (vrsnsDebug) {
+        const kind = bytes[0]
+        vrsnsDebug.sentBytes[kind] = (vrsnsDebug.sentBytes[kind] ?? 0) + bytes.byteLength
+        vrsnsDebug.sentCount[kind] = (vrsnsDebug.sentCount[kind] ?? 0) + 1
+      }
     } catch (err) {
+      if (isRoomNotJoined(err)) return
       if (vrsnsDebug) vrsnsDebug.sendErrors += 1
       console.debug('[net] sendMessage failed', err)
     }
   }
+}
+
+/**
+ * True for mistlib's "Room not joined" throw — the transient every
+ * room-scoped call raises between joinRoom() and the join taking effect.
+ * Matched on the message because that is all the wasm boundary gives us: it
+ * throws a plain string/Error with no code to switch on. Deliberately narrow,
+ * so anything else still surfaces as a real error.
+ */
+function isRoomNotJoined(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return message.includes('Room not joined')
 }
 
 /**

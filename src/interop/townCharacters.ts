@@ -11,6 +11,7 @@
 // to an empty list instead of throwing.
 
 import { readShared, subscribeShared } from '../lib/sharedBus.js'
+import { vrmBytesFromCid } from '../storage/vrmSource.js'
 
 const TOPIC = 'character-index'
 
@@ -158,4 +159,42 @@ export function subscribeTownCharacters(cb: (entries: CharacterIndexEntry[]) => 
     }
     cb(sanitizeMeta(record.meta))
   })
+}
+
+/** Last CID we resolved via loadTownCharacterPersona and what it decoded to,
+ * so repeatedly resolving personas for several NPCs backed by the same
+ * tc-town roster publish doesn't re-fetch and re-parse the same bytes. A
+ * single entry is enough: a fresh tc-town publish gets a new CID, which
+ * simply misses this cache and replaces it — nothing to invalidate. */
+let personaCache: { cid: string; entries: CharacterIndexEntry[] } | null = null
+
+/**
+ * Fetches the FULL published character index (personaPrompt included) via
+ * the shared record's `cid` — see this module's header comment: `meta` is
+ * tc-town's slim index with personaPrompt always stripped there, so an NPC
+ * (src/npc/NpcRuntime.ts) that actually needs a character's persona must go
+ * through this instead of listTownCharacters(). Never throws: a missing
+ * record/cid, a failed fetch, malformed JSON, or an id absent from the full
+ * index all resolve to null (NpcRuntime's contract: null -> stay silent).
+ */
+export async function loadTownCharacterPersona(characterId: string): Promise<string | null> {
+  const record = readShared(TOPIC)
+  if (!record || !record.cid) return null
+
+  let entries: CharacterIndexEntry[]
+  if (personaCache && personaCache.cid === record.cid) {
+    entries = personaCache.entries
+  } else {
+    try {
+      const bytes = await vrmBytesFromCid(record.cid)
+      const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes))
+      entries = sanitizeMeta(parsed)
+    } catch {
+      return null
+    }
+    personaCache = { cid: record.cid, entries }
+  }
+
+  const entry = entries.find((candidate) => candidate.id === characterId)
+  return entry?.personaPrompt || null
 }

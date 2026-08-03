@@ -169,17 +169,23 @@ async function uploadAndPlace(page) {
 }
 
 /**
- * Enters edit mode (via the Objects panel's "Edit placed" button, which also
- * closes the panel) and clicks the canvas to select the one placed object.
- * The object was placed dead ahead of the player, which after CameraController's
- * fixed trailing offset projects close to the canvas centre — but rather than
- * hard-code that, this tries a small spiral of points around the centre so a
- * few pixels of geometry error (panel size, camera pitch) doesn't fail the
- * whole run.
+ * Waits for edit mode and makes sure the one placed object is selected.
+ *
+ * Placing an object now drops straight into editing it, with it selected and
+ * the Objects panel closed behind it (useSession's placeObject) — so there is
+ * no "Edit placed" button left to press here, and usually nothing to do but
+ * wait for the bar. The canvas clicks below stay as the fallback: the object
+ * was placed dead ahead of the player, which after CameraController's fixed
+ * trailing offset projects close to the canvas centre, and rather than
+ * hard-code that this tries a small spiral of points around the centre so a
+ * few pixels of geometry error (camera pitch) doesn't fail the whole run.
  */
 async function enterEditModeAndSelect(page) {
-  await page.getByRole('button', { name: 'Edit placed' }).click()
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
+  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+    log('placing selected the object — no canvas click needed')
+    return
+  }
 
   const canvas = page.locator('.world-canvas')
   const box = await canvas.boundingBox()
