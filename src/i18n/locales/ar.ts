@@ -38,6 +38,7 @@ export const ar: Dict = {
   'hud.hintChat': 'الدردشة',
   'hud.hintMic': 'الميكروفون',
   'hud.hintView': 'المشهد',
+  'hud.hintEdit': 'تحرير',
   'hud.hintJump': 'القفز',
   'hud.hintSprint': 'الركض',
   'hud.hintMenu': 'القائمة',
@@ -49,6 +50,7 @@ export const ar: Dict = {
   'menu.avatar': 'الأفاتار',
   'menu.world': 'العالم',
   'menu.objects': 'العناصر',
+  'panel.characters': 'الشخصيات',
   'menu.room': 'الغرفة',
   'menu.settings': 'الإعدادات',
   'menu.leave': 'مغادرة',
@@ -69,6 +71,30 @@ export const ar: Dict = {
   'avatar.license': 'الترخيص',
   'avatar.invalid': 'هذا الملف ليس أفاتار VRM صالحًا.',
   'avatar.saved': 'تم الحفظ في أفاتاراتك.',
+  // R6: تسمية توضح مصدر أفاتار لم ترفعه أنت بنفسك (شخصية من tc-town أو رفعها
+  // شخص آخر) حتى لا يبدو وكأنه ملكك.
+  'avatar.foreignSource': 'شخصية {name}',
+  'avatar.foreignUnknown': 'شخص آخر',
+
+  // Characters panel (R5: وضع شخصية من tc-town في العالم كشخصية غير قابلة للعب)
+  'characters.title': 'الشخصيات',
+  'characters.empty': 'لا توجد شخصيات بعد.',
+  'characters.hint': 'تُنشأ الشخصيات في tc-town. بمجرد إنشاء واحدة هناك، ستظهر هنا.',
+  'characters.place': 'وضع في العالم',
+  'characters.noVrm': 'لا يتوفر أفاتار VRM لهذه الشخصية.',
+  'characters.fromTown': 'من tc-town',
+
+  // NPC (شخصية موضوعة تردّ في الدردشة)
+  'npc.badge': 'NPC',
+  'npc.radius': 'نطاق السمع',
+  'npc.radiusValue': '{n} م',
+  'npc.voice': 'الصوت',
+  'npc.voiceDefault': 'افتراضي (إعدادات AI)',
+  'npc.voiceHelp': 'يؤدي المسح إلى استخدام الصوت الافتراضي من إعدادات AI، وليس الصوت الأصلي للشخصية في tc-town.',
+
+  // AI panel
+  'settings.ai.npcPreset': 'ردود الشخصيات (NPC)',
+  'settings.ai.npcPresetHelp': 'يردّ بشخصية الشخصية عندما يتحدث أحدهم بالقرب من شخصية وضعتها في العالم.',
 
   // World panel
   'world.title': 'العالم',

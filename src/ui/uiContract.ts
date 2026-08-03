@@ -13,6 +13,7 @@ import type {
 import type { CharacterIndexEntry } from '../interop/townCharacters'
 import type { DiscoveredRoom } from '../net/DiscoverySession'
 import type { EditTool } from '../world/ObjectEditor'
+import { NPC_LIMITS } from '../npc/limits'
 import type { GenerateOutcome, GenerateProgress, GenerateRequest } from '../script/generate'
 import type { ScriptError, ScriptGraph, ScriptWindow, TriggerVolume, UiAnchor } from '../script/ir'
 import type { ScriptPresetId } from '../script/presets'
@@ -35,7 +36,15 @@ export type RoomVisibility = 'public' | 'private'
 export type ObjectUploadError = 'tooLarge' | 'invalid'
 
 /** A saved item in the user's local catalog (avatar / world / object model). */
-export type CatalogItem = { cid: string; name: string; thumb?: string }
+export type CatalogItem = {
+  cid: string
+  name: string
+  thumb?: string
+  /** Where this item's bytes came from. Absent means a local upload (legacy entries). Mirrors shared/types.ts. */
+  origin?: 'foreign'
+  /** Provenance for a foreign item — who actually authored it. Mirrors shared/types.ts. */
+  source?: { characterId?: string; name?: string; vrmChecksum?: string }
+}
 
 export type GameOverlayProps = {
   profile: PlayerProfile
@@ -56,6 +65,8 @@ export type GameOverlayProps = {
   // tc-town character roster (cross-app, read-only)
   townCharacters: CharacterIndexEntry[]
   onEquipTownCharacter: (entry: CharacterIndexEntry) => void
+  /** Places a town character into the world as an NPC (R5) — see CharactersPanel. */
+  onPlaceTownCharacter: (entry: CharacterIndexEntry) => void
   // world environment
   worlds: CatalogItem[]
   currentWorld: WorldEnvironment | null // null = default grid
@@ -95,6 +106,23 @@ export type GameOverlayProps = {
   /** Attaches a built-in preset or a generated graph to a placement the local player may edit, or removes its script when null. */
   onSetObjectScript: (id: string, script: ObjectScriptInput) => void
   /**
+   * Edits an NPC placement's hearing radius (R5 follow-up). Only meaningful
+   * when `selectedObject.npc` is set — EditToolbar is the only caller, and it
+   * gates the control on that. Goes through the same claim/editableIds path
+   * as onSetObjectScript, so it is a no-op for a placement the local player
+   * may not edit.
+   */
+  onSetNpcRadius: (id: string, radius: number) => void
+  /**
+   * Edits an NPC placement's TTS voice override, in-world (same gating as
+   * onSetNpcRadius). An empty string clears the override — that means "use
+   * the shared LLM config's TTS default" (src/lib/ttsClient.ts), not
+   * "re-inherit the tc-town character's voice": the tc-town value was copied
+   * in once, at placement time, and only re-placing the character re-reads
+   * it. EditToolbar is the only caller, and only when selectedObject.npc is set.
+   */
+  onSetNpcVoice: (id: string, voiceName: string) => void
+  /**
    * Runs the natural-language "describe it" generator (src/script/generate.ts)
    * against the configured model. A stateless pass-through — the UI owns no AI
    * state itself, it only renders the returned outcome (see BehaviourDialog)
@@ -129,4 +157,36 @@ export type GameOverlayProps = {
   onMobileMove: (x: number, y: number) => void // normalized, -1..1, y+ = forward
   onMobileJump: (pressed: boolean) => void
   onMobileSprint: (pressed: boolean) => void
+}
+
+/**
+ * How many placements the local player may edit right now. The one derived
+ * quantity that lives with the contract rather than in a component, because
+ * two of them ask the same question — the Objects panel's "Edit placed" button
+ * and the HUD's edit toggle — and an answer that drifted between them would
+ * offer a mode that then selects nothing.
+ *
+ * Mirrors ObjectRegistry.editableIds()'s rule at the props level: 'locked'
+ * means nobody edits anything, under 'everyone' any placement with a live
+ * owner is fair game (so it follows what is on show, not only what we placed),
+ * and otherwise it is ours alone.
+ */
+export function editableObjectCount(
+  props: Pick<GameOverlayProps, 'worldPolicy' | 'placedCount' | 'ownPlacedCount' | 'orphanCount'>,
+): number {
+  if (props.worldPolicy === 'locked') return 0
+  return props.worldPolicy === 'everyone' ? props.placedCount - props.orphanCount : props.ownPlacedCount
+}
+
+/**
+ * Clamps a hearing-radius edit to NPC_LIMITS before it is ever committed or
+ * broadcast, so a control that misses the bounds (or a NaN from a stale
+ * event) corrects the value instead of storing it. `fallback` — the current
+ * radius — is what a non-finite input resolves to, mirroring how the wire
+ * decoder falls back to NPC_LIMITS.defaultRadius for a peer-supplied radius
+ * that isn't a number at all (src/net/protocol.ts).
+ */
+export function clampNpcRadius(radius: number, fallback: number): number {
+  if (!Number.isFinite(radius)) return fallback
+  return Math.min(NPC_LIMITS.maxRadius, Math.max(NPC_LIMITS.minRadius, radius))
 }

@@ -38,6 +38,7 @@ export const hi: Dict = {
   'hud.hintChat': 'चैट',
   'hud.hintMic': 'माइक',
   'hud.hintView': 'व्यू',
+  'hud.hintEdit': 'एडिट',
   'hud.hintJump': 'कूदें',
   'hud.hintSprint': 'दौड़ें',
   'hud.hintMenu': 'मेन्यू',
@@ -49,6 +50,7 @@ export const hi: Dict = {
   'menu.avatar': 'अवतार',
   'menu.world': 'दुनिया',
   'menu.objects': 'ऑब्जेक्ट',
+  'panel.characters': 'किरदार',
   'menu.room': 'रूम',
   'menu.settings': 'सेटिंग्स',
   'menu.leave': 'छोड़ें',
@@ -69,6 +71,30 @@ export const hi: Dict = {
   'avatar.license': 'लाइसेंस',
   'avatar.invalid': 'यह फ़ाइल एक मान्य VRM नहीं है।',
   'avatar.saved': 'आपके अवतारों में सहेजा गया।',
+  // R6: उस अवतार के लिए स्रोत लेबल जिसे आपने खुद अपलोड नहीं किया (tc-town
+  // किरदार या किसी और का अपलोड), ताकि यह कभी आपका अपना न लगे।
+  'avatar.foreignSource': '{name} का किरदार',
+  'avatar.foreignUnknown': 'किसी और',
+
+  // Characters panel (R5: tc-town के किरदार को NPC के रूप में दुनिया में रखें)
+  'characters.title': 'किरदार',
+  'characters.empty': 'अभी तक कोई किरदार नहीं है।',
+  'characters.hint': 'किरदार tc-town में बनाए जाते हैं। वहाँ बनाने के बाद यह यहाँ दिखेगा।',
+  'characters.place': 'दुनिया में रखें',
+  'characters.noVrm': 'इस किरदार के लिए कोई VRM अवतार उपलब्ध नहीं है।',
+  'characters.fromTown': 'tc-town से',
+
+  // NPC (रखा गया किरदार चैट में जवाब देता है)
+  'npc.badge': 'NPC',
+  'npc.radius': 'सुनने की सीमा',
+  'npc.radiusValue': '{n} मी',
+  'npc.voice': 'आवाज़',
+  'npc.voiceDefault': 'डिफ़ॉल्ट (AI सेटिंग्स)',
+  'npc.voiceHelp': 'इसे खाली करने पर AI सेटिंग्स की डिफ़ॉल्ट आवाज़ इस्तेमाल होगी, न कि इस किरदार की मूल tc-town आवाज़।',
+
+  // AI panel
+  'settings.ai.npcPreset': 'NPC के जवाब',
+  'settings.ai.npcPresetHelp': 'जब कोई आपके द्वारा दुनिया में रखे गए किरदार के पास बात करता है, तो वह उसी किरदार की तरह जवाब देता है।',
 
   // World panel
   'world.title': 'दुनिया',

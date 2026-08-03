@@ -130,6 +130,7 @@ export function App() {
           onRemoveAvatar={session.removeAvatar}
           townCharacters={session.townCharacters}
           onEquipTownCharacter={(entry) => void session.equipTownCharacter(entry)}
+          onPlaceTownCharacter={(entry) => void session.placeTownCharacter(entry)}
           worlds={session.worlds}
           currentWorld={session.currentWorld}
           worldBusy={session.worldBusy}
@@ -154,6 +155,8 @@ export function App() {
           onSetEditTool={session.setEditTool}
           onDeleteSelectedObject={session.deleteSelectedObject}
           onSetObjectScript={session.setObjectScript}
+          onSetNpcRadius={session.setNpcRadius}
+          onSetNpcVoice={session.setNpcVoice}
           onGenerateBehaviour={session.generateBehaviour}
           scriptProblems={session.scriptProblems}
           getScriptWindows={session.getScriptWindows}

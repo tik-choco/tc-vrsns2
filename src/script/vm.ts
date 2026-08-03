@@ -72,6 +72,16 @@ export type FlowRun = {
   node: number
   eventNode: number
   eventOut: Record<string, ScriptValue>
+  /**
+   * How many custom events deep the chain that started this flow is: 0 for a
+   * flow started by onTick/onStart/a trigger/a click, and one more than the
+   * emitting flow's own count for one started by onCustom. Pinned for the
+   * flow's lifetime alongside eventNode/eventOut — an emit produced after a
+   * flow/delay belongs to the same chain as one produced before it, so the
+   * wait must not launder the hop count back to zero. See
+   * SCRIPT_LIMITS.maxEventHops.
+   */
+  hops: number
 }
 
 /** A flow/delay continuation counting down to its resume. */
@@ -80,6 +90,7 @@ export type DelayState = {
   node: number
   eventNode: number
   eventOut: Record<string, ScriptValue>
+  hops: number
 }
 
 /**
@@ -108,10 +119,12 @@ export type ScriptInstance = {
   fuelUsedThisTick: number
   /** Custom events emitted so far this tick. Reset at the top of every tick(). */
   emitsThisTick: number
-  /** Seconds accumulated across ticks since attach. Used only to gate chatPerSecond. */
+  /** Seconds accumulated across ticks since attach. Gates chatPerSecond and soundsPerSecond. */
   elapsedSeconds: number
   /** elapsedSeconds at the last accepted chat/say, or -Infinity before the first one. */
   lastChatAt: number
+  /** elapsedSeconds at the last accepted audio/play, or -Infinity before the first one. */
+  lastSoundAt: number
 }
 
 // ---------------------------------------------------------------------------
@@ -235,8 +248,12 @@ type FlowCtx = {
   closeWindow(id: string): void
   /** Enforces chatPerSecond; records the send on success. */
   allowChat(): boolean
+  /** Enforces soundsPerSecond; records the play on success. */
+  allowSound(): boolean
   /** Enforces emitsPerTick; records the emit on success. */
   allowEmit(): boolean
+  /** Hop count of the event chain that started the running flow (see FlowRun.hops). */
+  hops(): number
 }
 
 type FlowOp = (ctx: FlowCtx) => number | null
@@ -333,7 +350,7 @@ export const FLOW_OPS: Record<string, FlowOp> = {
 
   'audio/play': (ctx) => {
     const id = ctx.target()
-    if (id) ctx.host.playSound(ctx.scriptId, id, ctx.cfg('cid'))
+    if (id && ctx.allowSound()) ctx.host.playSound(ctx.scriptId, id, ctx.cfg('cid'))
     return ctx.next('out')
   },
 
@@ -343,7 +360,9 @@ export const FLOW_OPS: Record<string, FlowOp> = {
   },
 
   'event/emit': (ctx) => {
-    if (ctx.allowEmit()) ctx.host.emit(ctx.scriptId, ctx.cfg('event'), asStr(ctx.in('payload')))
+    if (ctx.allowEmit()) {
+      ctx.host.emit(ctx.scriptId, ctx.cfg('event'), asStr(ctx.in('payload')), ctx.hops() + 1)
+    }
     return ctx.next('out')
   },
 
@@ -492,6 +511,32 @@ function substituteText(node: UiNode, text: string, depth = 0): UiNode {
 // ---------------------------------------------------------------------------
 
 /**
+ * Per-op-array `in(name)` socket lookup, cached off the array reference
+ * itself. `inDescs` is always one of NODE_DESCS' own `in` arrays (see
+ * nodes.ts), so the same reference recurs on every read of every socket of
+ * every node sharing an op — caching on it turns a linear `.find()` scan (and
+ * the fresh predicate closure `.find()` needs) into a Map lookup with no
+ * per-call allocation at all.
+ */
+const socketDescCache = new WeakMap<readonly SocketDesc[], Map<string, SocketDesc>>()
+
+function findSocketDesc(inDescs: readonly SocketDesc[], name: string): SocketDesc | undefined {
+  let byName = socketDescCache.get(inDescs)
+  if (!byName) {
+    byName = new Map(inDescs.map((s) => [s.name, s]))
+    socketDescCache.set(inDescs, byName)
+  }
+  return byName.get(name)
+}
+
+/** One reusable ValueCtx plus the mutable node/socket state its closures read. */
+type ValueCtxSlot = {
+  ctx: ValueCtx
+  node: ScriptNode | null
+  inDescs: readonly SocketDesc[]
+}
+
+/**
  * Owns every attached ScriptInstance plus the room-wide fuel budget. Drive it
  * from a render loop with tick(dt) — which also fires event/onTick for every
  * instance, since nothing outside the runner can know when a frame happened —
@@ -502,8 +547,41 @@ export class ScriptRunner {
   private readonly instances = new Map<string, ScriptInstance>()
   private globalFuelRemaining = SCRIPT_LIMITS.fuelPerFrameTotal
 
+  /**
+   * scriptId -> (event op -> node indices). Rebuilt whenever a script is
+   * (re)attached, dropped on detach. Lets enqueueEvent — called every tick
+   * for event/onTick plus once per fire() — jump straight to the handful of
+   * nodes that can possibly match instead of walking the whole graph.
+   */
+  private readonly eventIndex = new Map<string, Map<string, number[]>>()
+
+  // -- pooled flow-step state --------------------------------------------
+  // execFlow runs exactly one flow node at a time (only one flow is ever in
+  // flight per instance, and instances run one at a time — see the file's
+  // model comment), so a single FlowCtx and a single memo Map can be mutated
+  // in place before each dispatch instead of rebuilding ~15 closures plus a
+  // fresh Map on every flow node executed.
+  private readonly flowMemo: Memo = new Map()
+  private flowInstance!: ScriptInstance
+  private flowRun!: FlowRun
+  private flowNode!: ScriptNode
+  private flowInDescs: readonly SocketDesc[] = []
+  private readonly flowCtx: FlowCtx
+
+  // -- pooled value-eval state --------------------------------------------
+  // Value evaluation recurses (a value node pulls its own inputs, which may
+  // themselves be value nodes), so one shared ValueCtx would be overwritten by
+  // an inner call before the outer call is done reading from it. A slot per
+  // recursion depth fixes that: two calls at the *same* depth never overlap
+  // (the first always finishes before the next one at that depth starts),
+  // only calls at *different* depths nest, and those get different slots.
+  private valueInstance!: ScriptInstance
+  private valueMemo!: Memo
+  private readonly valueCtxPool: ValueCtxSlot[] = []
+
   constructor(host: ScriptHost) {
     this.host = host
+    this.flowCtx = this.buildFlowCtx()
   }
 
   /** Attaches a script, seeding its variables and queuing event/onStart. Replaces any prior instance under the same id. */
@@ -525,13 +603,16 @@ export class ScriptRunner {
       emitsThisTick: 0,
       elapsedSeconds: 0,
       lastChatAt: -Infinity,
+      lastSoundAt: -Infinity,
     }
     this.instances.set(scriptId, instance)
+    this.eventIndex.set(scriptId, this.buildEventIndex(graph))
     this.enqueueEvent(instance, 'event/onStart', {})
   }
 
   detach(scriptId: string): void {
     this.instances.delete(scriptId)
+    this.eventIndex.delete(scriptId)
   }
 
   get(scriptId: string): ScriptInstance | undefined {
@@ -558,10 +639,11 @@ export class ScriptRunner {
     op: string,
     payload: Record<string, ScriptValue> = {},
     cfgEvent?: string,
+    hops = 0,
   ): void {
     const instance = this.instances.get(scriptId)
     if (!instance || instance.halted) return
-    this.enqueueEvent(instance, op, payload, cfgEvent)
+    this.enqueueEvent(instance, op, payload, cfgEvent, hops)
   }
 
   /**
@@ -604,25 +686,42 @@ export class ScriptRunner {
     instance.delays = []
   }
 
+  /** op -> indices of every event-kind node with that op, in graph order. */
+  private buildEventIndex(graph: ScriptGraph): Map<string, number[]> {
+    const index = new Map<string, number[]>()
+    graph.nodes.forEach((node, i) => {
+      const desc = nodeDesc(node.op)
+      if (!desc || desc.kind !== 'event') return
+      const list = index.get(node.op)
+      if (list) list.push(i)
+      else index.set(node.op, [i])
+    })
+    return index
+  }
+
   private enqueueEvent(
     instance: ScriptInstance,
     op: string,
     payload: Record<string, ScriptValue>,
     cfgEvent?: string,
+    hops = 0,
   ): void {
     const desc = nodeDesc(op)
     if (!desc || desc.kind !== 'event') return
-    instance.graph.nodes.forEach((node, index) => {
-      if (node.op !== op) return
-      if (cfgEvent !== undefined && node.cfg?.event !== cfgEvent) return
+    const candidates = this.eventIndex.get(instance.scriptId)?.get(op)
+    if (!candidates) return
+    for (const index of candidates) {
+      const node = instance.graph.nodes[index]
+      if (!node) continue
+      if (cfgEvent !== undefined && node.cfg?.event !== cfgEvent) continue
       const start = node.next?.out
-      if (typeof start !== 'number' || start < 0) return
+      if (typeof start !== 'number' || start < 0) continue
       const eventOut: Record<string, ScriptValue> = {}
       for (const socket of desc.out ?? []) {
         eventOut[socket.name] = coerce(payload[socket.name], socket.type)
       }
-      instance.queue.push({ node: start, eventNode: index, eventOut })
-    })
+      instance.queue.push({ node: start, eventNode: index, eventOut, hops })
+    }
   }
 
   private advanceDelays(instance: ScriptInstance, dt: number): void {
@@ -631,7 +730,12 @@ export class ScriptRunner {
     for (const delay of instance.delays) {
       delay.remaining -= dt
       if (delay.remaining <= 0) {
-        instance.queue.push({ node: delay.node, eventNode: delay.eventNode, eventOut: delay.eventOut })
+        instance.queue.push({
+          node: delay.node,
+          eventNode: delay.eventNode,
+          eventOut: delay.eventOut,
+          hops: delay.hops,
+        })
       } else {
         stillWaiting.push(delay)
       }
@@ -681,81 +785,130 @@ export class ScriptRunner {
     this.globalFuelRemaining -= n
   }
 
-  /** Builds the generic `in(name)` reader shared by flow and value op contexts. */
-  private reader(
+  /** Shared `in(name)` implementation for both the pooled flow and value contexts. */
+  private readSocket(
     instance: ScriptInstance,
     inDescs: readonly SocketDesc[],
     node: ScriptNode,
     memo: Memo,
     depth: number,
-  ): (name: string) => ScriptValue {
-    return (name: string): ScriptValue => {
-      const sd = inDescs.find((s) => s.name === name)
-      const type: ScriptType = sd?.type ?? 'number'
-      const ref = node.in?.[name]
-      if (!ref) return sd?.def !== undefined ? coerce(sd.def, type) : zeroValue(type)
-      return this.evalRef(instance, ref, type, memo, depth)
+    name: string,
+  ): ScriptValue {
+    const sd = findSocketDesc(inDescs, name)
+    const type: ScriptType = sd?.type ?? 'number'
+    const ref = node.in?.[name]
+    if (!ref) return sd?.def !== undefined ? coerce(sd.def, type) : zeroValue(type)
+    return this.evalRef(instance, ref, type, memo, depth)
+  }
+
+  /**
+   * Builds the one FlowCtx this runner ever allocates. Every closure below
+   * reads the `flow*` fields execFlow sets immediately before dispatch rather
+   * than capturing per-call state, which is what makes reusing this same
+   * object safe across every flow node ever executed.
+   */
+  private buildFlowCtx(): FlowCtx {
+    const cfgFn = (name: string, def = ''): string => {
+      const v = this.flowNode.cfg?.[name]
+      return typeof v === 'string' ? v : def
+    }
+    return {
+      in: (name) => this.readSocket(this.flowInstance, this.flowInDescs, this.flowNode, this.flowMemo, 0, name),
+      inAs: (name, type) => {
+        const ref = this.flowNode.in?.[name]
+        return ref ? this.evalRef(this.flowInstance, ref, type, this.flowMemo, 0) : zeroValue(type)
+      },
+      cfg: cfgFn,
+      // Numeric cfg needs its own reader: cfgFn() is string-typed and would
+      // hand back the string default for a perfectly good number literal.
+      cfgNum: (name, def) => {
+        const v = this.flowNode.cfg?.[name]
+        return typeof v === 'number' && Number.isFinite(v) ? v : def
+      },
+      next: (name) => {
+        const raw = this.flowNode.next?.[name]
+        return typeof raw === 'number' ? raw : -1
+      },
+      target: () => this.host.resolveTarget(this.flowInstance.scriptId, cfgFn('target', SELF_TARGET)),
+      host: this.host,
+      scriptId: '',
+      varDecl: (name) => this.flowInstance.graph.vars.find((v) => v.name === name),
+      setVar: (name, value) => this.flowInstance.vars.set(name, value),
+      scheduleDelay: (seconds, targetNode) => {
+        if (targetNode < 0) return
+        const remaining = Math.min(Math.max(seconds, 0), MAX_DELAY_SECONDS)
+        // flowRun is the same FlowRun object as instance.active for the whole
+        // step, so its eventNode/eventOut are still the ones this step
+        // started with even though flow.node itself is only rewritten after
+        // execFlow returns (see stepOnce) — the resumption always pins the
+        // right event payload.
+        this.flowInstance.delays.push({
+          remaining,
+          node: targetNode,
+          eventNode: this.flowRun.eventNode,
+          eventOut: this.flowRun.eventOut,
+          hops: this.flowRun.hops,
+        })
+      },
+      uiLayout: (name) => this.flowInstance.graph.ui?.[name],
+      canOpenWindow: (id) =>
+        this.flowInstance.windows.has(id) || this.flowInstance.windows.size < SCRIPT_LIMITS.maxWindows,
+      trackWindow: (id) => this.flowInstance.windows.add(id),
+      closeWindow: (id) => this.flowInstance.windows.delete(id),
+      allowChat: () => {
+        const minGap = 1 / SCRIPT_LIMITS.chatPerSecond
+        if (this.flowInstance.elapsedSeconds - this.flowInstance.lastChatAt < minGap) return false
+        this.flowInstance.lastChatAt = this.flowInstance.elapsedSeconds
+        return true
+      },
+      allowSound: () => {
+        const minGap = 1 / SCRIPT_LIMITS.soundsPerSecond
+        if (this.flowInstance.elapsedSeconds - this.flowInstance.lastSoundAt < minGap) return false
+        this.flowInstance.lastSoundAt = this.flowInstance.elapsedSeconds
+        return true
+      },
+      allowEmit: () => {
+        if (this.flowInstance.emitsThisTick >= SCRIPT_LIMITS.emitsPerTick) return false
+        this.flowInstance.emitsThisTick += 1
+        return true
+      },
+      hops: () => this.flowRun.hops,
     }
   }
 
   private execFlow(instance: ScriptInstance, flow: FlowRun, node: ScriptNode, impl: FlowOp): number | null {
     const desc = nodeDesc(node.op)
-    const memo: Memo = new Map()
-    if (flow.eventNode >= 0) memo.set(flow.eventNode, flow.eventOut)
+    // .clear() + reuse rather than `new Map()`: per-step freshness is the
+    // semantic that matters (see the Memo doc comment above), not the
+    // allocation, and clearing a Map is cheaper than building one.
+    this.flowMemo.clear()
+    if (flow.eventNode >= 0) this.flowMemo.set(flow.eventNode, flow.eventOut)
+    this.flowInstance = instance
+    this.flowRun = flow
+    this.flowNode = node
+    this.flowInDescs = desc?.in ?? []
+    this.flowCtx.scriptId = instance.scriptId
+    return impl(this.flowCtx)
+  }
+
+  /** Gets (creating on first use) the pooled ValueCtx for recursion depth `depth`. */
+  private getValueCtxSlot(depth: number): ValueCtxSlot {
+    const existing = this.valueCtxPool[depth]
+    if (existing) return existing
+    const slot: ValueCtxSlot = { ctx: undefined as unknown as ValueCtx, node: null, inDescs: [] }
     const cfgFn = (name: string, def = ''): string => {
-      const v = node.cfg?.[name]
+      const v = slot.node?.cfg?.[name]
       return typeof v === 'string' ? v : def
     }
-    // Numeric cfg needs its own reader: cfgFn() is string-typed and would hand
-    // back the string default for a perfectly good number literal.
-    const cfgNumFn = (name: string, def: number): number => {
-      const v = node.cfg?.[name]
-      return typeof v === 'number' && Number.isFinite(v) ? v : def
-    }
-    const ctx: FlowCtx = {
-      in: this.reader(instance, desc?.in ?? [], node, memo, 0),
-      inAs: (name, type) => {
-        const ref = node.in?.[name]
-        return ref ? this.evalRef(instance, ref, type, memo, 0) : zeroValue(type)
-      },
+    slot.ctx = {
+      in: (name) => this.readSocket(this.valueInstance, slot.inDescs, slot.node as ScriptNode, this.valueMemo, depth, name),
       cfg: cfgFn,
-      cfgNum: cfgNumFn,
-      next: (name) => {
-        const raw = node.next?.[name]
-        return typeof raw === 'number' ? raw : -1
-      },
-      target: () => this.host.resolveTarget(instance.scriptId, cfgFn('target', SELF_TARGET)),
+      target: () => this.host.resolveTarget(this.valueInstance.scriptId, cfgFn('target', SELF_TARGET)),
       host: this.host,
-      scriptId: instance.scriptId,
-      varDecl: (name) => instance.graph.vars.find((v) => v.name === name),
-      setVar: (name, value) => instance.vars.set(name, value),
-      scheduleDelay: (seconds, targetNode) => {
-        if (targetNode < 0) return
-        const remaining = Math.min(Math.max(seconds, 0), MAX_DELAY_SECONDS)
-        instance.delays.push({
-          remaining,
-          node: targetNode,
-          eventNode: flow.eventNode,
-          eventOut: flow.eventOut,
-        })
-      },
-      uiLayout: (name) => instance.graph.ui?.[name],
-      canOpenWindow: (id) => instance.windows.has(id) || instance.windows.size < SCRIPT_LIMITS.maxWindows,
-      trackWindow: (id) => instance.windows.add(id),
-      closeWindow: (id) => instance.windows.delete(id),
-      allowChat: () => {
-        const minGap = 1 / SCRIPT_LIMITS.chatPerSecond
-        if (instance.elapsedSeconds - instance.lastChatAt < minGap) return false
-        instance.lastChatAt = instance.elapsedSeconds
-        return true
-      },
-      allowEmit: () => {
-        if (instance.emitsThisTick >= SCRIPT_LIMITS.emitsPerTick) return false
-        instance.emitsThisTick += 1
-        return true
-      },
+      scriptId: '',
     }
-    return impl(ctx)
+    this.valueCtxPool[depth] = slot
+    return slot
   }
 
   private evalValueNode(
@@ -767,18 +920,17 @@ export class ScriptRunner {
     const impl = VALUE_OPS[node.op]
     if (!impl) return {}
     const desc = nodeDesc(node.op)
-    const cfgFn = (name: string, def = ''): string => {
-      const v = node.cfg?.[name]
-      return typeof v === 'string' ? v : def
-    }
-    const ctx: ValueCtx = {
-      in: this.reader(instance, desc?.in ?? [], node, memo, depth),
-      cfg: cfgFn,
-      target: () => this.host.resolveTarget(instance.scriptId, cfgFn('target', SELF_TARGET)),
-      host: this.host,
-      scriptId: instance.scriptId,
-    }
-    return impl(ctx)
+    // A slot per depth, not one shared ValueCtx: this call may recurse (this
+    // node's inputs can themselves be value nodes), and the recursive call
+    // reuses the *next* depth's slot, so this depth's `node`/`inDescs` survive
+    // the round trip untouched.
+    const slot = this.getValueCtxSlot(depth)
+    slot.node = node
+    slot.inDescs = desc?.in ?? []
+    this.valueInstance = instance
+    this.valueMemo = memo
+    slot.ctx.scriptId = instance.scriptId
+    return impl(slot.ctx)
   }
 
   /**

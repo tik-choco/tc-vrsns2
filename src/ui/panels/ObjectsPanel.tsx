@@ -1,7 +1,7 @@
 import { Pencil, Trash2 } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../../i18n'
 import { MAX_PLACEABLE_BYTES, PLACEABLE_ACCEPT } from '../../world/mediaFormat'
-import type { GameOverlayProps, ObjectUploadError } from '../uiContract'
+import { editableObjectCount, type GameOverlayProps, type ObjectUploadError } from '../uiContract'
 import { PanelShell } from './PanelShell'
 import { CatalogPanel } from './CatalogPanel'
 
@@ -31,15 +31,24 @@ const MAX_MEGABYTES = Math.round(MAX_PLACEABLE_BYTES / (1024 * 1024))
 export function ObjectsPanel(props: Props) {
   const { t } = useTranslation()
   const locked = props.worldPolicy === 'locked'
-  // Under the 'everyone' policy anything with a live owner is editable, so the
-  // button follows what is on show rather than only what we placed.
-  const editableCount = props.worldPolicy === 'everyone' ? props.placedCount - props.orphanCount : props.ownPlacedCount
+  const editableCount = editableObjectCount(props)
   const scriptProblemCount = props.scriptProblems.size
 
   /** Editing happens on the canvas, so the panel gets out of the way first. */
   const startEditing = () => {
     props.onClose()
     props.onSetEditMode(true)
+  }
+
+  /**
+   * Placing drops straight into editing the new object (see useSession's
+   * placeObject), which happens on the canvas — so the panel closes here for
+   * the same reason startEditing closes it: it would cover the very object
+   * that just appeared, and gate the world input needed to move it.
+   */
+  const place = (cid: string) => {
+    props.onClose()
+    props.onPlaceObject(cid)
   }
 
   return (
@@ -73,7 +82,7 @@ export function ObjectsPanel(props: Props) {
             <button
               class="btn btn-primary"
               disabled={props.objectBusy || locked}
-              onClick={() => props.onPlaceObject(item.cid)}
+              onClick={() => place(item.cid)}
             >
               {t('objects.place')}
             </button>

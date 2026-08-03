@@ -16,7 +16,13 @@
     "test:e2e:script": "node scripts/e2e-script.mjs",
     "test:e2e:script-sync": "node scripts/e2e-script-sync.mjs",
     "test:e2e:behaviour": "node scripts/e2e-behaviour.mjs",
-    "test:e2e:graph": "node scripts/e2e-graph.mjs"
+    "test:e2e:graph": "node scripts/e2e-graph.mjs",
+    "test:e2e:edit": "node scripts/e2e-edit-entry.mjs",
+    "test:e2e:netload": "node scripts/e2e-netload.mjs",
+    "test:e2e:npc": "node scripts/e2e-npc.mjs",
+    "test:e2e:npc-edit": "node scripts/e2e-npc-edit.mjs",
+    "test:e2e:ai-network-join": "node scripts/e2e-ai-network-join.mjs",
+    "test:e2e:vault": "node scripts/e2e-vault.mjs"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",

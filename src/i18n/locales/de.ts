@@ -38,6 +38,7 @@ export const de: Dict = {
   'hud.hintChat': 'Chat',
   'hud.hintMic': 'Mikro',
   'hud.hintView': 'Ansicht',
+  'hud.hintEdit': 'Bearbeiten',
   'hud.hintJump': 'Springen',
   'hud.hintSprint': 'Rennen',
   'hud.hintMenu': 'Menü',
@@ -49,6 +50,7 @@ export const de: Dict = {
   'menu.avatar': 'Avatar',
   'menu.world': 'Welt',
   'menu.objects': 'Objekte',
+  'panel.characters': 'Charaktere',
   'menu.room': 'Raum',
   'menu.settings': 'Einstellungen',
   'menu.leave': 'Verlassen',
@@ -69,6 +71,31 @@ export const de: Dict = {
   'avatar.license': 'Lizenz',
   'avatar.invalid': 'Diese Datei ist kein gültiges VRM.',
   'avatar.saved': 'In deinen Avataren gespeichert.',
+  // R6: Herkunftshinweis für einen Avatar, den du nicht selbst hochgeladen
+  // hast (ein tc-town-Charakter oder der Upload einer anderen Person) —
+  // damit er nie wie dein eigener wirkt.
+  'avatar.foreignSource': 'Charakter von {name}',
+  'avatar.foreignUnknown': 'jemand anderem',
+
+  // Characters panel (R5: einen tc-town-Charakter als NPC in der Welt platzieren)
+  'characters.title': 'Charaktere',
+  'characters.empty': 'Noch keine Charaktere.',
+  'characters.hint': 'Charaktere werden in tc-town erstellt. Sobald du dort einen anlegst, erscheint er hier.',
+  'characters.place': 'In der Welt platzieren',
+  'characters.noVrm': 'Für diesen Charakter ist kein VRM-Avatar verfügbar.',
+  'characters.fromTown': 'Aus tc-town',
+
+  // NPC (ein platzierter Charakter, der im Chat antwortet)
+  'npc.badge': 'NPC',
+  'npc.radius': 'Hörradius',
+  'npc.radiusValue': '{n} m',
+  'npc.voice': 'Stimme',
+  'npc.voiceDefault': 'Standard (AI-Einstellungen)',
+  'npc.voiceHelp': 'Wird die Auswahl geleert, gilt die Standardstimme aus den AI-Einstellungen, nicht die ursprüngliche tc-town-Stimme dieser Figur.',
+
+  // AI panel
+  'settings.ai.npcPreset': 'NPC-Antworten',
+  'settings.ai.npcPresetHelp': 'Antwortet in der Rolle des Charakters, wenn jemand in der Nähe eines von dir platzierten Charakters spricht.',
 
   // World panel
   'world.title': 'Welt',

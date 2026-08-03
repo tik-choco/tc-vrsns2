@@ -64,6 +64,10 @@ export type CatalogItem = {
   name: string
   /** Optional data-URL thumbnail for the card. */
   thumb?: string
+  /** Where this item's bytes came from. Absent means a local upload (legacy entries). */
+  origin?: 'foreign'
+  /** Provenance for a foreign item — who actually authored it. */
+  source?: { characterId?: string; name?: string; vrmChecksum?: string }
 }
 
 /** Loadable world/model container formats. */
@@ -72,9 +76,38 @@ export type WorldFormat = 'glb' | 'gltf' | 'splat' | 'ply' | 'ksplat'
 /**
  * What a placeable catalog item actually is. 'model' is a glTF/GLB prop;
  * the media kinds are rendered as a flat panel ('image'/'video') or a small
- * emitter marker with positional audio ('audio').
+ * emitter marker with positional audio ('audio'); 'npc' is a VRM character
+ * that stands in the world and answers nearby chat (see NpcBinding).
  */
-export type PlacedKind = 'model' | 'image' | 'video' | 'audio'
+export type PlacedKind = 'model' | 'image' | 'video' | 'audio' | 'npc'
+
+/**
+ * Binds a placement to a character created in the sibling app tc-town
+ * (read via interop/townCharacters.ts).
+ *
+ * Deliberately tiny and persona-free. NPCs are owner-authoritative in exactly
+ * the sense scripts are — only the peer currently publishing the placement runs
+ * the character's LLM — so the personality prompt is resolved from that peer's
+ * own same-origin tc-town roster and never travels over the network. What peers
+ * do need is only enough to render the body (PlacedObject.cid / .name) and to
+ * understand what they are looking at. A peer with no tc-town data still sees
+ * the NPC and hears its replies, because those arrive as ordinary say effects.
+ */
+export type NpcBinding = {
+  /** tc-town CharacterIndexEntry.id. Opaque to every peer except the owner. */
+  characterId: string
+  /** Hearing radius in metres — a player must be inside it to be answered. */
+  radius: number
+  /**
+   * TTS model + voice name from the tc-town character, so every peer voices
+   * this NPC identically — unlike the reply text, synthesized audio never
+   * travels the wire (see src/lib/ttsClient.ts), so peers need the voice
+   * identity itself to reproduce the same sound locally. Absent means "this
+   * peer's default TTS voice".
+   */
+  voiceModel?: string
+  voiceName?: string
+}
 
 /**
  * Who may edit the objects placed in a room — a room-wide, advisory setting
@@ -141,4 +174,10 @@ export type PlacedObject = {
    * this placement's script. Absent means the placement has no trigger.
    */
   trigger?: TriggerVolume
+  /**
+   * The tc-town character this placement embodies. Present iff `kind` is 'npc';
+   * a placement claiming that kind without a usable binding is inert (it still
+   * renders, it just never speaks).
+   */
+  npc?: NpcBinding
 }

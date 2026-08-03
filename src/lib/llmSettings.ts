@@ -58,6 +58,9 @@ export interface LlmProviderSettings {
   /** Preset used by tc-vrsns2's one app task: turning a natural-language request into an in-world behavior script. */
   scriptPresetId: string
   scriptReasoningEffort: ReasoningEffort
+  /** Preset used to answer in-character as a placed tc-town NPC (src/npc/NpcRuntime.ts). */
+  npcPresetId: string
+  npcReasoningEffort: ReasoningEffort
 }
 
 export const DEFAULT_LLM_PROVIDER_SETTINGS: LlmProviderSettings = {
@@ -67,6 +70,8 @@ export const DEFAULT_LLM_PROVIDER_SETTINGS: LlmProviderSettings = {
   defaultReasoningEffort: 'none',
   scriptPresetId: '',
   scriptReasoningEffort: 'none',
+  npcPresetId: '',
+  npcReasoningEffort: 'none',
 }
 
 const SETTINGS_KEY = 'tc-vrsns2-provider-settings-v1'
@@ -86,6 +91,8 @@ export function loadLlmProviderSettings(): LlmProviderSettings {
       defaultReasoningEffort: parseReasoningEffort(record.defaultReasoningEffort) ?? 'none',
       scriptPresetId: typeof record.scriptPresetId === 'string' ? record.scriptPresetId : '',
       scriptReasoningEffort: parseReasoningEffort(record.scriptReasoningEffort) ?? 'none',
+      npcPresetId: typeof record.npcPresetId === 'string' ? record.npcPresetId : '',
+      npcReasoningEffort: parseReasoningEffort(record.npcReasoningEffort) ?? 'none',
     }
   } catch {
     return DEFAULT_LLM_PROVIDER_SETTINGS
@@ -139,4 +146,15 @@ export function setScriptReasoningEffort(
   scriptReasoningEffort: ReasoningEffort,
 ): LlmProviderSettings {
   return { ...settings, scriptReasoningEffort }
+}
+
+export function setNpcPresetId(settings: LlmProviderSettings, npcPresetId: string): LlmProviderSettings {
+  return { ...settings, npcPresetId }
+}
+
+export function setNpcReasoningEffort(
+  settings: LlmProviderSettings,
+  npcReasoningEffort: ReasoningEffort,
+): LlmProviderSettings {
+  return { ...settings, npcReasoningEffort }
 }

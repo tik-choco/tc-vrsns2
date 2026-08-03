@@ -139,8 +139,8 @@ async function openPanel(page, labelText) {
 // scenario 4 (locale 'ja') cannot reuse the English strings below. Every
 // caller passes a `labels` object; EN_LABELS is the default for the other
 // three (English) scenarios.
-const EN_LABELS = { objects: 'Objects', place: 'Place in front of me', editPlaced: 'Edit placed' }
-const JA_LABELS = { objects: 'オブジェクト', place: '目の前に配置', editPlaced: '配置済みを編集' }
+const EN_LABELS = { objects: 'Objects', place: 'Place in front of me' }
+const JA_LABELS = { objects: 'オブジェクト', place: '目の前に配置' }
 
 async function uploadAndPlace(page, labels) {
   const png = makeTestPng()
@@ -158,10 +158,14 @@ async function uploadAndPlace(page, labels) {
   return placed
 }
 
-/** Same spiral-click approach as e2e-script.mjs — see its header comment for why. */
-async function enterEditModeAndSelect(page, labels) {
-  await page.getByRole('button', { name: labels.editPlaced }).click()
+/** Placing enters edit mode with the new object selected; the spiral click is
+ *  the fallback — same approach as e2e-script.mjs, see its header comment. */
+async function enterEditModeAndSelect(page) {
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
+  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+    log('placing selected the object — no canvas click needed')
+    return
+  }
 
   const canvas = page.locator('.world-canvas')
   const box = await canvas.boundingBox()
@@ -197,7 +201,7 @@ async function placeAndSelectObject(page, room, name, labels = EN_LABELS) {
   await openPanel(page, labels.objects)
   const placed = await uploadAndPlace(page, labels)
   log('entering edit mode and selecting the placed object…')
-  await enterEditModeAndSelect(page, labels)
+  await enterEditModeAndSelect(page)
   return placed
 }
 

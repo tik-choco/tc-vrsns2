@@ -81,6 +81,17 @@ export class ScriptRuntime {
    * validate.ts checks: a graph that reaches the VM has already been proven
    * well-formed, so the VM's own defensive coding is a second line, not the
    * first.
+   *
+   * Re-attaching closes the previous graph's windows (see
+   * WorldScriptHost.dropWindows). The old graph is gone; nothing it opened
+   * can ever be addressed again, so leaving it in the host would just be an
+   * unreachable window that never closes — and since the editor's
+   * generate-apply-regenerate loop comes straight back through here, they
+   * would pile up one per iteration. Its CLOCK deliberately survives: an
+   * edited graph resumes elapsed time rather than restarting it, which is
+   * what keeps a time-driven graph from jumping on every edit. This runs
+   * whether the new graph validates or not — a rejected re-generation must
+   * still clean up after the graph it replaced.
    */
   sync(objects: readonly PlacedObject[], ownedIds: ReadonlySet<string>): void {
     this.ownedIds = new Set(ownedIds)
@@ -102,7 +113,10 @@ export class ScriptRuntime {
       const prev = this.attached.get(obj.id)
       if (prev?.fingerprint === fingerprint) continue
 
-      if (prev) this.runner.detach(obj.id)
+      if (prev) {
+        this.runner.detach(obj.id)
+        this.host.dropWindows(obj.id)
+      }
       const errors = validate(obj.script)
       if (errors.length > 0) {
         this.attached.set(obj.id, { fingerprint, rejected: errors })
@@ -168,7 +182,7 @@ export class ScriptRuntime {
     // two scripts emitting at each other from recursing inside one frame.
     for (const effect of effects) {
       if (effect.t !== 'emit') continue
-      this.deliverCustom(effect.event, effect.payload)
+      this.deliverCustom(effect.event, effect.payload, effect.hops)
     }
     return { effects, inputs }
   }
@@ -240,10 +254,22 @@ export class ScriptRuntime {
     this.runner.fire(objectId, op, { player })
   }
 
-  /** Delivers a custom event to every attached script. Also the entry point for remote emits. */
-  deliverCustom(event: string, payload: string): void {
+  /**
+   * Delivers a custom event to every attached script. Also the entry point for
+   * remote emits (World.applyRemoteScriptEffect).
+   *
+   * `hops` is the chain depth carried by the emit that caused this (see
+   * SCRIPT_LIMITS.maxEventHops). It is handed to the flows this starts, so an
+   * emit THEY produce continues the same chain instead of starting a fresh
+   * one — that inheritance is the whole mechanism, and it has to survive the
+   * peer boundary too, or two relaying clients would reset each other's count
+   * forever. The budget itself is enforced where the next emit is produced
+   * (WorldScriptHost.emit), not here: a chain is cut at its source so it
+   * never reaches the wire.
+   */
+  deliverCustom(event: string, payload: string, hops = 0): void {
     for (const id of this.attached.keys()) {
-      this.runner.fire(id, 'event/onCustom', { payload }, event)
+      this.runner.fire(id, 'event/onCustom', { payload }, event, hops)
     }
   }
 

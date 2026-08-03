@@ -6,12 +6,50 @@
 // Thumbnails follow the same rule: only a thumbCid pointer is kept in the
 // localStorage entry, never the (up to 256KB) inline image data.
 //
+// The exception is a FOREIGN item (origin: 'foreign' — a tc-town character, a
+// peer's avatar): this device never PUBLISHES its bytes — addForeignToCatalog
+// does not call publishVrmBytes, so no second manifest cid gets minted under
+// this node's name and nothing is offered to the room as ours — and the
+// catalog-side resting place (modelVault) is encrypted at rest. But mistlib
+// itself caches whatever storage_get pulls over the network: resolve_or_fetch
+// (mistlib-core/src/storage/engine.rs) verifies a fetched block's hash, then
+// track_block/store_block it into OPFS as plaintext, and this node serves it
+// onward from there. There is no delete API, so bytes that arrived via
+// vrmBytesFromCid are already plaintext chunks in the shared content store
+// the moment they're fetched, regardless of what this file does with them
+// afterward. See addForeignToCatalog and catalogBytes below, and
+// modelVault.ts's threat model for what this is (anti-casual-copy) and is
+// not (DRM): the vault keeps a laundered copy from reading as the user's own
+// upload, but it does not and cannot keep the bytes off this device.
+//
 // Everything here is defensive: a corrupt or adversarial localStorage value
 // resolves to an empty list rather than throwing.
 import type { CatalogItem, PlacedKind, WorldFormat } from '../shared/types'
+import { forgetForeignModel, getForeignModel, putForeignModel } from './modelVault.js'
 import { publishVrmBytes, vrmBytesFromCid } from './vrmSource.js'
 
 export type CatalogKind = 'avatar' | 'world' | 'object'
+
+declare const LocalUploadBrand: unique symbol
+
+/**
+ * Bytes that entered through a local file pick on THIS device — the ownership
+ * rule from the module header, expressed as a type so it cannot be forgotten.
+ * addToCatalog accepts nothing else, so bytes obtained from a cid
+ * (vrmBytesFromCid, catalogBytes, a peer's avatar) do not type-check there and
+ * the author has to route them through addForeignToCatalog instead.
+ */
+export type LocalUploadBytes = Uint8Array & { readonly [LocalUploadBrand]: true }
+
+/**
+ * The ONE place the local-upload brand is applied. Call it at the file-pick
+ * boundary and nowhere else: every call site is an assertion that a human
+ * chose this file from their own disk, which is the only thing that makes the
+ * bytes theirs to publish under this node's cid.
+ */
+export function localUploadBytes(bytes: Uint8Array): LocalUploadBytes {
+  return bytes as LocalUploadBytes
+}
 
 /**
  * Stored record — a CatalogItem plus a world's container format when
@@ -21,6 +59,13 @@ export type CatalogKind = 'avatar' | 'world' | 'object'
  * `thumbCid` points at the thumbnail bytes in the shared mistlib content store
  * (current format). `thumb` is the legacy inline data-URL thumbnail, kept
  * readable for dual-read; see migrateLegacyThumbs.
+ *
+ * CatalogItem's `origin`/`source` carry straight through unchanged — a
+ * missing `origin` means 'local' (see sanitize below and the module header),
+ * which is also the correct read for every entry written before this field
+ * existed: they predate the distinction and were overwhelmingly genuine
+ * uploads. That inference can't retroactively encrypt a plaintext copy an
+ * earlier town-character equip already wrote before this change existed.
  */
 type StoredItem = CatalogItem & {
   format?: WorldFormat
@@ -64,7 +109,38 @@ function sanitize(raw: unknown): StoredItem | null {
   if (typeof r.format === 'string') item.format = r.format as WorldFormat
   if (typeof r.asset === 'string' && ASSET_KINDS.has(r.asset)) item.asset = r.asset as PlacedKind
   if (typeof r.mime === 'string' && r.mime.length > 0 && r.mime.length <= MIME_MAX_LEN) item.mime = r.mime
+  // 'foreign' is the only value this field is ever written with; anything
+  // else (hand-edited localStorage, a future value this build doesn't know)
+  // drops the field rather than poisoning the entry — see the ownership rule
+  // in the module header for what a missing origin means.
+  if (r.origin === 'foreign') item.origin = 'foreign'
+  const source = sanitizeSource(r.source)
+  if (source) item.source = source
   return item
+}
+
+/**
+ * Validates a foreign item's provenance record. Same distrust as every other
+ * field read from localStorage here: an adversarial or truncated value
+ * degrades to a smaller-but-valid record (or none at all), never poisons the
+ * whole catalog entry. Strings are capped the same way the rest of this file
+ * caps them — `name` like a display name, the two identifier-shaped fields
+ * like a cid — so a hostile value can't grow the stored JSON without bound.
+ */
+function sanitizeSource(raw: unknown): CatalogItem['source'] {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const r = raw as Record<string, unknown>
+  const source: NonNullable<CatalogItem['source']> = {}
+  if (typeof r.characterId === 'string' && r.characterId.length > 0 && r.characterId.length <= CID_MAX_LEN) {
+    source.characterId = r.characterId
+  }
+  if (typeof r.name === 'string' && r.name.trim().length > 0) {
+    source.name = r.name.trim().slice(0, NAME_MAX_LEN)
+  }
+  if (typeof r.vrmChecksum === 'string' && r.vrmChecksum.length > 0 && r.vrmChecksum.length <= CID_MAX_LEN) {
+    source.vrmChecksum = r.vrmChecksum
+  }
+  return Object.keys(source).length > 0 ? source : undefined
 }
 
 function read(kind: CatalogKind): StoredItem[] {
@@ -249,7 +325,7 @@ export async function hydrateCatalogThumbs(kind: CatalogKind, items: CatalogItem
 export async function addToCatalog(
   kind: CatalogKind,
   name: string,
-  bytes: Uint8Array,
+  bytes: LocalUploadBytes,
   extra?: { format?: WorldFormat; asset?: PlacedKind; mime?: string; thumb?: string },
 ): Promise<CatalogItem> {
   const cid = await publishVrmBytes(name, bytes)
@@ -270,6 +346,95 @@ export async function addToCatalog(
   const rest = read(kind).filter((i) => i.cid !== cid)
   write(kind, [item, ...rest])
   return displayThumb ? { ...item, thumb: displayThumb } : item
+}
+
+/**
+ * Records a FOREIGN model — bytes this device did not author, resolved by
+ * cid/checksum rather than picked from a local file (a tc-town character,
+ * a peer's avatar) — in a catalog. Differs from addToCatalog in exactly the
+ * ways that keep this from being a theft path:
+ *
+ *  - Does NOT call publishVrmBytes for the model bytes. The caller already
+ *    supplies the cid that names this content under its original publisher;
+ *    minting a second cid and serving it from our own mistlib node would
+ *    make this device a redistribution point for someone else's model.
+ *  - Writes the bytes to putForeignModel(cid, bytes) instead — the
+ *    encrypted-at-rest vault (see modelVault.ts), so the item still equips
+ *    offline without ever resting on disk as plaintext or becoming
+ *    indistinguishable from something the user actually uploaded.
+ *  - Sets origin: 'foreign' and the supplied source (sanitized the same way
+ *    an adversarial localStorage value would be, since this record is what
+ *    a later read() will validate against anyway).
+ *
+ * Thumbnails are the one thing NOT special-cased: a thumbnail rendered by
+ * this device from the foreign model is this device's own output, so it
+ * publishes to the shared content store exactly like addToCatalog's does.
+ */
+export async function addForeignToCatalog(
+  kind: CatalogKind,
+  name: string,
+  cid: string,
+  bytes: Uint8Array,
+  source?: CatalogItem['source'],
+  extra?: { asset?: PlacedKind; mime?: string; thumb?: string },
+): Promise<CatalogItem> {
+  await putForeignModel(cid, bytes)
+  const trimmedName = name.trim().slice(0, NAME_MAX_LEN)
+  const item: StoredItem = { cid, name: trimmedName, origin: 'foreign' }
+  const sanitizedSource = sanitizeSource(source)
+  if (sanitizedSource) item.source = sanitizedSource
+  if (extra?.asset) item.asset = extra.asset
+  if (extra?.mime) item.mime = extra.mime
+
+  let displayThumb: string | undefined
+  if (extra?.thumb && isValidThumb(extra.thumb)) {
+    displayThumb = extra.thumb
+    // Thumbnail publish failure just leaves the item without a thumbnail
+    // rather than falling back to inlining it into localStorage.
+    item.thumbCid = await publishThumbCid(trimmedName || cid, extra.thumb)
+  }
+
+  const rest = read(kind).filter((i) => i.cid !== cid)
+  write(kind, [item, ...rest])
+  return displayThumb ? { ...item, thumb: displayThumb } : item
+}
+
+/**
+ * Promotes an existing catalog entry to foreign in place — the migration
+ * path for a legacy (pre-R6) entry whose bytes actually came from a
+ * tc-town character or a peer, but which was filed as an ordinary local
+ * upload before this distinction existed. Preserves the entry's cid, name
+ * and thumbCid; only origin and source change.
+ *
+ * Deliberately does NOT touch the vault. The caller (the migration) is
+ * expected to putForeignModel the bytes first; marking is still correct on
+ * its own even if that vault write failed, since catalogBytes falls through
+ * to the network for a cid the vault doesn't hold.
+ *
+ * Never throws. Returns false, leaving the catalog untouched, if the cid
+ * isn't found or the entry is already origin: 'foreign' — the latter so a
+ * caller can safely re-run this against an already-migrated catalog.
+ */
+export function markCatalogItemForeign(
+  kind: CatalogKind,
+  cid: string,
+  source?: CatalogItem['source'],
+): boolean {
+  const items = read(kind)
+  const index = items.findIndex((i) => i.cid === cid)
+  if (index === -1) return false
+  const item = items[index]
+  if (item.origin === 'foreign') return false
+  const sanitizedSource = sanitizeSource(source)
+  const updated: StoredItem = { ...item, origin: 'foreign' }
+  if (sanitizedSource) {
+    updated.source = sanitizedSource
+  } else {
+    delete updated.source
+  }
+  items[index] = updated
+  write(kind, items)
+  return true
 }
 
 /**
@@ -294,15 +459,34 @@ export async function setCatalogThumb(kind: CatalogKind, cid: string, thumbDataU
   write(kind, items)
 }
 
-/** Removes an item from a catalog (bytes stay in the content store). */
+/**
+ * Removes an item from a catalog. Bytes published to the shared content
+ * store (an owned/local item's model, and every thumbnail) stay there —
+ * removal is a catalog-index operation, not a garbage collector. A foreign
+ * item's ciphertext is the one exception: forgetForeignModel actually
+ * reclaims it from the vault, since nothing else references that cid once
+ * it's off this device's list and the vault has a byte budget to protect.
+ */
 export function removeFromCatalog(kind: CatalogKind, cid: string): CatalogItem[] {
   const next = read(kind).filter((i) => i.cid !== cid)
   write(kind, next)
+  void forgetForeignModel(cid)
   return next
 }
 
-/** Fetches the bytes for any catalog item / peer CID from the shared store. */
-export function catalogBytes(cid: string): Promise<Uint8Array> {
+/**
+ * Fetches the bytes for any catalog item / peer CID. Consults the local
+ * vault FIRST, not this catalog's origin flag: a vault hit is a local read
+ * where the alternative is a P2P download, and the flag alone can't be
+ * trusted to be present at all — a peer's avatar CID (resolved via
+ * loadRemoteAvatar) has no catalog entry here to check `origin` on in the
+ * first place. A vault miss falls through to the network exactly as before.
+ * (Already async in substance — vrmBytesFromCid always returned a Promise —
+ * so no existing caller needs to change.)
+ */
+export async function catalogBytes(cid: string): Promise<Uint8Array> {
+  const stored = await getForeignModel(cid)
+  if (stored) return stored
   return vrmBytesFromCid(cid)
 }
 

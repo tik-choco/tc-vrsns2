@@ -52,16 +52,23 @@ export class CameraController {
       if (e.button === 2) this.dragLooking = true
       return
     }
-    this.domElement.requestPointerLock()
+    // Left button only: outside edit mode the right one means "edit whatever
+    // I'm pointing at" (ObjectEditor.onEditRequest), and grabbing a pointer
+    // lock for it would hide the cursor the gizmo it opens needs.
+    if (e.button === 0) this.domElement.requestPointerLock()
   }
 
   private readonly onMouseUp = (): void => {
     this.dragLooking = false
   }
 
-  /** Right-drag is "look around" in edit mode, so it must not open a menu. */
+  /**
+   * The right button always belongs to the world: it looks around while
+   * editing, and picks an object to edit outside that. Neither wants the
+   * browser's menu over the canvas.
+   */
   private readonly onContextMenu = (e: MouseEvent): void => {
-    if (this.editMode) e.preventDefault()
+    e.preventDefault()
   }
 
   private readonly onMouseMove = (e: MouseEvent): void => {

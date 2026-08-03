@@ -38,6 +38,7 @@ export const zh: Dict = {
   'hud.hintChat': '聊天',
   'hud.hintMic': '麦克风',
   'hud.hintView': '视角',
+  'hud.hintEdit': '编辑',
   'hud.hintJump': '跳跃',
   'hud.hintSprint': '奔跑',
   'hud.hintMenu': '菜单',
@@ -49,6 +50,7 @@ export const zh: Dict = {
   'menu.avatar': '虚拟形象',
   'menu.world': '世界',
   'menu.objects': '物体',
+  'panel.characters': '角色',
   'menu.room': '房间',
   'menu.settings': '设置',
   'menu.leave': '离开',
@@ -69,6 +71,30 @@ export const zh: Dict = {
   'avatar.license': '许可',
   'avatar.invalid': '该文件不是有效的 VRM。',
   'avatar.saved': '已保存到你的虚拟形象。',
+  // R6：非本机上传的虚拟形象（tc-town 角色或他人上传的内容）需要显示的来源标签，
+  // 避免让它看起来像是自己拥有的。
+  'avatar.foreignSource': '{name}的角色',
+  'avatar.foreignUnknown': '别人',
+
+  // Characters panel（R5：把 tc-town 角色作为 NPC 放入世界）
+  'characters.title': '角色',
+  'characters.empty': '还没有角色。',
+  'characters.hint': '角色是在 tc-town 中创建的。创建后会显示在这里。',
+  'characters.place': '放入世界',
+  'characters.noVrm': '此角色没有可用的 VRM 虚拟形象。',
+  'characters.fromTown': '来自 tc-town',
+
+  // NPC（放置的角色会在聊天中回复）
+  'npc.badge': 'NPC',
+  'npc.radius': '听力范围',
+  'npc.radiusValue': '{n} 米',
+  'npc.voice': '语音',
+  'npc.voiceDefault': '默认（AI 设置）',
+  'npc.voiceHelp': '清除后将使用 AI 设置中的默认语音，而不是恢复该角色在 tc-town 中的原始语音。',
+
+  // AI panel
+  'settings.ai.npcPreset': 'NPC 回复',
+  'settings.ai.npcPresetHelp': '当有人在你放置在世界中的角色附近说话时，会以该角色的身份回答。',
 
   // World panel
   'world.title': '世界',

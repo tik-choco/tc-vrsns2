@@ -6,9 +6,14 @@ import * as THREE from 'three'
 import type { VRM } from '@pixiv/three-vrm'
 import type { AnimState } from '../shared/types'
 import { loadBakedSourceClips, retargetBakedClip } from './bakedClips'
+import { MOUTH_CANDIDATES } from './npcPresence'
+import { gazeQuaternion } from './gazeMath'
 import { buildProceduralClips } from './proceduralClips'
 import { createPrimitiveAvatar, PRIMITIVE_AVATAR_HEIGHT, type PrimitiveAvatar } from './primitiveAvatar'
 import { disposeVrm } from './vrmLoader'
+
+/** Scratch object reused every frame by applyGaze() — this runs in the render loop, so no per-frame allocations. */
+const _gazeQuat = new THREE.Quaternion()
 
 /** Per-anim motion parameters for the boneless primitive avatar. */
 const PRIMITIVE_MOTION: Record<AnimState, { baseY: number; amp: number; freq: number; lean: number }> = {
@@ -34,6 +39,10 @@ export class AvatarRig {
   private height = PRIMITIVE_AVATAR_HEIGHT
   private firstPerson = false
   private disposed = false
+  /** Resolved mouth expression name (see MOUTH_CANDIDATES), or null when the loaded VRM/primitive has none — set in setVrm(). */
+  private mouthExpressionName: string | null = null
+  /** True when the loaded VRM is a VRM 0.x source — see applyGaze()'s doc for why that needs an axis conjugation. */
+  private flipVrm0 = false
 
   constructor(color: string) {
     this.root = new THREE.Group()
@@ -64,6 +73,17 @@ export class AvatarRig {
     this.removeCurrentVisual()
     if (vrm) {
       this.vrm = vrm
+      // Same VRM0 detection proceduralClips.ts already uses to conjugate its
+      // baked clip quaternions — applyGaze() needs the identical correction
+      // for the extra rotation it layers on top, or gaze would come out
+      // mirrored on VRM0 sources (see its doc for the underlying quirk).
+      this.flipVrm0 = vrm.meta.metaVersion === '0'
+      const expressionNames = new Set(
+        (vrm.expressionManager?.expressions ?? [])
+          .map((expression) => expression.expressionName)
+          .filter((name): name is string => Boolean(name)),
+      )
+      this.mouthExpressionName = MOUTH_CANDIDATES.find((name) => expressionNames.has(name)) ?? null
       this.root.add(vrm.scene)
       this.mixer = new THREE.AnimationMixer(vrm.scene)
       const clips = buildProceduralClips(vrm)
@@ -78,6 +98,8 @@ export class AvatarRig {
       this.playAnim(this.anim, 0)
       this.upgradeToBakedClips(vrm)
     } else {
+      this.mouthExpressionName = null
+      this.flipVrm0 = false
       this.installPrimitive()
     }
     this.applyFirstPerson()
@@ -109,10 +131,25 @@ export class AvatarRig {
     this.applyFirstPerson()
   }
 
-  update(delta: number): void {
+  /**
+   * Advance idle/(baked) animation. `presence` — an NPC's head-gaze offset
+   * and lipsync mouth weight (see npcPresence.ts/NpcView.ts) — is layered on
+   * top of this frame's pose BETWEEN mixer.update() (which writes this
+   * frame's clip-driven bone rotations) and vrm.update() (which turns
+   * expression weights into blendshapes and resolves spring bones from
+   * whatever pose is current) — composed there so it adds to the idle pose
+   * instead of being overwritten by it or missing this frame's expression
+   * pass. Omitted entirely for a plain player avatar, which has nothing to
+   * layer on.
+   */
+  update(delta: number, presence?: { gazeYaw: number; gazePitch: number; mouthWeight: number }): void {
     this.animTime += delta
     if (this.vrm) {
       this.mixer?.update(delta)
+      if (presence) {
+        this.applyGaze(presence.gazeYaw, presence.gazePitch)
+        this.applyMouth(presence.mouthWeight)
+      }
       this.vrm.update(delta)
     } else if (this.primitive) {
       const motion = PRIMITIVE_MOTION[this.anim]
@@ -178,6 +215,33 @@ export class AvatarRig {
       this.primitive.dispose()
       this.primitive = null
     }
+  }
+
+  /**
+   * Rotates the (normalized rig) head bone by (yaw, pitch) as an EXTRA local
+   * rotation on top of whatever this frame's clip already set — a
+   * quaternion multiply, not an Euler overwrite, so it composes with the
+   * idle pose instead of fighting it. The sign conventions (including the
+   * VRM 0.x axis conjugation) live in gazeMath.ts, where they are unit
+   * tested — see that file before changing anything about them. A silent
+   * no-op without a head bone: no VRM loaded (primitive fallback) or a VRM
+   * missing one.
+   */
+  private applyGaze(yaw: number, pitch: number): void {
+    const head = this.vrm?.humanoid?.getNormalizedBoneNode('head')
+    if (!head) return
+    head.quaternion.multiply(gazeQuaternion(yaw, pitch, this.flipVrm0, _gazeQuat))
+  }
+
+  /**
+   * Drives the resolved mouth expression (see MOUTH_CANDIDATES/setVrm) at
+   * `weight`. A silent no-op when the loaded VRM has none of the candidate
+   * names — or on the primitive fallback, which has no expressionManager at
+   * all — so an NPC's lipsync stays safe on any model.
+   */
+  private applyMouth(weight: number): void {
+    if (!this.mouthExpressionName) return
+    this.vrm?.expressionManager?.setValue(this.mouthExpressionName, weight)
   }
 
   private measureVrmHeight(vrm: VRM): number {

@@ -38,6 +38,7 @@ export const es: Dict = {
   'hud.hintChat': 'Chat',
   'hud.hintMic': 'Micrófono',
   'hud.hintView': 'Vista',
+  'hud.hintEdit': 'Editar',
   'hud.hintJump': 'Saltar',
   'hud.hintSprint': 'Correr',
   'hud.hintMenu': 'Menú',
@@ -49,6 +50,7 @@ export const es: Dict = {
   'menu.avatar': 'Avatar',
   'menu.world': 'Mundo',
   'menu.objects': 'Objetos',
+  'panel.characters': 'Personajes',
   'menu.room': 'Sala',
   'menu.settings': 'Ajustes',
   'menu.leave': 'Salir',
@@ -69,6 +71,30 @@ export const es: Dict = {
   'avatar.license': 'Licencia',
   'avatar.invalid': 'Ese archivo no es un VRM válido.',
   'avatar.saved': 'Guardado en tus avatares.',
+  // R6: etiqueta de origen para un avatar que no subiste tú (un personaje de
+  // tc-town o de otra persona), para que nunca parezca tuyo.
+  'avatar.foreignSource': 'Personaje de {name}',
+  'avatar.foreignUnknown': 'otra persona',
+
+  // Characters panel (R5: coloca un personaje de tc-town como NPC en el mundo)
+  'characters.title': 'Personajes',
+  'characters.empty': 'Aún no hay personajes.',
+  'characters.hint': 'Los personajes se crean en tc-town. En cuanto crees uno allí, aparecerá aquí.',
+  'characters.place': 'Colocar en el mundo',
+  'characters.noVrm': 'No hay avatar VRM disponible para este personaje.',
+  'characters.fromTown': 'De tc-town',
+
+  // NPC (un personaje colocado que responde en el chat)
+  'npc.badge': 'NPC',
+  'npc.radius': 'Radio de audición',
+  'npc.radiusValue': '{n} m',
+  'npc.voice': 'Voz',
+  'npc.voiceDefault': 'Predeterminada (ajustes de AI)',
+  'npc.voiceHelp': "Al borrarlo se usará la voz predeterminada de los ajustes de AI, no la voz original del personaje en tc-town.",
+
+  // AI panel
+  'settings.ai.npcPreset': 'Respuestas de NPC',
+  'settings.ai.npcPresetHelp': 'Responde en su papel cuando alguien habla cerca de un personaje que colocaste en el mundo.',
 
   // World panel
   'world.title': 'Mundo',

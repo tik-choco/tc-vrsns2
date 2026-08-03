@@ -12,7 +12,10 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { ObjectState, PlacedKind, PlacedObject } from '../shared/types'
+import { normalizeAngle } from './CharacterController'
 import { isMediaKind } from './mediaFormat'
+import { isFacingDone, NpcView, stepYawTowards } from './NpcView'
+import type { SpeakingLevelReading, Vec3 } from './npcPresence'
 
 /** Where and which way a placed object faces, from the placer's viewpoint. */
 export type PlacementAnchor = {
@@ -50,6 +53,8 @@ const SPEAKER_DEPTH = 0.26
 /** Distance (world units) over which positional audio stays at full volume. */
 const AUDIO_REF_DISTANCE = 4
 const AUDIO_ROLLOFF = 1.4
+/** Fraction of an NPC's height its voice is emitted from — roughly mouth level (see voiceAnchor). */
+const VOICE_MOUTH_HEIGHT_RATIO = 0.92
 /**
  * Bounds an interactive edit may drive a placement to. Deliberately tighter
  * than the wire clamps in net/protocol.ts (POS_LIMIT / SCALE_MIN / SCALE_MAX),
@@ -67,6 +72,12 @@ type Entry = {
   cleanup?: () => void
   /** Pulsing indicator ring on an audio marker, driven by update(). */
   pulse?: THREE.Object3D
+  /** Present iff this is an NPC placement — advances its idle animation each frame; see update(). */
+  npc?: NpcView
+  /** Pending target heading (radians) for faceTowards(); consumed incrementally by update(), cleared once reached. */
+  faceTarget?: number
+  /** Lazily-created child node an NPC's voice plays from, at mouth height rather than the placement's floor-level origin (see voiceAnchor). */
+  voiceAnchor?: THREE.Object3D
 }
 
 /** A built scene object plus its natural (unscaled) bounding size. */
@@ -75,6 +86,7 @@ type Built = {
   size: THREE.Vector3
   cleanup?: () => void
   pulse?: THREE.Object3D
+  npc?: NpcView
 }
 
 export class WorldObjects {
@@ -83,6 +95,24 @@ export class WorldObjects {
   private loader = new GLTFLoader()
   private objects = new Map<string, Entry>()
   private elapsed = 0
+  /**
+   * True while `id` is mid-drag in ObjectEditor. Defaults to "nothing is
+   * dragging" so this class works standalone (e.g. in tests); World wires the
+   * real predicate once both it and ObjectEditor exist (see
+   * World's constructor and WorldObjects.setDragGuard's doc) rather than this
+   * class importing ObjectEditor directly, which already imports WorldObjects
+   * the other way.
+   */
+  private isDraggedElsewhere: (id: string) => boolean = () => false
+  /**
+   * True while `id` is a placement this tab owns. Defaults to "nothing is
+   * owned" for the same standalone-testability reason as isDraggedElsewhere
+   * above; World wires the real predicate once ownership tracking exists
+   * (see setOwnershipGuard's doc and World's constructor). Gates the NPC
+   * body-turn auto-driver in update() — see its doc for why a non-owner must
+   * never run it locally.
+   */
+  private isOwned: (id: string) => boolean = () => false
 
   /**
    * `listener` (the AudioListener mounted on the camera) enables positional
@@ -101,20 +131,32 @@ export class WorldObjects {
    */
   async place(bytes: Uint8Array, source: PlacementSource, anchor?: PlacementAnchor): Promise<PlacedObject> {
     const kind = source.kind ?? 'model'
-    const built = await this.build(bytes, kind, source.mime)
+    const built = await this.build(bytes, kind, source.mime, source.name)
     const maxDim = Math.max(built.size.x, built.size.y, built.size.z) || 1
     // Media is authored at its final size already; only models are normalized.
     const scale = kind === 'model' ? clamp(MAX_SCALE / maxDim, MIN_SCALE, MAX_SCALE) : 1
-    const { position, rotationY } = anchorTransform(anchor, built.size.y * scale, {
-      // A picture or screen is meant to be looked at, so it turns to face the
-      // placer instead of pointing the same way they do.
-      faceAnchor: kind === 'image' || kind === 'video',
-      distance: isMediaKind(kind) ? MEDIA_DISTANCE : DEFAULT_DISTANCE,
-    })
+    const { position, rotationY } = anchorTransform(
+      anchor,
+      // An NPC's AvatarRig is feet-rooted like a player, not centre-rooted
+      // like a glTF prop (see centeredContainer) — no half-height lift, or it
+      // would float.
+      kind === 'npc' ? 0 : built.size.y * scale,
+      {
+        // A picture or screen is meant to be looked at, so it turns to face
+        // the placer instead of pointing the same way they do.
+        faceAnchor: kind === 'image' || kind === 'video',
+        distance: isMediaKind(kind) ? MEDIA_DISTANCE : DEFAULT_DISTANCE,
+      },
+    )
 
     built.object.scale.setScalar(scale)
     built.object.rotation.y = rotationY
     built.object.position.copy(position)
+    // The npc binding (radius) hasn't arrived yet at this point — place()
+    // builds a plain state and the caller folds the binding in moments
+    // later via applyTransform (see its doc) — so only restHeading, not
+    // noticeRange, has anything to set here.
+    built.npc?.setRestHeading(rotationY)
 
     const state: PlacedObject = {
       id: crypto.randomUUID(),
@@ -136,7 +178,7 @@ export class WorldObjects {
   /** Build an asset and apply an exact PlacedObject transform (for peer placements). */
   async addFromState(bytes: Uint8Array, state: PlacedObject): Promise<void> {
     if (this.objects.has(state.id)) return
-    const built = await this.build(bytes, state.kind ?? 'model', state.mime)
+    const built = await this.build(bytes, state.kind ?? 'model', state.mime, state.name)
     // A concurrent sync may have added this id while the asset was loading.
     if (this.objects.has(state.id)) {
       built.cleanup?.()
@@ -146,6 +188,8 @@ export class WorldObjects {
     built.object.scale.setScalar(state.scale)
     built.object.rotation.y = state.rotationY
     built.object.position.set(state.x, state.y, state.z)
+    built.npc?.setRestHeading(state.rotationY)
+    if (state.npc) built.npc?.setNoticeRange(state.npc.radius)
     this.track({ ...state }, built)
   }
 
@@ -258,6 +302,17 @@ export class WorldObjects {
     object.scale.setScalar(scale)
 
     entry.state = { ...entry.state, x, y, z, rotationY, scale }
+    // A deliberate edit — the ONLY thing that redefines "rest" (see
+    // NpcView.restHeading's doc). The frequent ~10Hz auto-turn stream
+    // (applyRemoteState, below) must never do this, or restHeading would
+    // just chase whatever heading last arrived over the network instead of
+    // being something to ease back TO.
+    entry.npc?.setRestHeading(rotationY)
+    // The drag guard only suppresses the per-frame turn STEP, so a line spoken
+    // to this NPC mid-drag stays pending and would fire the moment the gizmo
+    // is released. Committing a heading by hand cancels it — see
+    // NpcView.clearAddressedTurn.
+    entry.npc?.clearAddressedTurn()
     return { ...entry.state }
   }
 
@@ -274,6 +329,12 @@ export class WorldObjects {
     entry.object.rotation.set(0, state.rotationY, 0)
     entry.object.scale.setScalar(state.scale)
     entry.state = { ...entry.state, ...state }
+    // This is where an NPC's binding (radius) actually arrives — place()
+    // builds the initial state before it exists (see its doc) and the
+    // caller folds it in via exactly this path. Same deliberate-edit
+    // reasoning as commitTransform for why restHeading updates here too.
+    entry.npc?.setRestHeading(state.rotationY)
+    if (state.npc) entry.npc?.setNoticeRange(state.npc.radius)
   }
 
   /**
@@ -308,6 +369,75 @@ export class WorldObjects {
   }
 
   /**
+   * Sets a target heading (radians) for a placement — an NPC turning to face
+   * whoever it's replying to (see NpcRuntime's `face` dep) — and lets
+   * update(delta) turn toward it by shortest arc, one frame at a time, rather
+   * than snapping. Deliberately routes through `entry.state.rotationY` the
+   * same way commitTransform()/applyTransform() do, so World's existing
+   * owned-object ~10Hz stream (emitObjectStates -> MSG_OBJ_STATE) picks the
+   * turn up with no new message kind. A no-op for an id not tracked, or while
+   * that id is mid-drag in ObjectEditor (see setDragGuard) — a runtime-driven
+   * turn must never fight the gizmo the user is holding.
+   */
+  faceTowards(id: string, yaw: number): void {
+    const entry = this.objects.get(id)
+    if (!entry) return
+    // For an NPC this goes through its presence state rather than the generic
+    // faceTarget, so the body has exactly ONE driver (NpcView.update) instead
+    // of two easing toward different headings on the same frame. NpcView holds
+    // the turn for a while and then eases back to the resting heading, which
+    // a bare faceTarget could not express.
+    if (entry.npc) {
+      entry.npc.faceSpeaker(yaw)
+      return
+    }
+    entry.faceTarget = normalizeAngle(yaw)
+  }
+
+  /**
+   * Installs the predicate update() consults before turning a placement
+   * toward its faceTowards() target (see faceTarget above). Wired by World
+   * once both this class and ObjectEditor exist, rather than this class
+   * importing ObjectEditor directly — which already imports WorldObjects the
+   * other way, so a reverse import would be circular.
+   */
+  setDragGuard(guard: (id: string) => boolean): void {
+    this.isDraggedElsewhere = guard
+  }
+
+  /**
+   * Installs the predicate update() consults before letting an NPC's own
+   * body-turn logic drive faceTowards() (see isOwned's doc). Wired by World
+   * once ownership tracking exists, same pattern as setDragGuard above.
+   */
+  setOwnershipGuard(guard: (id: string) => boolean): void {
+    this.isOwned = guard
+  }
+
+  /**
+   * Shows a speech bubble + (re)starts the level-driven mouth for an NPC's
+   * `say` effect — the ONE trigger, fired from World.applyScriptEffects AND
+   * applyRemoteScriptEffect alike (a local reply and a peer's reply reach
+   * this the same way), so every peer shows the bubble, never just the
+   * owner. A no-op for a non-NPC placement (nothing to animate) or an id
+   * that isn't tracked.
+   */
+  npcSpeak(objectId: string, text: string): void {
+    this.objects.get(objectId)?.npc?.showSpeech(text)
+  }
+
+  /**
+   * Feeds a fresh TTS loudness reading for an NPC's current utterance into
+   * its lipsync — the seam World.setNpcSpeakingLevel exposes so the session
+   * layer (which owns TTS/AnalyserNode entirely outside src/world) can hand
+   * numbers back for the utterance its own `say` effect just triggered. A
+   * no-op for an id that isn't a currently tracked NPC placement.
+   */
+  setNpcSpeakingLevel(objectId: string, level: SpeakingLevelReading): void {
+    this.objects.get(objectId)?.npc?.setSpeakingLevel(level)
+  }
+
+  /**
    * Plays a one-shot positional sound at a placed object, for a script's
    * `sound` effect (see ScriptEffect in net/protocol.ts). Reuses the exact
    * PositionalAudio-on-AudioListener pipeline built for placed video/audio
@@ -320,7 +450,8 @@ export class WorldObjects {
    * down when playback ends.
    */
   playOneShot(objectId: string, bytes: Uint8Array, mime?: string): void {
-    const object = this.objectFor(objectId)
+    const entry = this.objects.get(objectId)
+    const object = entry?.npc ? this.voiceAnchor(entry) : entry?.object
     if (!object || !this.listener) return
     const url = blobUrl(bytes, mime)
     const audio = document.createElement('audio')
@@ -339,13 +470,39 @@ export class WorldObjects {
     startMedia(audio, this.listener)
   }
 
-  /** Animates the "now playing" pulse on audio markers. Safe to call every frame. */
-  update(delta: number): void {
+  /**
+   * Animates the "now playing" pulse on audio markers, advances every NPC's
+   * presence (idle + gaze + bubble/lipsync + body-turn intent — see
+   * NpcView.update), and steps any pending faceTowards() turn. `players` is
+   * every player position this peer currently knows about (local + remotes,
+   * from World.collectNearbyPlayers) — passed through to every NPC's own
+   * nearest-player pick; cheap and harmless when there are no NPCs tracked.
+   * Safe to call every frame.
+   */
+  update(delta: number, players: readonly Vec3[] = []): void {
     if (this.objects.size === 0) return
     this.elapsed += delta
     const pulse = 1 + Math.sin(this.elapsed * 3) * 0.12
-    for (const entry of this.objects.values()) {
+    for (const [id, entry] of this.objects) {
       entry.pulse?.scale.set(pulse, pulse, 1)
+      if (entry.npc) {
+        const desiredBodyYaw = entry.npc.update(delta, players)
+        // Only the OWNER drives the body toward whoever is nearby — a
+        // non-owner running this too would fight the transform arriving
+        // over MSG_OBJ_STATE from whoever actually owns the placement (same
+        // class of conflict the drag guard exists for). A non-owner's NPC
+        // still gazes/speaks/lipsyncs locally (all pure-visual, no wire
+        // message) — only the BODY heading is gated, since that's the only
+        // piece of this that gets published.
+        if (desiredBodyYaw !== null && this.isOwned(id) && !this.isDraggedElsewhere(id)) {
+          entry.faceTarget = desiredBodyYaw
+        }
+      }
+      if (entry.faceTarget === undefined || this.isDraggedElsewhere(id)) continue
+      const nextYaw = stepYawTowards(entry.object.rotation.y, entry.faceTarget, delta)
+      entry.object.rotation.set(0, nextYaw, 0)
+      entry.state = { ...entry.state, rotationY: nextYaw }
+      if (isFacingDone(nextYaw, entry.faceTarget)) entry.faceTarget = undefined
     }
   }
 
@@ -359,8 +516,8 @@ export class WorldObjects {
 
   // --- builders -------------------------------------------------------------
 
-  /** Dispatch on kind: a glTF scene, an image/video panel, or an audio marker. */
-  private build(bytes: Uint8Array, kind: PlacedKind, mime?: string): Promise<Built> {
+  /** Dispatch on kind: a glTF scene, an image/video panel, an audio marker, or an NPC's VRM avatar. */
+  private build(bytes: Uint8Array, kind: PlacedKind, mime?: string, name?: string): Promise<Built> {
     switch (kind) {
       case 'image':
         return this.buildImage(bytes, mime)
@@ -368,8 +525,32 @@ export class WorldObjects {
         return this.buildVideo(bytes, mime)
       case 'audio':
         return this.buildAudio(bytes, mime)
+      case 'npc':
+        return this.buildNpc(bytes, name ?? '')
       default:
         return this.buildModel(bytes)
+    }
+  }
+
+  /**
+   * Loads `bytes` as a VRM and drives it via NpcView (VRM + AvatarRig's
+   * procedural idle + a name tag) — mirrors what RemotePlayerView does for a
+   * remote player, minus all networking. A load failure is swallowed inside
+   * NpcView.loadVrm(), which leaves the primitive avatar AvatarRig installs
+   * by default: an NPC that fails to load its VRM must still be visible and
+   * selectable, never an invisible hole in the world.
+   */
+  private async buildNpc(bytes: Uint8Array, name: string): Promise<Built> {
+    const npc = new NpcView(name)
+    await npc.loadVrm(bytes)
+    return {
+      object: npc.root,
+      // Nominal footprint only — place() special-cases 'npc' to skip the
+      // auto-scale/height-lift this size would otherwise drive (an NPC is
+      // feet-rooted and life-sized like a player, not centred like a prop).
+      size: new THREE.Vector3(0.6, npc.height, 0.6),
+      npc,
+      cleanup: () => npc.dispose(),
     }
   }
 
@@ -471,6 +652,31 @@ export class WorldObjects {
   }
 
   /**
+   * The node an NPC's voice is emitted from: a child of the placement sitting
+   * at roughly mouth height, created on first use and reused after that.
+   *
+   * A placement's own origin is at its FEET, which is fine for a speaker prop
+   * or a video panel but wrong for a voice — three's PositionalAudio is
+   * genuinely spatial (an HRTF-panned PannerNode), so emitting from the floor
+   * is audible as such when you stand close to or above a character. Parenting
+   * to the placement (not the world) keeps the voice tracking the body as it
+   * turns or is moved.
+   */
+  private voiceAnchor(entry: Entry): THREE.Object3D {
+    if (!entry.voiceAnchor) {
+      const anchor = new THREE.Object3D()
+      entry.object.add(anchor)
+      entry.voiceAnchor = anchor
+    }
+    // Re-read the height every time rather than caching a position: an NPC's
+    // VRM loads asynchronously, so the rig is still the primitive fallback's
+    // height when the anchor is first created.
+    const height = entry.npc ? entry.npc.height : 0
+    entry.voiceAnchor.position.set(0, Math.max(0, height * VOICE_MOUTH_HEIGHT_RATIO), 0)
+    return entry.voiceAnchor
+  }
+
+  /**
    * Route a media element's sound through a PositionalAudio parented to the
    * object, so it attenuates with distance from the camera's listener. Returns
    * null when the world has no listener (audio simply stays silent).
@@ -494,6 +700,7 @@ export class WorldObjects {
       object: built.object,
       cleanup: built.cleanup,
       pulse: built.pulse,
+      npc: built.npc,
     })
     this.scene.add(built.object)
   }
@@ -752,6 +959,13 @@ function clamp(value: number, min: number, max: number): number {
  * `cid` and `id` are excluded deliberately: a changed cid is a different asset
  * that has to be rebuilt from bytes, not refreshed in place, and callers key
  * on `id` before ever reaching here.
+ *
+ * `npc` is included for the same reason `script`/`trigger` are: an NPC
+ * binding (characterId/radius) can arrive on an id that's already tracked
+ * (e.g. an edit to its radius, or a placement that first decoded without a
+ * valid binding — see net/protocol.ts's decode). Without this, that update
+ * would hit the exact same "nothing changed" fast path that once swallowed
+ * script attachment silently.
  */
 function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
   return (
@@ -765,7 +979,8 @@ function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
     a.mime !== b.mime ||
     a.placedBy !== b.placedBy ||
     JSON.stringify(a.script) !== JSON.stringify(b.script) ||
-    JSON.stringify(a.trigger) !== JSON.stringify(b.trigger)
+    JSON.stringify(a.trigger) !== JSON.stringify(b.trigger) ||
+    JSON.stringify(a.npc) !== JSON.stringify(b.npc)
   )
 }
 

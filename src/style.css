@@ -636,6 +636,31 @@ body {
   animation-delay: 0.36s;
 }
 
+/* The HUD's edit toggle: a pill that behaves like the voice one, lit with the
+   accent while the mode is on so the strip itself says "you are editing". On a
+   narrow screen the label drops and the pencil carries it alone. */
+.edit-pill {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+.edit-pill:hover {
+  color: var(--text);
+  border-color: var(--accent-line);
+}
+.edit-pill.is-on {
+  color: var(--accent-strong);
+  border-color: var(--accent-line);
+  background: var(--accent-tint-strong);
+}
+.edit-pill-label {
+  white-space: nowrap;
+}
+
 .hud-menu-btn {
   display: inline-flex;
   align-items: center;
@@ -772,6 +797,12 @@ body {
 .edit-bar-script-warn {
   display: inline-flex;
   color: var(--warn);
+}
+/* .cat-format's align-self: flex-start makes sense in the catalog card's
+   column layout it was written for; reused here as the NPC badge inside a
+   centered flex row, it needs re-centering rather than a whole new pill class. */
+.edit-bar-script .cat-format {
+  align-self: center;
 }
 
 /* Narrow desktop: same collision with the bottom-left chat bar the hint pill
@@ -1571,7 +1602,8 @@ body {
   .chat {
     inline-size: calc(100vw - 2rem);
   }
-  .btn-text-collapse {
+  .btn-text-collapse,
+  .edit-pill-label {
     display: none;
   }
 }

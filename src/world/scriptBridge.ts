@@ -52,7 +52,11 @@ export class WorldScriptBridge implements ScriptWorldBridge {
   /**
    * WorldObjects.applyTransform takes a whole PlacedObject, so a script's
    * partial patch (e.g. just `pos`) is merged over the placement's current
-   * state before being applied. If the placement disappeared between a
+   * state before being applied. `stateOf` already hands back a fresh copy
+   * (WorldObjects never lets a caller touch its own record), so it is mutated
+   * in place rather than spread again — this runs every frame for every
+   * script-moved object, and a second copy of a state object here would be
+   * pure allocation for nothing. If the placement disappeared between a
    * script reading it and writing it back (its owner left mid-frame), this
    * is simply a no-op — same "degrade quietly" contract as every other
    * bridge method here.
@@ -60,15 +64,14 @@ export class WorldScriptBridge implements ScriptWorldBridge {
   applyTransform(objectId: string, patch: Partial<Transform>): void {
     const state = this.objects.stateOf(objectId)
     if (!state) return
-    const next = { ...state }
     if (patch.pos) {
-      next.x = patch.pos.x
-      next.y = patch.pos.y
-      next.z = patch.pos.z
+      state.x = patch.pos.x
+      state.y = patch.pos.y
+      state.z = patch.pos.z
     }
-    if (patch.rotationY !== undefined) next.rotationY = patch.rotationY
-    if (patch.scale !== undefined) next.scale = patch.scale
-    this.objects.applyTransform(next)
+    if (patch.rotationY !== undefined) state.rotationY = patch.rotationY
+    if (patch.scale !== undefined) state.scale = patch.scale
+    this.objects.applyTransform(state)
   }
 
   setVisible(objectId: string, visible: boolean): void {

@@ -8,6 +8,7 @@
 
 import type {
   AnimState,
+  NpcBinding,
   ObjectState,
   PlacedKind,
   PlacedObject,
@@ -33,6 +34,10 @@ import type {
 // UI_STYLE_PROPS/SCRIPT_LIMITS are frozen runtime constants (not types), so
 // they need a value import alongside the type-only one above.
 import { SCRIPT_LIMITS, UI_STYLE_PROPS } from '../script/ir'
+// Same reasoning: NPC_LIMITS is a frozen constant object, so the radius bounds
+// the decoder clamps to are the ones the runtime actually enforces rather than
+// a second, drift-prone copy of the same numbers.
+import { NPC_LIMITS } from '../npc/limits'
 
 /** High-rate transform/animation snapshot (DELIVERY_UNRELIABLE). */
 export const MSG_STATE = 0x01
@@ -123,7 +128,7 @@ export type ScriptEffect =
   | { t: 'sound'; objectId: string; cid: string }
   | { t: 'window'; scriptId: string; windowId: string; ui: UiNode; anchor: UiAnchor }
   | { t: 'closeWindow'; scriptId: string; windowId: string }
-  | { t: 'emit'; event: string; payload: string }
+  | { t: 'emit'; event: string; payload: string; hops: number }
 
 export type NetMessage =
   | { kind: typeof MSG_STATE; state: PlayerState }
@@ -197,7 +202,7 @@ const WORLD_FORMATS: ReadonlySet<string> = new Set<WorldFormat>([
   'ksplat',
 ])
 
-const PLACED_KINDS: ReadonlySet<string> = new Set<PlacedKind>(['model', 'image', 'video', 'audio'])
+const PLACED_KINDS: ReadonlySet<string> = new Set<PlacedKind>(['model', 'image', 'video', 'audio', 'npc'])
 
 const EDIT_POLICIES: ReadonlySet<string> = new Set<WorldEditPolicy>(['owner', 'everyone', 'locked'])
 
@@ -364,7 +369,47 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
     const trigger = parseTriggerVolume(o.trigger)
     if (trigger) object.trigger = trigger
   }
+  if (o.npc !== undefined) {
+    const npc = parseNpcBinding(o.npc)
+    if (npc) object.npc = npc
+  }
   return object
+}
+
+/**
+ * Validates a peer-supplied NpcBinding. Same "drop just this field" spirit as
+ * `script`/`trigger`: a garbled binding leaves a placement that still renders
+ * as a body but never speaks, which is strictly better than losing it.
+ *
+ * `characterId` is only ever meaningful to the peer that published it — it
+ * indexes that peer's own tc-town roster — so there is nothing to verify here
+ * beyond it being a sanely-sized string. The radius, by contrast, is the one
+ * field a malicious peer could abuse (an NPC that hears the whole map), so it
+ * is clamped rather than rejected.
+ *
+ * `voiceModel`/`voiceName` (R5.1) get the same treatment as `characterId`:
+ * opaque strings only meaningful to src/lib/ttsClient.ts, so each is just
+ * trimmed and capped, and dropped INDIVIDUALLY when malformed — a bad voice
+ * name must never cost the peer their NPC placement, only its voice (it falls
+ * back to the local peer's default TTS voice).
+ */
+function parseNpcBinding(raw: unknown): NpcBinding | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.characterId !== 'string') return null
+  const characterId = o.characterId.trim().slice(0, CID_MAX_LEN)
+  if (!characterId) return null
+  const radius = clampNumber(o.radius, NPC_LIMITS.minRadius, NPC_LIMITS.maxRadius)
+  const binding: NpcBinding = { characterId, radius: radius ?? NPC_LIMITS.defaultRadius }
+  if (typeof o.voiceModel === 'string') {
+    const voiceModel = o.voiceModel.trim().slice(0, CID_MAX_LEN)
+    if (voiceModel) binding.voiceModel = voiceModel
+  }
+  if (typeof o.voiceName === 'string') {
+    const voiceName = o.voiceName.trim().slice(0, CID_MAX_LEN)
+    if (voiceName) binding.voiceName = voiceName
+  }
+  return binding
 }
 
 /**
@@ -912,7 +957,19 @@ function parseScriptEffect(raw: unknown): ScriptEffect | null {
         return null
       }
       if (typeof o.payload !== 'string' || o.payload.length > SCRIPT_LIMITS.maxStringLen) return null
-      return { t: 'emit', event: o.event, payload: o.payload }
+      // Hop count of the sender's event chain (SCRIPT_LIMITS.maxEventHops).
+      // Absent from a peer predating it, and that back-compat case is exactly
+      // why this is clamped rather than rejected: a missing or junk value
+      // becomes maxEventHops, the most conservative reading, so an older
+      // peer's emit is delivered once and can never be relayed onward into a
+      // cross-peer loop. A well-formed count is trusted as sent — an
+      // untrusted peer could only ever lower it, which at worst buys their
+      // own chain a few more hops before OUR host cuts it at the source.
+      const hops =
+        typeof o.hops === 'number' && Number.isFinite(o.hops)
+          ? Math.min(Math.max(Math.floor(o.hops), 0), SCRIPT_LIMITS.maxEventHops)
+          : SCRIPT_LIMITS.maxEventHops
+      return { t: 'emit', event: o.event, payload: o.payload, hops }
     }
     default:
       return null

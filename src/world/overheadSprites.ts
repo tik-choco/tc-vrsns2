@@ -117,7 +117,8 @@ export class ChatBubble extends CanvasSprite {
     this.sprite.visible = false
   }
 
-  show(text: string): void {
+  /** `dwellMs` defaults to the fixed player-chat duration; an NPC's bubble passes a text-length-derived one instead (see npcPresence.bubbleDwellMs). */
+  show(text: string, dwellMs = BUBBLE_SHOW_MS): void {
     const lines = wrapText(text.slice(0, BUBBLE_MAX_CHARS), BUBBLE_LINE_CHARS, BUBBLE_MAX_LINES)
     if (lines.length === 0) return
 
@@ -139,6 +140,13 @@ export class ChatBubble extends CanvasSprite {
     roundRect(ctx, 0, 0, width, height, 22)
     ctx.fillStyle = 'rgba(240, 243, 250, 0.92)'
     ctx.fill()
+    // A thin outline so the bubble stays legible against a near-white sky
+    // (its own fill is close in value to the default background) as well as
+    // a dark custom environment, where the outline barely shows but doesn't
+    // hurt either.
+    ctx.lineWidth = 2
+    ctx.strokeStyle = 'rgba(20, 22, 30, 0.18)'
+    ctx.stroke()
 
     ctx.font = BUBBLE_FONT
     ctx.fillStyle = '#161a24'
@@ -149,7 +157,7 @@ export class ChatBubble extends CanvasSprite {
 
     this.commit(0.18 * lines.length + 0.1)
     this.sprite.visible = true
-    this.hideAt = performance.now() + BUBBLE_SHOW_MS
+    this.hideAt = performance.now() + dwellMs
   }
 
   /** Call each frame; hides the bubble once its display time elapses. */

@@ -7,8 +7,13 @@
 // connection mode, and the AI Network provider role's lifecycle (join/leave,
 // upstream resolver), none of which the shared component can own itself.
 //
-// tc-vrsns2 has no TTS/STT/mic today, so the `voice` adapter is omitted
-// entirely rather than stubbed (checklist item 8) — no voice rows render.
+// The `voice` adapter exposes the TTS row ONLY. NPCs speak their replies aloud
+// (src/lib/ttsClient.ts), so `config.tts` has to be settable somewhere in this
+// app — without this row it could only ever be inherited from a sibling tc-*
+// app that happens to share the same origin, which silently left NPC voices
+// dead for anyone who had not configured TTS elsewhere. `stt`/`mic` stay
+// omitted rather than stubbed (checklist item 8): tc-vrsns2 still has no
+// speech input, and a row that configures nothing is worse than no row.
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import type { LlmCallFn } from '@tik-choco/mistai'
 import { streamChatCompletion } from '@tik-choco/mistai'
@@ -33,6 +38,7 @@ import { useTranslation } from '../../i18n'
 import { PanelShell } from './PanelShell'
 import { createMistaiNode } from '../../lib/mistaiNode'
 import { getAiConsumerClient } from '../../lib/aiClient'
+import { useTtsVoices } from '../../lib/ttsVoices'
 import {
   loadLlmProviderSettings,
   saveLlmProviderSettings,
@@ -40,6 +46,8 @@ import {
   setDefaultReasoningEffort,
   setNetworkProviderEnabled,
   setNetworkProviderPresetIds,
+  setNpcPresetId,
+  setNpcReasoningEffort,
   setScriptPresetId,
   setScriptReasoningEffort,
   type LlmProviderSettings,
@@ -54,6 +62,7 @@ export function AiPanel({ onClose }: Props) {
   const { t, locale } = useTranslation()
   const [settings, setSettings] = useState<LlmProviderSettings>(loadLlmProviderSettings)
   const [shared, setShared] = useState<SharedLlmConfigV1>(() => loadLlmConfig() ?? emptyLlmConfig())
+  const ttsVoices = useTtsVoices()
 
   useEffect(() => subscribeLlmConfig((next) => setShared(next ?? emptyLlmConfig())), [])
 
@@ -134,6 +143,15 @@ export function AiPanel({ onClose }: Props) {
             onPresetChange: (id) => persist(setScriptPresetId(settings, id)),
             onReasoningEffortChange: (effort) => persist(setScriptReasoningEffort(settings, effort)),
           },
+          {
+            key: 'npc',
+            label: t('settings.ai.npcPreset'),
+            tip: t('settings.ai.npcPresetHelp'),
+            presetId: settings.npcPresetId,
+            reasoningEffort: settings.npcReasoningEffort,
+            onPresetChange: (id) => persist(setNpcPresetId(settings, id)),
+            onReasoningEffortChange: (effort) => persist(setNpcReasoningEffort(settings, effort)),
+          },
         ]}
         defaultReasoningEffort={settings.defaultReasoningEffort}
         onDefaultReasoningEffortChange={(effort) => persist(setDefaultReasoningEffort(settings, effort))}
@@ -149,6 +167,7 @@ export function AiPanel({ onClose }: Props) {
           status: settings.networkProviderEnabled ? providerResult : undefined,
         }}
         consumerStatus={consumerStatus}
+        voice={{ tts: { voiceOptions: ttsVoices } }}
         lang={locale === 'ja' ? 'ja' : 'en'}
       />
     </PanelShell>

@@ -38,6 +38,7 @@ export const ja: Dict = {
   'hud.hintChat': 'チャット',
   'hud.hintMic': 'マイク',
   'hud.hintView': '視点',
+  'hud.hintEdit': '編集',
   'hud.hintJump': 'ジャンプ',
   'hud.hintSprint': 'ダッシュ',
   'hud.hintMenu': 'メニュー',
@@ -49,6 +50,7 @@ export const ja: Dict = {
   'menu.avatar': 'アバター',
   'menu.world': 'ワールド',
   'menu.objects': 'オブジェクト',
+  'panel.characters': 'キャラクター',
   'menu.room': 'ルーム',
   'menu.ai': 'AI',
   'menu.settings': '設定',
@@ -73,6 +75,26 @@ export const ja: Dict = {
   'avatar.townTitle': 'tc-townのキャラクター',
   'avatar.townEquip': '装備する',
   'avatar.townNoModel': 'このキャラクターは装備できるVRMがありません。',
+  // R6：自分が作成したものではないアバター（tc-townのキャラクターや他のユーザーの
+  // アップロード）に付けるラベル。自分の持ち物のように見えないようにする。
+  'avatar.foreignSource': '{name} のキャラクター',
+  'avatar.foreignUnknown': '他の人',
+
+  // Characters panel（R5：tc-townのキャラクターをNPCとしてワールドに配置）
+  'characters.title': 'キャラクター',
+  'characters.empty': 'まだキャラクターがありません。',
+  'characters.hint': 'キャラクターはtc-townで作成します。作成すると、ここに表示されます。',
+  'characters.place': 'ワールドに配置',
+  'characters.noVrm': 'このキャラクターは装備できるVRMがありません。',
+  'characters.fromTown': 'tc-townから',
+
+  // NPC（配置したキャラクターがチャットで応答する）
+  'npc.badge': 'NPC',
+  'npc.radius': '聞こえる範囲',
+  'npc.radiusValue': '{n} m',
+  'npc.voice': 'ボイス',
+  'npc.voiceDefault': 'デフォルト（AI設定）',
+  'npc.voiceHelp': 'クリアするとAI設定のデフォルトの声になります。tc-townのキャラクター本来の声には戻りません。',
 
   // World panel
   'world.title': 'ワールド',
@@ -254,6 +276,8 @@ export const ja: Dict = {
   'ai.task.script.tip': '自然言語での指示をワールド内の動作スクリプトに変換します。',
   'ai.network.modelNotShared': 'そのモデルはこの端末では共有されていません。',
   'ai.network.notConfigured': 'AIがまだ設定されていません。',
+  'settings.ai.npcPreset': 'NPCの返答',
+  'settings.ai.npcPresetHelp': 'ワールドに配置したキャラクターの近くで誰かが話しかけると、そのキャラクターになりきって返答します。',
 
   // Settings panel
   'settings.title': '設定',

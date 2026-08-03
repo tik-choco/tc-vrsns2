@@ -2,17 +2,19 @@
 // The shared bus itself is vendored/tested elsewhere; here we mock it so we
 // can control exactly what "foreign" data listTownCharacters/subscribeTownCharacters
 // have to defend against.
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SharedRecord } from '../lib/sharedBus'
 
-const { readShared, subscribeShared } = vi.hoisted(() => ({
+const { readShared, subscribeShared, vrmBytesFromCid } = vi.hoisted(() => ({
   readShared: vi.fn(),
   subscribeShared: vi.fn(),
+  vrmBytesFromCid: vi.fn(),
 }))
 
 vi.mock('../lib/sharedBus.js', () => ({ readShared, subscribeShared }))
+vi.mock('../storage/vrmSource.js', () => ({ vrmBytesFromCid }))
 
-const { listTownCharacters, subscribeTownCharacters } = await import('./townCharacters')
+const { listTownCharacters, loadTownCharacterPersona, subscribeTownCharacters } = await import('./townCharacters')
 
 function record(meta: Record<string, unknown>): SharedRecord {
   return { cid: '', meta, updatedAt: '2026-01-01T00:00:00.000Z', from: 'tc-town' }
@@ -217,5 +219,99 @@ describe('subscribeTownCharacters', () => {
     expect(cb).toHaveBeenCalledWith([])
 
     expect(typeof unsubscribe).toBe('function')
+  })
+})
+
+describe('loadTownCharacterPersona', () => {
+  beforeEach(() => {
+    // The earlier describe blocks above sometimes queue a readShared
+    // mockReturnValueOnce that their own code path never ends up consuming
+    // (e.g. the size-guard tests short-circuit before calling readShared at
+    // all) — mockReset() drops any such leftover so each test here starts
+    // from a clean queue instead of silently eating a prior test's stub.
+    readShared.mockReset()
+  })
+
+  afterEach(() => {
+    vrmBytesFromCid.mockReset()
+  })
+
+  function fullIndexBytes(entries: unknown[]): Uint8Array {
+    return new TextEncoder().encode(JSON.stringify({ v: 1, updatedAt: 'x', entries }))
+  }
+
+  it('returns null when there is no published record', async () => {
+    readShared.mockReturnValueOnce(null)
+    expect(await loadTownCharacterPersona('char-1')).toBeNull()
+    expect(vrmBytesFromCid).not.toHaveBeenCalled()
+  })
+
+  it('returns null when the record has no cid (tc-town has never published a full index)', async () => {
+    readShared.mockReturnValueOnce({ cid: '', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    expect(await loadTownCharacterPersona('char-1')).toBeNull()
+    expect(vrmBytesFromCid).not.toHaveBeenCalled()
+  })
+
+  it('fetches the cid, parses the full index, and returns the matching persona', async () => {
+    readShared.mockReturnValue({ cid: 'cid-1', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(
+      fullIndexBytes([{ ...VALID_ENTRY, id: 'char-1', personaPrompt: 'You are Ada, a curious explorer.' }]),
+    )
+    expect(await loadTownCharacterPersona('char-1')).toBe('You are Ada, a curious explorer.')
+    expect(vrmBytesFromCid).toHaveBeenCalledWith('cid-1')
+  })
+
+  it('returns null for a character id absent from the full index', async () => {
+    readShared.mockReturnValue({ cid: 'cid-2', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(fullIndexBytes([{ ...VALID_ENTRY, id: 'someone-else' }]))
+    expect(await loadTownCharacterPersona('char-missing')).toBeNull()
+  })
+
+  it('returns null (never throws) when the persona is an empty string', async () => {
+    readShared.mockReturnValue({ cid: 'cid-3', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(fullIndexBytes([{ ...VALID_ENTRY, id: 'char-3', personaPrompt: '' }]))
+    expect(await loadTownCharacterPersona('char-3')).toBeNull()
+  })
+
+  it('returns null (never throws) when the fetch rejects', async () => {
+    readShared.mockReturnValue({ cid: 'cid-4', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockRejectedValueOnce(new Error('network down'))
+    await expect(loadTownCharacterPersona('char-1')).resolves.toBeNull()
+  })
+
+  it('returns null (never throws) when the fetched bytes are not valid JSON', async () => {
+    readShared.mockReturnValue({ cid: 'cid-5', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(new TextEncoder().encode('{not json'))
+    expect(await loadTownCharacterPersona('char-1')).toBeNull()
+  })
+
+  it('never throws on wildly malformed full-index JSON', async () => {
+    readShared.mockReturnValue({ cid: 'cid-6', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(new TextEncoder().encode('[null, 42, "str"]'))
+    await expect(loadTownCharacterPersona('char-1')).resolves.toBeNull()
+  })
+
+  it('caches the parsed index per cid — a second lookup for the same cid does not refetch', async () => {
+    readShared.mockReturnValue({ cid: 'cid-7', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(
+      fullIndexBytes([
+        { ...VALID_ENTRY, id: 'char-a', personaPrompt: 'Persona A' },
+        { ...VALID_ENTRY, id: 'char-b', personaPrompt: 'Persona B' },
+      ]),
+    )
+    expect(await loadTownCharacterPersona('char-a')).toBe('Persona A')
+    expect(await loadTownCharacterPersona('char-b')).toBe('Persona B')
+    expect(vrmBytesFromCid).toHaveBeenCalledTimes(1)
+  })
+
+  it('refetches when the record publishes a new cid', async () => {
+    readShared.mockReturnValueOnce({ cid: 'cid-8a', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(fullIndexBytes([{ ...VALID_ENTRY, id: 'char-x', personaPrompt: 'Old' }]))
+    expect(await loadTownCharacterPersona('char-x')).toBe('Old')
+
+    readShared.mockReturnValueOnce({ cid: 'cid-8b', meta: {}, updatedAt: 'x', from: 'tc-town' })
+    vrmBytesFromCid.mockResolvedValueOnce(fullIndexBytes([{ ...VALID_ENTRY, id: 'char-x', personaPrompt: 'New' }]))
+    expect(await loadTownCharacterPersona('char-x')).toBe('New')
+    expect(vrmBytesFromCid).toHaveBeenCalledTimes(2)
   })
 })
