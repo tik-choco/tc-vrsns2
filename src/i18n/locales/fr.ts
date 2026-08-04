@@ -23,6 +23,8 @@ export const fr: Dict = {
   'join.roomInvalid': 'Le nom du salon n\'accepte que lettres, chiffres, tiret et tiret bas (max. 64).',
   'join.nameRequired': 'Saisissez un nom affiché.',
   'join.makePublic': 'Rejoindre en tant que salon public',
+  'join.errorRenderer': 'Cet appareil ne peut pas afficher la 3D. Le WebGL est indisponible ou bloqué.',
+  'join.errorTimeout': 'La reconnexion a pris trop de temps. Réessayez de rejoindre.',
 
   // Resume
   'resume.message': 'Reprise de votre dernier salon « {roomId} »…',

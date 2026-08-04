@@ -23,6 +23,8 @@ export const ko: Dict = {
   'join.roomInvalid': '방 이름은 영문, 숫자, 하이픈, 밑줄만 사용할 수 있어요 (최대 64자).',
   'join.nameRequired': '표시 이름을 입력해 주세요.',
   'join.makePublic': '공개 방으로 참가',
+  'join.errorRenderer': '이 기기는 3D를 표시할 수 없어요. WebGL을 사용할 수 없거나 차단되어 있어요.',
+  'join.errorTimeout': '재연결이 너무 오래 걸렸어요. 다시 참가해 보세요.',
 
   // Resume
   'resume.message': '마지막 방 "{roomId}"에 재접속하는 중…',

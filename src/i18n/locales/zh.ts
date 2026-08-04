@@ -23,6 +23,8 @@ export const zh: Dict = {
   'join.roomInvalid': '房间名只能包含字母、数字、连字符和下划线（最多 64 个字符）。',
   'join.nameRequired': '请输入昵称。',
   'join.makePublic': '以公开房间加入',
+  'join.errorRenderer': '此设备无法显示 3D 内容——WebGL 不可用或已被屏蔽。',
+  'join.errorTimeout': '重新连接耗时过长，请重新加入。',
 
   // Resume
   'resume.message': '正在重新加入上次的房间「{roomId}」…',

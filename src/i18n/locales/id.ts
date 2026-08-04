@@ -23,6 +23,8 @@ export const id: Dict = {
   'join.roomInvalid': 'Nama ruang hanya boleh berisi huruf, angka, tanda hubung, dan garis bawah (maks. 64).',
   'join.nameRequired': 'Masukkan nama tampilan.',
   'join.makePublic': 'Gabung sebagai ruang publik',
+  'join.errorRenderer': 'Perangkat ini tidak bisa menampilkan 3D — WebGL tidak tersedia atau diblokir.',
+  'join.errorTimeout': 'Menyambung ulang terlalu lama. Coba gabung lagi.',
 
   // Resume
   'resume.message': 'Melanjutkan ruang terakhirmu "{roomId}"…',

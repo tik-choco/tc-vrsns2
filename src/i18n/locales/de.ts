@@ -23,6 +23,8 @@ export const de: Dict = {
   'join.roomInvalid': 'Der Raumname darf nur Buchstaben, Ziffern, Bindestrich und Unterstrich enthalten (max. 64).',
   'join.nameRequired': 'Bitte gib einen Anzeigenamen ein.',
   'join.makePublic': 'Als öffentlichen Raum beitreten',
+  'join.errorRenderer': 'Dieses Gerät kann kein 3D anzeigen – WebGL ist nicht verfügbar oder wird blockiert.',
+  'join.errorTimeout': 'Die Wiederverbindung hat zu lange gedauert. Bitte versuche es erneut.',
 
   // Resume
   'resume.message': 'Dein letzter Raum „{roomId}“ wird wieder aufgenommen…',

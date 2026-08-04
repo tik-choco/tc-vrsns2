@@ -1,22 +1,33 @@
 import { useState } from 'preact/hooks'
 import { Shuffle, LogIn } from 'lucide-preact'
 import type { PlayerProfile } from '../shared/types'
-import { useTranslation } from '../i18n'
+import { useTranslation, type TranslationKey } from '../i18n'
 import { isValidRoomId, randomRoomId } from './roomId'
 import { LanguageSelect } from './LanguageSelect'
 import { AccentColor } from './AccentColor'
 import type { DiscoveredRoom, RoomVisibility } from './uiContract'
+import type { JoinErrorCode } from './useSession'
 
 type Props = {
   busy: boolean
   error: string | null
+  /** A classified join failure (dead renderer, resume timeout, ...). Takes
+   * precedence over the raw `error` string below when set — see ERROR_KEYS. */
+  errorCode: JoinErrorCode | null
   initialProfile: PlayerProfile
   initialRoomId: string
   discoveredRooms: DiscoveredRoom[]
   onJoin: (roomId: string, profile: { name: string; color: string }, visibility: RoomVisibility) => void
 }
 
-export function JoinScreen({ busy, error, initialProfile, initialRoomId, discoveredRooms, onJoin }: Props) {
+// Same pattern as ObjectsPanel's ERROR_KEYS: a classified failure always maps
+// to a localized message, so the UI never has to guess how to phrase one.
+const ERROR_KEYS: Record<JoinErrorCode, TranslationKey> = {
+  renderer: 'join.errorRenderer',
+  timeout: 'join.errorTimeout',
+}
+
+export function JoinScreen({ busy, error, errorCode, initialProfile, initialRoomId, discoveredRooms, onJoin }: Props) {
   const { t } = useTranslation()
   const [roomId, setRoomId] = useState(initialRoomId)
   const [name, setName] = useState(initialProfile.name)
@@ -112,7 +123,15 @@ export function JoinScreen({ busy, error, initialProfile, initialRoomId, discove
           </span>
         </label>
 
-        {error && <p class="field-error join-error" role="alert">{error}</p>}
+        {/* A classified errorCode always wins over the raw error string — it
+            is the more specific, localized explanation (dead renderer, resume
+            timeout, ...); the raw string is whatever RoomSession/join reported
+            for everything else, kept as a fallback so no failure goes mute. */}
+        {(errorCode || error) && (
+          <p class="field-error join-error" role="alert">
+            {errorCode ? t(ERROR_KEYS[errorCode]) : error}
+          </p>
+        )}
 
         <button type="submit" class="btn btn-primary join-submit" disabled={!canJoin}>
           <LogIn size={18} aria-hidden="true" />

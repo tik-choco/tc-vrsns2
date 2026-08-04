@@ -42,6 +42,13 @@ const DEFAULT_PLAYER_COLOR = '#5b73c9'
 /** Interval between onLocalState emissions, ms (~10Hz). */
 const STATE_EMIT_INTERVAL_MS = 100
 
+/**
+ * Outcome of a setLocalAvatar swap — see that method's doc comment for why
+ * 'superseded' is kept distinct from 'invalid' rather than both collapsing
+ * into a plain "didn't work".
+ */
+export type AvatarSwapResult = 'ok' | 'invalid' | 'superseded'
+
 export class World {
   private canvas: HTMLCanvasElement
   private renderer: THREE.WebGLRenderer
@@ -280,21 +287,66 @@ export class World {
    * Swap the local avatar to the given VRM bytes, or back to the primitive
    * fallback with `null`. Resolves once the swap is visible. VRM meta
    * (name/authors/license) is available via getLocalAvatarMeta() afterwards.
+   *
+   * Reports what became of the swap. 'ok' covers both a VRM that is now on
+   * screen and `bytes === null` — clearing to the primitive is what was
+   * asked for and is what happened, not a failure. 'invalid' means the bytes
+   * did not parse, and is returned *after* this method has already put the
+   * primitive fallback back in place itself, so the caller never has to
+   * reconcile the world's visual state against the result; it only has to
+   * decide what to tell the user.
+   *
+   * 'superseded' is deliberately NOT folded in with 'invalid', even though
+   * neither one leaves this call's bytes on screen. A superseded swap means a
+   * newer setLocalAvatar (or dispose()) took over while this one was still
+   * parsing — the bytes may have been perfectly good, and the newer call owns
+   * the outcome. Telling them apart is what stops "equip A, then quickly
+   * equip B" from accusing a valid A of being a broken file the moment B wins
+   * the race.
+   *
+   * This is the mirror image of NpcView.loadVrm, which swallows a parse
+   * failure entirely (see its doc comment). That's right for an NPC: nobody
+   * "chose" its VRM in the moment, and it still has to be a visible,
+   * selectable body in the world whether or not the file was good. The local
+   * avatar is different — the player just picked this file, and a swap that
+   * silently no-ops back to the primitive reads as the game losing their
+   * upload, not as a considered rejection of a bad one. So this method never
+   * rejects (a throw here would still have to be caught somewhere, and
+   * `equipAvatarBytes`'s existing `catch { console.debug(...) }` in
+   * useSession.ts is exactly the kind of silent swallow this fix exists to
+   * stop being the ONLY place the failure is visible) — it reports upward
+   * through the return value instead, while still guaranteeing the world
+   * itself is left in a consistent, renderable state either way.
    */
-  async setLocalAvatar(bytes: Uint8Array | null): Promise<void> {
+  async setLocalAvatar(bytes: Uint8Array | null): Promise<AvatarSwapResult> {
     const token = ++this.localAvatarToken
     if (bytes === null) {
       this.localAvatarMeta = null
       this.localRig.setVrm(null)
-      return
+      return 'ok'
     }
-    const vrm = await loadVrmFromBytes(bytes)
-    if (token !== this.localAvatarToken || this.disposed) {
-      disposeVrm(vrm)
-      return
+    try {
+      const vrm = await loadVrmFromBytes(bytes)
+      if (token !== this.localAvatarToken || this.disposed) {
+        // Superseded by a newer setLocalAvatar (or the world was disposed)
+        // while this one was still parsing. The newer call (or dispose())
+        // owns whatever the world now looks like, so this one must not touch
+        // the rig — and must not be mistaken for a bad file, which is why
+        // this is its own result rather than sharing 'invalid'.
+        disposeVrm(vrm)
+        return 'superseded'
+      }
+      this.localAvatarMeta = vrmMetaSummary(vrm)
+      this.localRig.setVrm(vrm)
+      return 'ok'
+    } catch {
+      // Bad bytes: put the primitive fallback back explicitly rather than
+      // leaving whatever was mid-swap. AvatarRig doesn't do this for us the
+      // way it does on construction — setVrm(null) is what restores it.
+      this.localAvatarMeta = null
+      this.localRig.setVrm(null)
+      return 'invalid'
     }
-    this.localAvatarMeta = vrmMetaSummary(vrm)
-    this.localRig.setVrm(vrm)
   }
 
   /** Meta of the currently loaded local VRM, or null for the primitive avatar. */

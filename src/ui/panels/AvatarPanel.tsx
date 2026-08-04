@@ -13,6 +13,8 @@ type Props = Pick<
   | 'onUploadAvatar'
   | 'onEquipAvatar'
   | 'onRemoveAvatar'
+  | 'avatarError'
+  | 'onDismissAvatarError'
   | 'townCharacters'
   | 'onEquipTownCharacter'
 > & { onClose: () => void }
@@ -30,8 +32,31 @@ function isEquippable(entry: CharacterIndexEntry): boolean {
 
 export function AvatarPanel(props: Props) {
   const { t } = useTranslation()
+
+  // Every action that swaps the local avatar dismisses a stale error first —
+  // useSession also clears avatarError at the start of its own attempt, but
+  // doing it here too means the message disappears the instant the user acts
+  // on it, rather than waiting on the async upload/equip round-trip.
+  const equipAvatar = (cid: string | null) => {
+    props.onDismissAvatarError()
+    props.onEquipAvatar(cid)
+  }
+  const uploadAvatar = (file: File) => {
+    props.onDismissAvatarError()
+    props.onUploadAvatar(file)
+  }
+  const equipTownCharacter = (entry: CharacterIndexEntry) => {
+    props.onDismissAvatarError()
+    props.onEquipTownCharacter(entry)
+  }
+
   return (
     <PanelShell title={t('avatar.title')} subtitle={t('avatar.subtitle')} onClose={props.onClose} wide>
+      {/* setLocalAvatar never rejects — a bad VRM leaves the primitive
+          fallback in place and reports back here instead, per World.ts's
+          contract. This is purely "tell the user", the world is already
+          consistent by the time avatarError is set. */}
+      {props.avatarError && <p class="panel-error" role="alert">{t('avatar.invalid')}</p>}
       <CatalogPanel
         items={props.avatars}
         currentCid={props.currentAvatarCid}
@@ -43,9 +68,9 @@ export function AvatarPanel(props: Props) {
         defaultCard={{
           label: t('avatar.default'),
           active: props.currentAvatarCid === null,
-          onSelect: () => props.onEquipAvatar(null),
+          onSelect: () => equipAvatar(null),
         }}
-        onUpload={props.onUploadAvatar}
+        onUpload={uploadAvatar}
         renderActions={(item, isCurrent) => {
           // A foreign avatar (tc-town character, peer's upload) must read as
           // not-the-user's-own here — this is the visible half of the R6
@@ -64,7 +89,7 @@ export function AvatarPanel(props: Props) {
               <button
                 class="btn btn-primary"
                 disabled={isCurrent || props.avatarBusy}
-                onClick={() => props.onEquipAvatar(item.cid)}
+                onClick={() => equipAvatar(item.cid)}
               >
                 {isCurrent ? t('avatar.equipped') : t('avatar.equip')}
               </button>
@@ -99,7 +124,7 @@ export function AvatarPanel(props: Props) {
                     type="button"
                     class="btn btn-primary"
                     disabled={!equippable || props.avatarBusy}
-                    onClick={() => props.onEquipTownCharacter(entry)}
+                    onClick={() => equipTownCharacter(entry)}
                   >
                     {props.avatarBusy ? t('avatar.uploading') : t('avatar.townEquip')}
                   </button>

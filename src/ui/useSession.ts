@@ -81,12 +81,26 @@ export type MicState = 'off' | 'on' | 'pending' | 'error'
 export type RoomVisibility = 'public' | 'private'
 /** Why an attempted placeable upload was rejected (the panel localizes it). */
 export type ObjectUploadError = 'tooLarge' | 'invalid'
+/**
+ * Machine-readable reason a join landed in phase 'error', for the cases we
+ * can give the user a real explanation for instead of a raw exception
+ * message: 'renderer' when World construction itself threw (no WebGL — see
+ * attachCanvas), 'timeout' when a resume join never settled within
+ * RESUME_JOIN_TIMEOUT_MS. Anything else (a bad room id, a protocol failure)
+ * still only has the plain `error` string — this is additive, not a
+ * replacement for it.
+ */
+export type JoinErrorCode = 'renderer' | 'timeout'
+/** Why the local player's own avatar failed to show (see equipAvatarBytes). Currently the only case: the VRM bytes did not parse. */
+export type AvatarLoadError = 'invalid'
 export type { EditTool }
 export type { WorldEditPolicy }
 
 export type SessionApi = {
   phase: SessionPhase
   error: string | null
+  /** Machine-readable reason `phase` is 'error', when it's one we can localize (see JoinErrorCode). Null for a plain error, where `error`'s raw message is all there is. */
+  errorCode: JoinErrorCode | null
   selfId: string | null
   roomId: string
   peerCount: number
@@ -123,6 +137,13 @@ export type SessionApi = {
   objectBusy: boolean
   /** Last placeable upload rejection, cleared when the next upload starts. */
   objectError: ObjectUploadError | null
+  /**
+   * Set when the local player's own avatar failed to load — the world is
+   * left showing the primitive fallback instead. Cleared at the start of the
+   * next upload/equip attempt, or explicitly via clearAvatarError (e.g. the
+   * panel's dismiss button, or picking a different avatar).
+   */
+  avatarError: AvatarLoadError | null
   // lifecycle
   join: (roomId: string, profile: PlayerProfile, visibility?: RoomVisibility) => Promise<void>
   /**
@@ -146,6 +167,8 @@ export type SessionApi = {
   equipAvatar: (cid: string | null) => Promise<void>
   equipTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
   removeAvatar: (cid: string) => void
+  /** Dismisses the current avatar load error. */
+  clearAvatarError: () => void
   // world
   uploadWorld: (file: File) => Promise<void>
   applyWorld: (cid: string) => Promise<void>
@@ -224,6 +247,13 @@ const SCRIPT_PROBLEMS_POLL_MS = 500
 const RESUME_WORLD_WAIT_MS = 2000
 /** How often the local player's pose is snapshotted into the resume record while joined. */
 const RESUME_POSITION_SAVE_INTERVAL_MS = 5000
+/**
+ * How long resumeJoin waits for the recorded room's join() to settle before
+ * giving up on the UI's behalf. RoomSession.join() has no abort signal, so
+ * this cannot cancel the underlying network attempt — it only stops the
+ * resume overlay from spinning forever when a peer/relay never answers.
+ */
+const RESUME_JOIN_TIMEOUT_MS = 25_000
 /** How often NpcRuntime.observe() is fed fresh player positions for proximity greetings — a per-second cadence is plenty for "someone just walked up", see the R5 contract's §3. */
 const NPC_OBSERVE_INTERVAL_MS = 1000
 /** Loudness at or below which an NPC's TTS is treated as silence rather than speech. Well above the analyser's noise floor, well below any voiced sound. */
@@ -367,6 +397,7 @@ export function useSession(): SessionApi {
 
   const [phase, setPhase] = useState<SessionPhase>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [errorCode, setErrorCode] = useState<JoinErrorCode | null>(null)
   const [roomId, setRoomId] = useState('')
   const [peerCount, setPeerCount] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -392,6 +423,7 @@ export function useSession(): SessionApi {
   const [worldBusy, setWorldBusy] = useState(false)
   const [objectBusy, setObjectBusy] = useState(false)
   const [objectError, setObjectError] = useState<ObjectUploadError | null>(null)
+  const [avatarError, setAvatarError] = useState<AvatarLoadError | null>(null)
   const [scriptProblems, setScriptProblems] = useState<Map<string, ScriptError[]>>(new Map())
 
   // cid -> blob URL cache for script ui/image nodes, through the same
@@ -466,6 +498,17 @@ export function useSession(): SessionApi {
   roomVisibilityRef.current = roomVisibility
   /** Set by cancelResumeJoin(); checked at each await point inside resumeJoin. */
   const resumeCancelledRef = useRef(false)
+  /**
+   * Bumped at the top of every join() call, before any await. A join's own
+   * continuation (after RoomSession.join() settles) compares its captured
+   * number against this ref before touching sessionRef/phase — if a newer
+   * join has since been claimed (e.g. cancelResumeJoin() let the user start
+   * a fresh manual join while the old one was still connecting), the older
+   * one is stale and must not stomp what the newer one has already set up.
+   * See join()'s and resumeJoin's own comments for exactly where this is
+   * read.
+   */
+  const joinSeqRef = useRef(0)
 
   // --- world state mirrors (written imperatively, not at render) ---------------
   // The autosave and the delayed restore both run inside async callbacks, where
@@ -823,68 +866,85 @@ export function useSession(): SessionApi {
 
   const attachCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     if (!canvas || worldRef.current) return
-    const world = new World(canvas)
-    world.setLocalProfile(profileRef.current)
-    world.start()
-    world.onLocalState((s) => {
-      if (vrsnsDebug) vrsnsDebug.local = s
-      sessionRef.current?.sendState(s)
-    })
-    world.onObjectSelected(setSelectedObject)
-    world.onObjectEditRequested((id) => editRequestRef.current(id))
-    world.onObjectEdited((state) => objectEditedRef.current(state))
-    world.setSoundResolver(resolveBytes)
-    // A script's chat/say output is attributed to the object, not a player —
-    // fromId is namespaced under a prefix no peer id can produce, and the
-    // name is bracketed so it reads as "not a person" at a glance even
-    // without inspecting color or fromId.
-    world.onScriptSay((objectId, text) => {
-      const objectName = world.listPlacedObjects().find((o) => o.id === objectId)?.name ?? ''
-      pushMessage({
-        fromId: `script:${objectId}`,
-        name: objectName ? `[${objectName}]` : '[object]',
-        color: SCRIPT_CHAT_COLOR,
-        text,
-        at: Date.now(),
+    // This is a Preact ref callback, not a component render — an uncaught
+    // throw here takes down Preact's commit rather than surfacing through any
+    // normal error boundary. `new World`'s first statement constructs a
+    // WebGLRenderer, which throws when WebGL is unavailable or blocked (a
+    // headless environment, a crashed GPU process, a browser flag) — a real
+    // device state, not a bug. worldRef.current is only assigned at the very
+    // end of this function, so any throw during construction or wiring must
+    // be caught here: otherwise it leaves worldRef.current permanently null
+    // with no signal at all, which is exactly the condition join() below
+    // used to treat as "not mounted yet" — forever, since nothing would ever
+    // retry attachCanvas. Surface it as a terminal error instead.
+    try {
+      const world = new World(canvas)
+      world.setLocalProfile(profileRef.current)
+      world.start()
+      world.onLocalState((s) => {
+        if (vrsnsDebug) vrsnsDebug.local = s
+        sessionRef.current?.sendState(s)
       })
-      // Same trigger raises the bubble (inside World) and the voice, for both
-      // our own NPCs and other peers' — so what is written and what is heard
-      // can never disagree about which line was said.
-      speakNpcLine(objectId, text)
-    })
-    // Closes the owner-authoritative loop's local half: World already applied
-    // these effects to itself (say/sound/window/emit) before calling this —
-    // all that's left is broadcasting the same arrays so peers see the same
-    // thing. Reads sessionRef.current at call time (not captured) so this
-    // keeps working across leave/join without re-registering per session.
-    world.onScriptOutput((result) => {
-      const session = sessionRef.current
-      if (!session) return
-      if (result.effects.length > 0) session.sendScriptEffects(result.effects)
-      if (result.inputs.length > 0) session.sendScriptInputs(result.inputs)
-    })
-    // MSG_OBJ_STATE's sender half: a script that MOVES an object we own (the
-    // 'rotate'/'bob' presets) has no other way to reach peers — World has
-    // already filtered this to owned objects that actually changed since the
-    // last send (see World.emitObjectStates), so this is a plain forward,
-    // same "read sessionRef.current at call time" reasoning as onScriptOutput.
-    world.onObjectStates((states) => {
-      sessionRef.current?.sendObjectStates(states)
-    })
-    worldRef.current = world
-    if (vrsnsDebug) {
-      vrsnsDebug.objects = () => world.listPlacedObjects()
-      vrsnsDebug.owned = () => objects.current.own()
-      vrsnsDebug.editable = () => objects.current.editableIds(worldPolicyRef.current)
-      vrsnsDebug.npcs = () =>
-        objects.current
-          .own()
-          .filter((o) => o.kind === 'npc' && o.npc)
-          .map((o) => ({ ...o, lastReplyAt: npcLastReplyAt.current.get(o.id) ?? null }))
-    }
-    // Restore a previously equipped avatar so the local player isn't a primitive.
-    if (profileRef.current.avatarCid) {
-      void loadLocalAvatar(world, profileRef.current.avatarCid)
+      world.onObjectSelected(setSelectedObject)
+      world.onObjectEditRequested((id) => editRequestRef.current(id))
+      world.onObjectEdited((state) => objectEditedRef.current(state))
+      world.setSoundResolver(resolveBytes)
+      // A script's chat/say output is attributed to the object, not a player —
+      // fromId is namespaced under a prefix no peer id can produce, and the
+      // name is bracketed so it reads as "not a person" at a glance even
+      // without inspecting color or fromId.
+      world.onScriptSay((objectId, text) => {
+        const objectName = world.listPlacedObjects().find((o) => o.id === objectId)?.name ?? ''
+        pushMessage({
+          fromId: `script:${objectId}`,
+          name: objectName ? `[${objectName}]` : '[object]',
+          color: SCRIPT_CHAT_COLOR,
+          text,
+          at: Date.now(),
+        })
+        // Same trigger raises the bubble (inside World) and the voice, for both
+        // our own NPCs and other peers' — so what is written and what is heard
+        // can never disagree about which line was said.
+        speakNpcLine(objectId, text)
+      })
+      // Closes the owner-authoritative loop's local half: World already applied
+      // these effects to itself (say/sound/window/emit) before calling this —
+      // all that's left is broadcasting the same arrays so peers see the same
+      // thing. Reads sessionRef.current at call time (not captured) so this
+      // keeps working across leave/join without re-registering per session.
+      world.onScriptOutput((result) => {
+        const session = sessionRef.current
+        if (!session) return
+        if (result.effects.length > 0) session.sendScriptEffects(result.effects)
+        if (result.inputs.length > 0) session.sendScriptInputs(result.inputs)
+      })
+      // MSG_OBJ_STATE's sender half: a script that MOVES an object we own (the
+      // 'rotate'/'bob' presets) has no other way to reach peers — World has
+      // already filtered this to owned objects that actually changed since the
+      // last send (see World.emitObjectStates), so this is a plain forward,
+      // same "read sessionRef.current at call time" reasoning as onScriptOutput.
+      world.onObjectStates((states) => {
+        sessionRef.current?.sendObjectStates(states)
+      })
+      worldRef.current = world
+      if (vrsnsDebug) {
+        vrsnsDebug.objects = () => world.listPlacedObjects()
+        vrsnsDebug.owned = () => objects.current.own()
+        vrsnsDebug.editable = () => objects.current.editableIds(worldPolicyRef.current)
+        vrsnsDebug.npcs = () =>
+          objects.current
+            .own()
+            .filter((o) => o.kind === 'npc' && o.npc)
+            .map((o) => ({ ...o, lastReplyAt: npcLastReplyAt.current.get(o.id) ?? null }))
+      }
+      // Restore a previously equipped avatar so the local player isn't a primitive.
+      if (profileRef.current.avatarCid) {
+        void loadLocalAvatar(world, profileRef.current.avatarCid)
+      }
+    } catch (e) {
+      console.error('World construction failed — this device cannot render 3D content', e)
+      setErrorCode('renderer')
+      setPhase('error')
     }
   }, [])
 
@@ -1058,13 +1118,32 @@ export function useSession(): SessionApi {
 
   const join = useCallback(
     async (nextRoomId: string, nextProfile: PlayerProfile, visibility?: RoomVisibility) => {
+      // Claimed before any guard or await, so every call — including one that
+      // returns immediately below — hands out a unique, monotonically
+      // increasing generation. See joinSeqRef's own comment for what this
+      // protects against.
+      const mySeq = ++joinSeqRef.current
       const world = worldRef.current
-      if (!world || sessionRef.current) return
+      // Already joined: phase is already terminal, so a re-entrant call (e.g.
+      // resumeJoin firing after a manual join already succeeded) has nothing
+      // to signal. Deliberately silent, not an error.
+      if (sessionRef.current) return
+      if (!world) {
+        // attachCanvas never produced a world (WebGL unavailable — see its own
+        // try/catch) — there is nothing to join into. The old code fell
+        // through silently here, leaving phase wherever it already was
+        // ('idle' on a fresh load) with no terminal signal at all, which is
+        // what let the resume overlay spin forever. Give it one.
+        setErrorCode('renderer')
+        setPhase('error')
+        return
+      }
       // No explicit choice (e.g. a plain switchRoom()) restores whatever this
       // room was last set to — private for a never-seen room.
       const resolvedVisibility = visibility ?? loadRoomVisibility(nextRoomId)
       setPhase('joining')
       setError(null)
+      setErrorCode(null)
       setRoomId(nextRoomId)
       activeRoomIdRef.current = nextRoomId
       peerPolicySeenRef.current = false
@@ -1076,6 +1155,16 @@ export function useSession(): SessionApi {
       world.setLocalProfile(nextProfile)
       try {
         const session = await RoomSession.join(nextRoomId, nextProfile)
+        if (mySeq !== joinSeqRef.current) {
+          // A newer join has been claimed while this one was connecting —
+          // most commonly cancelResumeJoin() letting the user start a fresh
+          // manual join before this one settled. That newer join now owns
+          // sessionRef/phase; publishing this session onto it would stomp its
+          // state and orphan its own connection instead. Close what we just
+          // opened and touch nothing else.
+          session.leave()
+          return
+        }
         const audio = new RemoteAudioSink()
         audioRef.current = audio
         wireSession(session, audio, world)
@@ -1098,6 +1187,7 @@ export function useSession(): SessionApi {
         // room-wide half of it deliberately waits for the peers' replay.
         void restoreSavedWorld(nextRoomId, session)
       } catch (e) {
+        if (mySeq !== joinSeqRef.current) return // superseded — the newer join owns phase/error now
         setError(e instanceof Error ? e.message : String(e))
         setPhase('error')
         activeRoomIdRef.current = ''
@@ -1155,6 +1245,13 @@ export function useSession(): SessionApi {
     setPeerCount(0)
     setMessages([])
     setPhase('idle')
+    setErrorCode(null)
+    // Keep the debug mirror honest. It used to be written only on 'joined'
+    // and 'error', so after any leave it still read 'joined' — a stale signal
+    // that has now sent two separate e2e efforts chasing phantom state-machine
+    // bugs (see scripts/e2e-vault.mjs's header). Anything that resets phase
+    // has to reset this too.
+    if (vrsnsDebug) vrsnsDebug.phase = 'idle'
     // Reset to the safe default; the phase flip to 'idle' above already makes
     // the setOwnRoom(null) effect fire regardless, but this keeps state tidy
     // for whatever room is joined next.
@@ -1264,7 +1361,27 @@ export function useSession(): SessionApi {
     async (bytes: Uint8Array | null, cid: string | null) => {
       const world = worldRef.current
       if (!world) return
-      await world.setLocalAvatar(bytes)
+      const result = await world.setLocalAvatar(bytes)
+      if (result === 'superseded') {
+        // A newer equip (or a dispose) took over while these bytes were
+        // parsing. It owns both the profile and any error surface, so this
+        // call reports nothing at all — flagging it would accuse a perfectly
+        // good VRM of being broken just because the user picked again before
+        // it finished.
+        return
+      }
+      if (result === 'invalid') {
+        // The VRM failed to parse; World has already put the primitive
+        // fallback in place on its own. Surface it, and deliberately do NOT
+        // persist `cid` — remembering a broken avatar as "equipped" would
+        // mean loadLocalAvatar tries (and fails) to load the exact same
+        // bytes again on every future launch, silently leaving the player as
+        // a primitive forever with no way to tell why. currentAvatarCid stays
+        // whatever was actually last shown, for the same reason.
+        setAvatarError('invalid')
+        return
+      }
+      setAvatarError(null)
       setCurrentAvatarCid(cid)
       const next: PlayerProfile = { ...profileRef.current }
       if (cid) next.avatarCid = cid
@@ -1277,6 +1394,7 @@ export function useSession(): SessionApi {
   const uploadAvatar = useCallback(
     async (file: File) => {
       setAvatarBusy(true)
+      setAvatarError(null)
       try {
         const bytes = new Uint8Array(await file.arrayBuffer())
         // localUploadBytes brands these as having come from a file the user
@@ -1289,6 +1407,7 @@ export function useSession(): SessionApi {
         await equipAvatarBytes(bytes, item.cid)
       } catch (e) {
         console.debug('avatar upload failed', e)
+        setAvatarError('invalid')
       } finally {
         setAvatarBusy(false)
       }
@@ -1302,6 +1421,7 @@ export function useSession(): SessionApi {
       // path — otherwise it races with an in-flight upload/equip/town-character
       // equip that clears it out from under a concurrent click.
       setAvatarBusy(true)
+      setAvatarError(null)
       try {
         if (cid === null) {
           await equipAvatarBytes(null, null)
@@ -1311,6 +1431,7 @@ export function useSession(): SessionApi {
         await equipAvatarBytes(bytes, cid)
       } catch (e) {
         console.debug('avatar equip failed', cid, e)
+        setAvatarError('invalid')
       } finally {
         setAvatarBusy(false)
       }
@@ -1339,6 +1460,7 @@ export function useSession(): SessionApi {
   const equipTownCharacter = useCallback(
     async (entry: CharacterIndexEntry) => {
       setAvatarBusy(true)
+      setAvatarError(null)
       try {
         const resolved = await resolveTownCharacterVrm(entry)
         if (!resolved) throw new Error('tc-town character has no equippable VRM avatar')
@@ -1372,6 +1494,9 @@ export function useSession(): SessionApi {
     },
     [equipAvatarBytes, hydrateThumbs],
   )
+
+  /** Dismisses the current avatar load error (e.g. the user picked a different avatar). */
+  const clearAvatarError = useCallback(() => setAvatarError(null), [])
 
   // --- worlds ----------------------------------------------------------------
 
@@ -1512,9 +1637,48 @@ export function useSession(): SessionApi {
   const resumeJoin = useCallback(
     async (state: ResumeState, profile: PlayerProfile) => {
       resumeCancelledRef.current = false
-      await join(state.roomId, profile, state.visibility)
+      const joinPromise = join(state.roomId, profile, state.visibility)
+      // join() claims its generation synchronously, before its own first
+      // await — so by the time the call above has returned a (still-pending)
+      // promise, joinSeqRef already reflects it. Safe to read here.
+      const mySeq = joinSeqRef.current
+      let timedOut = false
+      await Promise.race([
+        joinPromise,
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            timedOut = true
+            resolve()
+          }, RESUME_JOIN_TIMEOUT_MS)
+        }),
+      ])
+      if (timedOut) {
+        // RoomSession.join() has no abort signal, so the network attempt
+        // itself is still running in the background — this only stops the UI
+        // from waiting on it forever. Only touch phase if it's still ours to
+        // touch: phaseRef.current === 'joining' means nothing has settled it
+        // yet (not a real success, not a real error, not cancelResumeJoin's
+        // own reset to 'idle'), and the generation check means no newer join
+        // has since taken over. If the abandoned join eventually does
+        // succeed, its own success path (see join()) still runs and takes the
+        // app to 'joined' normally — we just stop promising the user that's
+        // imminent.
+        if (joinSeqRef.current === mySeq && phaseRef.current === 'joining') {
+          setErrorCode('timeout')
+          setPhase('error')
+        }
+        return
+      }
       if (resumeCancelledRef.current) {
-        leave()
+        // Only tear down if we're still the current generation. If a newer
+        // join has since been claimed (the user cancelled and started a
+        // fresh manual join before this one finally settled), that join now
+        // owns sessionRef/phase — leave() here would tear down ITS session,
+        // not this stale one's. (If this join actually succeeded, join()'s
+        // own generation check already closed its now-orphaned session and
+        // returned without touching shared state, so there's nothing left
+        // for us to clean up in that case either.)
+        if (joinSeqRef.current === mySeq) leave()
         return
       }
       if (!sessionRef.current) return // join failed — normal error surface handles it
@@ -1523,9 +1687,29 @@ export function useSession(): SessionApi {
     [join, leave],
   )
 
-  /** Best-effort cancel: the in-flight join/restore notices this at its next await and leaves cleanly. */
+  /**
+   * Best-effort cancel of an in-flight resumeJoin. Restores an operable UI
+   * immediately — phase goes back to 'idle' right here, synchronously, so
+   * JoinScreen's submit button is enabled the instant Cancel is clicked
+   * rather than staying disabled until the underlying join happens to settle
+   * (it cannot be hard-aborted — see RESUME_JOIN_TIMEOUT_MS's comment). The
+   * flag alone lets resumeJoin notice, once it does settle, that it should
+   * tear itself down (guarded by the generation counter so it can never
+   * clobber a newer join the user started in the meantime — see resumeJoin).
+   */
   const cancelResumeJoin = useCallback(() => {
     resumeCancelledRef.current = true
+    // Retire the in-flight join's generation as well. Without this, a join
+    // that succeeds a moment after the click still passes its own generation
+    // check and reasserts phase 'joined' — visibly dropping the user into the
+    // room they just cancelled out of, before resumeJoin's deferred leave()
+    // pulls them back out again. Bumping here makes that join see itself as
+    // stale, so it closes the session it opened and touches nothing else.
+    joinSeqRef.current += 1
+    setPhase('idle')
+    setError(null)
+    setErrorCode(null)
+    if (vrsnsDebug) vrsnsDebug.phase = 'idle'
   }, [])
 
   // --- objects ---------------------------------------------------------------
@@ -1975,6 +2159,7 @@ export function useSession(): SessionApi {
   return {
     phase,
     error,
+    errorCode,
     selfId: sessionRef.current?.selfId ?? null,
     roomId,
     peerCount,
@@ -2003,6 +2188,7 @@ export function useSession(): SessionApi {
     worldBusy,
     objectBusy,
     objectError,
+    avatarError,
     join,
     resumeJoin,
     cancelResumeJoin,
@@ -2016,6 +2202,7 @@ export function useSession(): SessionApi {
     equipAvatar,
     equipTownCharacter,
     removeAvatar,
+    clearAvatarError,
     uploadWorld,
     applyWorld,
     resetWorld,
