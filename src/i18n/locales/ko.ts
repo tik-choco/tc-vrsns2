@@ -43,6 +43,7 @@ export const ko: Dict = {
   'hud.hintEdit': '편집',
   'hud.hintJump': '점프',
   'hud.hintSprint': '달리기',
+  'hud.hintCrouch': '앉기',
   'hud.hintMenu': '메뉴',
   'hud.locked': '월드 잠금 중',
   'hud.openEditing': '누구나 편집 가능',
@@ -147,6 +148,20 @@ export const ko: Dict = {
   'objects.scale': '크기',
   'objects.placedBy': '{name} 님이 배치',
   'objects.orphans': '떠난 사람이 남긴 것이 {count}개 있어요. 방을 나갈 때까지 남지만 아무도 편집할 수 없어요.',
+
+  // 드롭 임포트 오버레이 — 앱 어디에나 파일을 드롭했을 때
+  'dropImport.title': '내 월드에 추가할까요?',
+  'dropImport.descAvatar': '내 아바타로 착용됩니다.',
+  'dropImport.descModel': '3D 모델로 월드에 배치됩니다.',
+  'dropImport.descImage': '이미지로 월드에 배치됩니다.',
+  'dropImport.descVideo': '비디오 화면으로 월드에 배치됩니다.',
+  'dropImport.descAudio': '사운드로 월드에 배치됩니다.',
+  'dropImport.descWorld': '방에 있는 모든 사람에게 보이는 환경이 됩니다.',
+  'dropImport.addToWorld': '월드에 추가',
+  'dropImport.setAsWorldEnvironment': '또는 월드 환경으로 대신 설정',
+  'dropImport.saveOnly': '인벤토리에만 저장',
+  'dropImport.unsupportedTitle': '이 파일은 추가할 수 없어요',
+  'dropImport.unsupportedBody': '"{fileName}"은(는) 이 앱에서 사용할 수 있는 아바타, 월드, 오브젝트 파일이 아니에요.',
 
   // Room panel
   'room.title': '방',

@@ -9,7 +9,7 @@
 import type { ScriptGraph, TriggerVolume } from '../script/ir'
 
 /** Animation states driven by the character state machine and mirrored to peers. */
-export type AnimState = 'idle' | 'walk' | 'run' | 'jump' | 'fall'
+export type AnimState = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'crouch' | 'crouchWalk'
 
 /** Transform + animation snapshot of a player, sent over the wire at a fixed rate. */
 export type PlayerState = {

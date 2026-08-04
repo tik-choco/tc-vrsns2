@@ -881,6 +881,10 @@ export class World {
     this.characterController.setMobileSprint(pressed)
   }
 
+  setMobileCrouch(pressed: boolean): void {
+    this.characterController.setMobileCrouch(pressed)
+  }
+
   /** Toggle first/third-person camera (View button / G key). */
   toggleView(): void {
     this.cameraController.toggleFirstPerson()

@@ -1,5 +1,5 @@
 import { useRef } from 'preact/hooks'
-import { Menu, Compass, MessageCircle, Mic, MicOff, Zap, ChevronUp } from 'lucide-preact'
+import { Menu, Compass, MessageCircle, Mic, MicOff, Zap, ChevronUp, ChevronDown } from 'lucide-preact'
 import { useTranslation } from '../i18n'
 import type { MicState } from './uiContract'
 
@@ -8,6 +8,8 @@ type Props = {
   onMove: (x: number, y: number) => void
   onJump: (pressed: boolean) => void
   onSprint: (pressed: boolean) => void
+  /** Crouch toggle (R10) — same press/release shape as onJump/onSprint; the controller toggles on the rising edge. */
+  onCrouch: (pressed: boolean) => void
   onToggleView: () => void
   onToggleMic: () => void
   onOpenMenu: () => void
@@ -23,6 +25,7 @@ export function MobileControls({
   onMove,
   onJump,
   onSprint,
+  onCrouch,
   onToggleView,
   onToggleMic,
   onOpenMenu,
@@ -118,6 +121,14 @@ export function MobileControls({
       </div>
 
       <div class="m-actions">
+        {/* Reuses m-sprint's sizing (no dedicated m-crouch class — see R10
+            worker notes: adding a fourth distinct button size would need a
+            new style.css rule, and that file belongs to another worker this
+            round). Same press/release shape as sprint/jump; the controller
+            treats this as a toggle on the rising edge, not a hold. */}
+        <button class="m-btn m-sprint" aria-label={t('hud.hintCrouch')} {...hold(onCrouch)}>
+          <ChevronDown size={22} aria-hidden="true" />
+        </button>
         <button class="m-btn m-sprint" aria-label={t('hud.hintSprint')} {...hold(onSprint)}>
           <Zap size={22} aria-hidden="true" />
         </button>

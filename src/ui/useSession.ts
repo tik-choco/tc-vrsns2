@@ -225,6 +225,8 @@ export type SessionApi = {
   setMobileMove: (x: number, y: number) => void
   setMobileJump: (pressed: boolean) => void
   setMobileSprint: (pressed: boolean) => void
+  /** Crouch toggle (R10) — wired identically to setMobileSprint. */
+  setMobileCrouch: (pressed: boolean) => void
   attachCanvas: (canvas: HTMLCanvasElement | null) => void
 }
 
@@ -2094,6 +2096,7 @@ export function useSession(): SessionApi {
   const setMobileMove = useCallback((x: number, y: number) => worldRef.current?.setMobileMove(x, y), [])
   const setMobileJump = useCallback((p: boolean) => worldRef.current?.setMobileJump(p), [])
   const setMobileSprint = useCallback((p: boolean) => worldRef.current?.setMobileSprint(p), [])
+  const setMobileCrouch = useCallback((p: boolean) => worldRef.current?.setMobileCrouch(p), [])
 
   useEffect(() => {
     return () => {
@@ -2228,6 +2231,7 @@ export function useSession(): SessionApi {
     setMobileMove,
     setMobileJump,
     setMobileSprint,
+    setMobileCrouch,
     attachCanvas,
   }
 }

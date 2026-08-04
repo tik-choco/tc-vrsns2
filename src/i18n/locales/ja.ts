@@ -43,6 +43,7 @@ export const ja: Dict = {
   'hud.hintEdit': '編集',
   'hud.hintJump': 'ジャンプ',
   'hud.hintSprint': 'ダッシュ',
+  'hud.hintCrouch': 'しゃがむ',
   'hud.hintMenu': 'メニュー',
   'hud.locked': 'ワールドをロック中',
   'hud.openEditing': '全員が編集可',

@@ -43,6 +43,7 @@ export const fr: Dict = {
   'hud.hintEdit': 'Éditer',
   'hud.hintJump': 'Sauter',
   'hud.hintSprint': 'Courir',
+  'hud.hintCrouch': "S'accroupir",
   'hud.hintMenu': 'Menu',
   'hud.locked': 'Monde verrouillé',
   'hud.openEditing': 'Tout le monde peut modifier',
@@ -148,6 +149,20 @@ export const fr: Dict = {
   'objects.scale': 'Redimensionner',
   'objects.placedBy': 'posé par {name}',
   'objects.orphans': '{count} ont été laissés par des personnes parties. Ils restent jusqu’à votre départ et personne ne peut les modifier.',
+
+  // Overlay d'import au dépôt d'un fichier n'importe où dans l'app
+  'dropImport.title': 'Ajouter ceci à votre monde ?',
+  'dropImport.descAvatar': 'Ceci sera porté comme votre avatar.',
+  'dropImport.descModel': 'Ceci sera placé dans le monde comme un modèle 3D.',
+  'dropImport.descImage': 'Ceci sera placé dans le monde comme une image.',
+  'dropImport.descVideo': 'Ceci sera placé dans le monde comme un écran vidéo.',
+  'dropImport.descAudio': 'Ceci sera placé dans le monde comme un son.',
+  'dropImport.descWorld': 'Ceci deviendra l’environnement que tout le monde voit dans le salon.',
+  'dropImport.addToWorld': 'Ajouter au monde',
+  'dropImport.setAsWorldEnvironment': 'Ou le définir comme environnement du monde',
+  'dropImport.saveOnly': 'Enregistrer uniquement dans l’inventaire',
+  'dropImport.unsupportedTitle': 'Impossible d’ajouter ce fichier',
+  'dropImport.unsupportedBody': '« {fileName} » n’est pas un fichier d’avatar, de monde ou d’objet que cette app puisse utiliser.',
 
   // Room panel
   'room.title': 'Salon',

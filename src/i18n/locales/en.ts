@@ -45,6 +45,7 @@ export const en = {
   'hud.hintEdit': 'Edit',
   'hud.hintJump': 'Jump',
   'hud.hintSprint': 'Sprint',
+  'hud.hintCrouch': 'Crouch',
   'hud.hintMenu': 'Menu',
   'hud.locked': 'World locked',
   'hud.openEditing': 'Anyone may edit',
@@ -149,6 +150,22 @@ export const en = {
   'objects.scale': 'Resize',
   'objects.placedBy': 'placed by {name}',
   'objects.orphans': '{count} left behind by people who have gone. They stay until you leave the room, and nobody can edit them.',
+
+  // Drop-import overlay — dragging a file anywhere onto the app (see
+  // ui/dropImport.ts for how a file is routed, ui/DropImportOverlay.tsx for
+  // the prompt itself)
+  'dropImport.title': 'Add this to your world?',
+  'dropImport.descAvatar': 'This will be worn as your avatar.',
+  'dropImport.descModel': 'This will be placed in the world as a 3D model.',
+  'dropImport.descImage': 'This will be placed in the world as a picture.',
+  'dropImport.descVideo': 'This will be placed in the world as a video screen.',
+  'dropImport.descAudio': 'This will be placed in the world as a sound.',
+  'dropImport.descWorld': 'This will become the environment everyone in the room sees.',
+  'dropImport.addToWorld': 'Add to World',
+  'dropImport.setAsWorldEnvironment': 'Or set as the world environment instead',
+  'dropImport.saveOnly': 'Save to Inventory Only',
+  'dropImport.unsupportedTitle': "Can't add this file",
+  'dropImport.unsupportedBody': '"{fileName}" is not an avatar, world or object file this app can use.',
 
   // Behaviour (script) attach — see the "Behavior" picker in the edit toolbar
   'objects.script.label': 'Behavior',

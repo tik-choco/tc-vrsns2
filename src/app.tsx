@@ -202,6 +202,7 @@ export function App() {
           onMobileMove={session.setMobileMove}
           onMobileJump={session.setMobileJump}
           onMobileSprint={session.setMobileSprint}
+          onMobileCrouch={session.setMobileCrouch}
         />
       )}
     </main>

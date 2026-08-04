@@ -43,6 +43,7 @@ export const zh: Dict = {
   'hud.hintEdit': '编辑',
   'hud.hintJump': '跳跃',
   'hud.hintSprint': '奔跑',
+  'hud.hintCrouch': '蹲下',
   'hud.hintMenu': '菜单',
   'hud.locked': '世界已锁定',
   'hud.openEditing': '任何人可编辑',
@@ -147,6 +148,20 @@ export const zh: Dict = {
   'objects.scale': '缩放',
   'objects.placedBy': '由 {name} 放置',
   'objects.orphans': '有 {count} 个是已离开的人留下的。它们会保留到你离开房间，且无人能编辑。',
+
+  // 拖放导入浮层 — 把文件拖放到应用的任意位置时弹出
+  'dropImport.title': '要将它添加到你的世界吗？',
+  'dropImport.descAvatar': '它将作为你的虚拟形象被穿上。',
+  'dropImport.descModel': '它将作为 3D 模型放置到世界中。',
+  'dropImport.descImage': '它将作为图片放置到世界中。',
+  'dropImport.descVideo': '它将作为视频屏幕放置到世界中。',
+  'dropImport.descAudio': '它将作为声音放置到世界中。',
+  'dropImport.descWorld': '它将成为房间里所有人看到的环境。',
+  'dropImport.addToWorld': '添加到世界',
+  'dropImport.setAsWorldEnvironment': '或改为设置为世界环境',
+  'dropImport.saveOnly': '仅保存到物品库',
+  'dropImport.unsupportedTitle': '无法添加此文件',
+  'dropImport.unsupportedBody': '“{fileName}” 不是本应用可用的虚拟形象、世界或物体文件。',
 
   // Room panel
   'room.title': '房间',

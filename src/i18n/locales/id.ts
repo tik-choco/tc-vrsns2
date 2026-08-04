@@ -43,6 +43,7 @@ export const id: Dict = {
   'hud.hintEdit': 'Edit',
   'hud.hintJump': 'Lompat',
   'hud.hintSprint': 'Lari',
+  'hud.hintCrouch': 'Jongkok',
   'hud.hintMenu': 'Menu',
   'hud.locked': 'Dunia terkunci',
   'hud.openEditing': 'Semua boleh mengedit',

@@ -43,6 +43,7 @@ export const es: Dict = {
   'hud.hintEdit': 'Editar',
   'hud.hintJump': 'Saltar',
   'hud.hintSprint': 'Correr',
+  'hud.hintCrouch': 'Agacharse',
   'hud.hintMenu': 'Menú',
   'hud.locked': 'Mundo bloqueado',
   'hud.openEditing': 'Todos pueden editar',
@@ -147,6 +148,20 @@ export const es: Dict = {
   'objects.scale': 'Redimensionar',
   'objects.placedBy': 'colocado por {name}',
   'objects.orphans': '{count} quedaron de personas que se fueron. Permanecen hasta que salgas de la sala y nadie puede editarlas.',
+
+  // Overlay de importación al soltar un archivo en cualquier parte de la app
+  'dropImport.title': '¿Añadir esto a tu mundo?',
+  'dropImport.descAvatar': 'Se llevará puesto como tu avatar.',
+  'dropImport.descModel': 'Se colocará en el mundo como un modelo 3D.',
+  'dropImport.descImage': 'Se colocará en el mundo como una imagen.',
+  'dropImport.descVideo': 'Se colocará en el mundo como una pantalla de video.',
+  'dropImport.descAudio': 'Se colocará en el mundo como un sonido.',
+  'dropImport.descWorld': 'Se convertirá en el entorno que ve todo el mundo en la sala.',
+  'dropImport.addToWorld': 'Añadir al mundo',
+  'dropImport.setAsWorldEnvironment': 'O configurarlo como el entorno del mundo',
+  'dropImport.saveOnly': 'Guardar solo en el inventario',
+  'dropImport.unsupportedTitle': 'No se puede añadir este archivo',
+  'dropImport.unsupportedBody': '"{fileName}" no es un archivo de avatar, mundo u objeto que esta app pueda usar.',
 
   // Room panel
   'room.title': 'Sala',

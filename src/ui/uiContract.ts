@@ -182,6 +182,9 @@ export type GameOverlayProps = {
   onMobileMove: (x: number, y: number) => void // normalized, -1..1, y+ = forward
   onMobileJump: (pressed: boolean) => void
   onMobileSprint: (pressed: boolean) => void
+  /** Crouch toggle (R10) — mirrors onMobileSprint's shape; the controller
+   * toggles on the rising edge, so this is "pressed", not "held". */
+  onMobileCrouch: (pressed: boolean) => void
 }
 
 /**

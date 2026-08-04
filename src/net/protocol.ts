@@ -219,6 +219,8 @@ const ANIM_STATES: ReadonlySet<string> = new Set<AnimState>([
   'run',
   'jump',
   'fall',
+  'crouch',
+  'crouchWalk',
 ])
 
 const textEncoder = new TextEncoder()
@@ -1037,9 +1039,13 @@ function parseScriptInput(raw: unknown): ScriptInput | null {
 
 /**
  * Decodes and validates a peer frame. Returns null for anything malformed —
- * wrong kind, bad JSON, missing/mistyped fields, out-of-vocabulary anim,
- * invalid color, oversized cid. Numbers are clamped, strings capped. Never
- * throws on garbage.
+ * wrong kind, bad JSON, missing/mistyped fields, invalid color, oversized
+ * cid. Numbers are clamped, strings capped. Never throws on garbage.
+ *
+ * MSG_STATE's anim is a deliberate exception to "reject the whole frame":
+ * an out-of-vocabulary anim (e.g. a newer build's pose name this peer
+ * doesn't know yet) falls back to 'idle' instead of invalidating x/y/z/ry —
+ * see the MSG_STATE case below for why.
  */
 export function decode(data: Uint8Array): NetMessage | null {
   if (!(data instanceof Uint8Array) || data.length < 1 || data.length > FRAME_MAX_BYTES) {
@@ -1059,8 +1065,16 @@ export function decode(data: Uint8Array): NetMessage | null {
       const z = clampPos(body.z)
       const ry = clampPos(body.ry)
       if (x === null || y === null || z === null || ry === null) return null
-      if (typeof body.anim !== 'string' || !ANIM_STATES.has(body.anim)) return null
-      return { kind: MSG_STATE, state: { x, y, z, ry, anim: body.anim as AnimState } }
+      // An anim outside our vocabulary (a peer running a build with a pose
+      // this one predates, e.g. crouch before this change shipped) must not
+      // sink the whole frame the way a bad x/y/z would — that reads to the
+      // sender as the peer freezing in place and then teleporting once the
+      // anim changes again. 'idle' is the fallback because it's the one
+      // state every build has always had: a wrong-but-neutral pose beats a
+      // frozen avatar.
+      const anim =
+        typeof body.anim === 'string' && ANIM_STATES.has(body.anim) ? (body.anim as AnimState) : 'idle'
+      return { kind: MSG_STATE, state: { x, y, z, ry, anim } }
     }
     case MSG_CHAT: {
       if (typeof body.text !== 'string') return null

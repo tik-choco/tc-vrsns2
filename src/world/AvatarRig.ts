@@ -22,6 +22,12 @@ const PRIMITIVE_MOTION: Record<AnimState, { baseY: number; amp: number; freq: nu
   run: { baseY: 0.01, amp: 0.045, freq: 13, lean: 0.15 },
   jump: { baseY: 0.06, amp: 0.01, freq: 3, lean: -0.06 },
   fall: { baseY: 0, amp: 0.015, freq: 5, lean: -0.12 },
+  // Same -0.22m drop as CROUCH_HIPS_DROP in proceduralClips.ts, so the
+  // capsule and a loaded VRM crouch to a visually consistent height. amp/freq
+  // are a slow, small breathing bob (still) vs. a shorter, slower gait bob
+  // (walking) — the capsule has no knees to bend, so baseY does all the work.
+  crouch: { baseY: -0.22, amp: 0.01, freq: 2, lean: 0.08 },
+  crouchWalk: { baseY: -0.22, amp: 0.02, freq: 5, lean: 0.09 },
 }
 
 export class AvatarRig {
@@ -88,7 +94,10 @@ export class AvatarRig {
       this.mixer = new THREE.AnimationMixer(vrm.scene)
       const clips = buildProceduralClips(vrm)
       this.actions = {}
-      for (const state of ['idle', 'walk', 'run', 'jump', 'fall'] as const) {
+      // Not typed against AnimState (this.actions is a Partial), so a new
+      // state needs adding here by hand — every AnimState needs an action or
+      // playAnim() silently no-ops for it on a loaded VRM.
+      for (const state of ['idle', 'walk', 'run', 'jump', 'fall', 'crouch', 'crouchWalk'] as const) {
         const action = this.mixer.clipAction(clips[state])
         action.setLoop(THREE.LoopRepeat, Infinity)
         this.actions[state] = action

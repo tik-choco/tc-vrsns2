@@ -341,6 +341,7 @@ export function GameOverlay(props: GameOverlayProps) {
         <span class="hint"><kbd class="kbd">Enter</kbd>{t('hud.hintChat')}</span>
         <span class="hint"><kbd class="kbd">V</kbd>{t('hud.hintMic')}</span>
         <span class="hint"><kbd class="kbd">G</kbd>{t('hud.hintView')}</span>
+        <span class="hint"><kbd class="kbd">C</kbd>{t('hud.hintCrouch')}</span>
         {canEdit && <span class="hint"><kbd class="kbd">E</kbd>{t('hud.hintEdit')}</span>}
       </div>
 
@@ -430,6 +431,7 @@ export function GameOverlay(props: GameOverlayProps) {
         onMove={props.onMobileMove}
         onJump={props.onMobileJump}
         onSprint={props.onMobileSprint}
+        onCrouch={props.onMobileCrouch}
         onToggleView={props.onToggleView}
         onToggleMic={props.onToggleMic}
         onOpenMenu={() => setMenuOpen(true)}

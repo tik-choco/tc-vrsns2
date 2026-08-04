@@ -21,6 +21,21 @@ const PIVOT_HEIGHT_RATIO = 0.82
 const LOOK_AT_RATIO = 1.05
 const POSITION_FOLLOW = 14
 const LOOK_FOLLOW = 18
+/**
+ * Crouch scales the standing head height down to this fraction, dropping the
+ * orbit pivot and first-person eye roughly to where the crouch pose's lowered
+ * hips put them (see AvatarRig/proceduralClips' hipsOffset for that pose).
+ * 0.6 reads as a clear, deliberate crouch without pulling the third-person
+ * pivot uncomfortably close to the ground.
+ */
+const CROUCH_HEIGHT_FRACTION = 0.6
+/**
+ * Exponential ease rate for the crouch height blend, same shape as
+ * POSITION_FOLLOW/LOOK_FOLLOW above but slower: a snap here reads as the
+ * camera glitching, not a stance change. ~0.3s to settle
+ * (1 - e^-8*0.3 ≈ 0.91), close to a real crouch's timing.
+ */
+const CROUCH_HEIGHT_EASE_RATE = 8
 
 export class CameraController {
   isFirstPerson = false
@@ -31,7 +46,15 @@ export class CameraController {
   private enabled = true
   private rotation = new THREE.Euler(DEFAULT_PITCH, 0, 0, 'YXZ')
   private distance = DEFAULT_DISTANCE
-  private headHeight = DEFAULT_HEAD_HEIGHT
+  // Standing eye height, set by whoever's avatar is loaded (World.ts feeds
+  // its measured height in). Crouch is layered on top via headHeightBlend
+  // below rather than folded into this value, so setHeadHeight and crouching
+  // compose no matter which happens first — equipping a VRM while crouched,
+  // or crouching after equipping, both just work.
+  private standingHeadHeight = DEFAULT_HEAD_HEIGHT
+  private crouching = false
+  // Eased 0..1 fraction of the way from standing (1) to CROUCH_HEIGHT_FRACTION.
+  private headHeightBlend = 1
   private currentPivotPos = new THREE.Vector3()
   private currentLookAt = new THREE.Vector3()
   private lastTouchX = 0
@@ -115,8 +138,8 @@ export class CameraController {
     this.camera = camera
     this.target = target
     this.domElement = domElement
-    this.currentPivotPos.copy(target.position).add(new THREE.Vector3(0, this.headHeight * PIVOT_HEIGHT_RATIO, 0))
-    this.currentLookAt.copy(target.position).add(new THREE.Vector3(0, this.headHeight * LOOK_AT_RATIO, 0))
+    this.currentPivotPos.copy(target.position).add(new THREE.Vector3(0, this.standingHeadHeight * PIVOT_HEIGHT_RATIO, 0))
+    this.currentLookAt.copy(target.position).add(new THREE.Vector3(0, this.standingHeadHeight * LOOK_AT_RATIO, 0))
 
     domElement.addEventListener('mousedown', this.onMouseDown)
     document.addEventListener('mouseup', this.onMouseUp)
@@ -148,9 +171,14 @@ export class CameraController {
     }
   }
 
-  /** Eye height of the current avatar, used for pivots and first person. */
+  /** Standing eye height of the current avatar, used for pivots and first person. */
   setHeadHeight(height: number): void {
-    this.headHeight = height
+    this.standingHeadHeight = height
+  }
+
+  /** Crouch state from CharacterController. Eased toward in update(), not snapped. */
+  setCrouching(crouching: boolean): void {
+    this.crouching = crouching
   }
 
   setDistance(value: number): void {
@@ -172,20 +200,29 @@ export class CameraController {
   }
 
   update(delta: number): void {
+    // Ease the crouch height blend toward its target rather than snapping —
+    // see CROUCH_HEIGHT_EASE_RATE above. Applied multiplicatively on top of
+    // standingHeadHeight so a setHeadHeight call (avatar load) elsewhere this
+    // same frame is never clobbered by a stale crouch computation.
+    const blendTarget = this.crouching ? CROUCH_HEIGHT_FRACTION : 1
+    const blendAlpha = 1 - Math.exp(-CROUCH_HEIGHT_EASE_RATE * delta)
+    this.headHeightBlend += (blendTarget - this.headHeightBlend) * blendAlpha
+    const headHeight = this.standingHeadHeight * this.headHeightBlend
+
     const targetPos = this.target.position
     if (this.isFirstPerson) {
-      const offset = new THREE.Vector3(0, this.headHeight, 0)
+      const offset = new THREE.Vector3(0, headHeight, 0)
       this.camera.position.copy(targetPos).add(offset)
       this.camera.quaternion.setFromEuler(this.rotation)
-      this.currentPivotPos.copy(targetPos).add(new THREE.Vector3(0, this.headHeight * PIVOT_HEIGHT_RATIO, 0))
-      this.currentLookAt.copy(targetPos).add(new THREE.Vector3(0, this.headHeight * LOOK_AT_RATIO, 0))
+      this.currentPivotPos.copy(targetPos).add(new THREE.Vector3(0, headHeight * PIVOT_HEIGHT_RATIO, 0))
+      this.currentLookAt.copy(targetPos).add(new THREE.Vector3(0, headHeight * LOOK_AT_RATIO, 0))
       return
     }
 
-    const pivotPos = targetPos.clone().add(new THREE.Vector3(0, this.headHeight * PIVOT_HEIGHT_RATIO, 0))
+    const pivotPos = targetPos.clone().add(new THREE.Vector3(0, headHeight * PIVOT_HEIGHT_RATIO, 0))
     const orbitDistance = Math.max(this.distance, MIN_THIRD_PERSON_DISTANCE)
     const orbitOffset = new THREE.Vector3(0, 0, orbitDistance).applyEuler(this.rotation)
-    const desiredLookAt = targetPos.clone().add(new THREE.Vector3(0, this.headHeight * LOOK_AT_RATIO, 0))
+    const desiredLookAt = targetPos.clone().add(new THREE.Vector3(0, headHeight * LOOK_AT_RATIO, 0))
     const positionAlpha = 1 - Math.exp(-POSITION_FOLLOW * delta)
     const lookAlpha = 1 - Math.exp(-LOOK_FOLLOW * delta)
     this.currentPivotPos.lerp(pivotPos, positionAlpha)
