@@ -1,6 +1,7 @@
 // Canvas-backed billboard sprites shown above avatars: name tags and
 // transient chat bubbles. Pure code-drawn textures, no image assets.
 import * as THREE from 'three'
+import { PRIMITIVE_AVATAR_HEIGHT } from './primitiveAvatar'
 import { wrapText } from './textWrap'
 
 const TAG_FONT = '600 44px system-ui, sans-serif'
@@ -111,21 +112,60 @@ export class NameTag extends CanvasSprite {
 // message needs (that used to be capped; it no longer is — see show()).
 const BUBBLE_MAX_WIDTH_PX = 540
 
-// How many lines are ever visible in the bubble at once. A message can be
-// any length now that nothing is truncated (see show()); once it reveals
-// more lines than this, the oldest visible line scrolls off the top as the
-// newest appears at the bottom. This also bounds the sprite's world-space
-// height (see BUBBLE_GAP_ABOVE_TAG's derivation): 0.18 * 3 + 0.1 = 0.64
-// world units, safely under the avatar's own ~1.55-unit height
-// (PRIMITIVE_AVATAR_HEIGHT), so the bubble can never tower over the avatar
-// it hovers above.
-const BUBBLE_VISIBLE_LINES = 3
+// The bubble now grows to fit its content — "push" the user asked for: the
+// bottom edge stays pinned just above the name tag (BUBBLE_GAP_ABOVE_TAG,
+// unchanged), each newly revealed line is appended at the BOTTOM, and the
+// box grows UPWARD to make room, so earlier lines visibly rise as new ones
+// arrive (see redraw()'s comment for exactly how the pixel layout produces
+// that without any per-call-site change). But "grow to fit" cannot be
+// unbounded — an NPC reply is capped at NPC_LIMITS.maxReplyChars (400 chars),
+// which at this bubble's ~15-char-per-line budget (BUBBLE_MAX_WIDTH_PX) is
+// roughly 27 lines. So growth itself is capped at BUBBLE_MAX_GROWTH_LINES;
+// once a message has revealed more lines than that, this file falls back to
+// the pre-existing scroll behaviour (oldest visible line drops off the top
+// as the newest appears at the bottom) — the same fallback requested
+// separately ("吹き出しをはみ出る場合は行送り") for exactly this overflow case.
+//
+// The one hard requirement: a full (capped) bubble must never be taller than
+// the avatar it sits above. The avatar's own world-space height is
+// PRIMITIVE_AVATAR_HEIGHT (1.55, imported above — this file's height formula,
+// one line below, is what a message's world height is computed from). Doing
+// the arithmetic rather than guessing:
+//   height(n) = BUBBLE_LINE_WORLD_HEIGHT * n + BUBBLE_BASE_WORLD_HEIGHT
+//             = 0.18n + 0.1
+//   height(5) = 0.18*5 + 0.1 = 1.0
+//   1.0 / PRIMITIVE_AVATAR_HEIGHT (1.55) ≈ 0.645
+// 5 lines lands the fully-grown bubble at ~65% of the avatar's own height —
+// clearly under the avatar, with comfortable margin rather than skimming
+// the 1.55 ceiling (an n of 8 would reach 1.54, a hair under the limit but
+// with no room for error). 5 also isn't an arbitrary number picked in
+// isolation: it's the same "5 lines / 1.0 world units" ceiling this file's
+// BUBBLE_GAP_ABOVE_TAG comment already documents from the old stacked-log
+// design, where it was flagged as a regression ONLY because that older code
+// anchored the bubble by a flat centre offset (5 lines' extra height sank
+// the box 0.05 into the tag). Bottom-edge anchoring (both then and now)
+// removes that failure mode entirely — the box can grow to this same height
+// today with no tag collision, because growth only ever pushes the TOP edge
+// up, never the bottom.
+const BUBBLE_MAX_GROWTH_LINES = 5
 
 const BUBBLE_PAD_X = 26
 const BUBBLE_PAD_Y = 20
 const BUBBLE_LINE_HEIGHT = 46
 const BUBBLE_LINE_WORLD_HEIGHT = 0.18
 const BUBBLE_BASE_WORLD_HEIGHT = 0.1
+
+// Turns the arithmetic in BUBBLE_MAX_GROWTH_LINES's comment into an actual
+// guard instead of just prose: if a future edit to that constant, or to
+// either world-height constant above, ever pushes the fully-grown bubble as
+// tall as (or taller than) the avatar it floats above, fail loudly at module
+// load rather than silently shipping an oversized bubble.
+const BUBBLE_MAX_WORLD_HEIGHT = BUBBLE_LINE_WORLD_HEIGHT * BUBBLE_MAX_GROWTH_LINES + BUBBLE_BASE_WORLD_HEIGHT
+if (BUBBLE_MAX_WORLD_HEIGHT >= PRIMITIVE_AVATAR_HEIGHT) {
+  throw new Error(
+    `overheadSprites: fully-grown chat bubble height (${BUBBLE_MAX_WORLD_HEIGHT}) must stay under the avatar's height (${PRIMITIVE_AVATAR_HEIGHT})`,
+  )
+}
 
 // Fixed gap between a name tag's Y and the BOTTOM edge of the chat bubble
 // above it, in world units. Call sites anchor the bubble by its bottom edge
@@ -143,9 +183,10 @@ const BUBBLE_BASE_WORLD_HEIGHT = 0.1
 // for gap, using this file's own one-line height formula
 // (BUBBLE_LINE_WORLD_HEIGHT * 1 + BUBBLE_BASE_WORLD_HEIGHT). That derivation
 // only depends on the ONE-line height, not on how many lines the bubble can
-// grow to (BUBBLE_VISIBLE_LINES, now back down to 3 — the same 0.64 ceiling
-// as the original pre-stacking bubble), so this stays correct automatically
-// no matter how that separate number changes.
+// grow to (BUBBLE_MAX_GROWTH_LINES, currently 5 — see its own comment for
+// why that height is still safely clear of the tag under bottom-edge
+// anchoring), so this stays correct automatically no matter how that
+// separate number changes.
 export const BUBBLE_GAP_ABOVE_TAG = 0.45 - (BUBBLE_LINE_WORLD_HEIGHT + BUBBLE_BASE_WORLD_HEIGHT) / 2
 
 // Default trailing dwell for callers (player chat) that don't derive one
@@ -172,15 +213,19 @@ function clamp(value: number, min: number, max: number): number {
 //
 // Numbers: BUBBLE_MAX_WIDTH_PX (above) establishes ~15 full-width (CJK)
 // characters as a full line at this font. At PER_CHAR=90ms that's a
-// 600 + 15*90 = 1950ms interval for a dense full line, so BUBBLE_VISIBLE_LINES
-// (3) such lines sit on screen TOGETHER for at least 3 * 1950 = 5850ms
-// before the oldest is pushed off — roughly 45 CJK characters readable
-// across ~5.85s, ≈460 characters/minute. That sits inside the commonly-cited
-// range for adult silent reading of Japanese (~400-600 chars/min), so a
-// reader who glances at a full 3-line window is not racing the scroll. MIN
-// stops a one-character line from flickering past faster than "a new line
-// just appeared" can even register; MAX stops one unusually long hard-broken
-// line (see textWrap's breakByChar) from stalling the whole reveal.
+// 600 + 15*90 = 1950ms interval for a dense full line, so once the bubble
+// has grown to its cap (BUBBLE_MAX_GROWTH_LINES, 5) that many such lines
+// sit on screen TOGETHER for at least 5 * 1950 = 9750ms before the oldest is
+// pushed off — roughly 75 CJK characters readable across ~9.75s, ≈460
+// characters/minute (the per-line rate is the same regardless of how many
+// lines are on screen at once, since both the character count and the
+// window's dwell scale together with the line count). That sits inside the
+// commonly-cited range for adult silent reading of Japanese (~400-600
+// chars/min), so a reader who glances at a full window is not racing the
+// scroll. MIN stops a one-character line from flickering past faster than "a
+// new line just appeared" can even register; MAX stops one unusually long
+// hard-broken line (see textWrap's breakByChar) from stalling the whole
+// reveal.
 const BUBBLE_REVEAL_BASE_MS = 600
 const BUBBLE_REVEAL_PER_CHAR_MS = 90
 const BUBBLE_REVEAL_MIN_MS = 900
@@ -204,14 +249,12 @@ function easeOutCubic(t: number): number {
 }
 
 export class ChatBubble extends CanvasSprite {
-  /** Every wrapped line of the CURRENT message, in order, in full — nothing dropped or ellipsised (see show()). Only the tail up to `windowSize` is ever drawn at once. */
+  /** Every wrapped line of the CURRENT message, in order, in full — nothing dropped or ellipsised (see show()). Only a tail slice, sized by the CURRENT window (see redraw()), is ever drawn at once. */
   private lines: string[] = []
   /** Absolute performance.now() timestamp each line in `lines` becomes revealed. revealAt[0] === startedAt (the first line shows immediately on show()); revealAt[i] = revealAt[i-1] + revealIntervalMs(lines[i-1]). Same length as `lines`. */
   private revealAt: number[] = []
-  /** How many lines are drawn at once for THIS message: min(lines.length, BUBBLE_VISIBLE_LINES), fixed at show() time. Keeping it fixed for the message's whole lifetime is what lets the canvas be sized once in show() and never resized again before the next show() (resize() disposes/recreates a CanvasTexture — see update()'s doc). */
-  private windowSize = 0
-  /** World-space height for this message, computed once in show() from windowSize (fixed height, not "however many lines happen to be revealed right now" — see windowSize's doc) and reapplied via commit() on every redraw. */
-  private messageWorldHeight = 0
+  /** Canvas width for THIS message, fixed once in show() from the widest line across the WHOLE message (not just the currently-visible slice — scrolling will reveal every one of them eventually). Only the HEIGHT grows as lines reveal (see redraw()) — the width doesn't, so the box only ever grows vertically, never sideways. */
+  private canvasWidth = 0
   private startedAt = 0
   /** performance.now() timestamp this message should hide at: the last line's revealAt plus the trailing dwellMs. */
   private hideAt = 0
@@ -235,11 +278,13 @@ export class ChatBubble extends CanvasSprite {
    * is ever dropped or ellipsised: this file used to truncate in two places
    * (a 120-char slice before wrapping, and a 3-line `maxLines` after) and
    * both are gone. The wrapped lines then reveal one at a time on a
-   * schedule computed right here (see revealIntervalMs); once more have
-   * revealed than fit in BUBBLE_VISIBLE_LINES, update() scrolls so the
-   * newest line is at the bottom and the oldest visible one drops off the
-   * top. `dwellMs` is how long the FINAL state lingers AFTER the last line
-   * appears — not the whole lifetime; see totalDurationMs for that.
+   * schedule computed right here (see revealIntervalMs); each reveal grows
+   * the box by one line (see redraw()) until BUBBLE_MAX_GROWTH_LINES, past
+   * which the window instead scrolls — newest line at the bottom, oldest
+   * visible one dropping off the top, same as growth just without the box
+   * getting any taller. `dwellMs` is how long the FINAL state lingers AFTER
+   * the last line appears — not the whole lifetime; see totalDurationMs for
+   * that.
    */
   show(text: string, dwellMs = BUBBLE_SHOW_MS): void {
     this.ctx.font = BUBBLE_FONT
@@ -253,7 +298,6 @@ export class ChatBubble extends CanvasSprite {
 
     const now = performance.now()
     this.lines = lines
-    this.windowSize = Math.min(lines.length, BUBBLE_VISIBLE_LINES)
     this.startedAt = now
     this.revealAt = new Array(lines.length)
     this.revealAt[0] = now
@@ -265,19 +309,12 @@ export class ChatBubble extends CanvasSprite {
     this.tweenStartAt = now
     this.tweenWasActive = true
 
-    // Canvas is sized ONCE here, to the widest line across the WHOLE
-    // message (not just the currently-visible slice — scrolling will reveal
-    // every one of them eventually) and to windowSize's FIXED line count.
-    // update()/redraw() below never call resize() again before the next
-    // show(), which is the point: resize() disposes and recreates a
-    // CanvasTexture, and update() runs per avatar per frame for as long as
-    // this message is up.
+    // Width is fixed ONCE here, to the widest line across the WHOLE message
+    // (see canvasWidth's doc) — redraw() below resizes the HEIGHT as lines
+    // reveal, but always against this same width.
     let textWidth = 0
     for (const line of lines) textWidth = Math.max(textWidth, Math.ceil(this.ctx.measureText(line).width))
-    const width = Math.max(80, textWidth + BUBBLE_PAD_X * 2)
-    const height = this.windowSize * BUBBLE_LINE_HEIGHT + BUBBLE_PAD_Y * 2
-    this.resize(width, height)
-    this.messageWorldHeight = BUBBLE_LINE_WORLD_HEIGHT * this.windowSize + BUBBLE_BASE_WORLD_HEIGHT
+    this.canvasWidth = Math.max(80, textWidth + BUBBLE_PAD_X * 2)
 
     this.redraw()
     this.sprite.visible = true
@@ -330,9 +367,18 @@ export class ChatBubble extends CanvasSprite {
    * tweenWasActive's doc) — and is a pure no-op otherwise, including every
    * frame once the message has settled into its trailing dwell. This is the
    * per-avatar-per-frame method the spec's performance note is about: a
-   * naive unconditional redraw here, or calling resize() per animation
-   * step, would turn a cosmetic feature into a real perf regression.
-   * resize() is never called from here at all — see show()'s comment.
+   * naive unconditional redraw here would turn a cosmetic feature into a
+   * real perf regression. redraw() below does call resize() on every
+   * invocation, but resize() itself is a no-op unless the canvas's
+   * dimensions actually changed (see CanvasSprite.resize) — and this
+   * bubble's dimensions only change once per REVEALED line (up to
+   * BUBBLE_MAX_GROWTH_LINES), not once per frame: a tweening-but-not-just-
+   * revealed frame calls resize() with the SAME height as last frame, so it
+   * costs a dimension comparison, nothing more. That is a deliberate
+   * departure from the previous version of this file, which never resized
+   * after show() at all — growing the box changes the calculus (see
+   * BUBBLE_MAX_GROWTH_LINES's doc): a resize per revealed line (roughly ten
+   * times across a long message) is nothing like a resize per frame.
    */
   update(): void {
     if (this.revealedCount === 0) return
@@ -371,18 +417,52 @@ export class ChatBubble extends CanvasSprite {
 
   /**
    * Draws the currently-visible window: the last `windowSize` revealed
-   * lines, oldest at top / newest at bottom. Requirement 2's "scroll" is
-   * just this slice's start index advancing as revealedCount grows — there
-   * is no separate scroll-position state to keep in sync with it. Only the
-   * newest line in the window is drawn mid-tween (fade + slight upward
-   * slide into its resting position); everything else is already settled.
+   * lines, oldest at top / newest at bottom, where `windowSize` —
+   * min(revealedCount, BUBBLE_MAX_GROWTH_LINES) — is RECOMPUTED every call,
+   * not fixed for the message's lifetime the way it used to be. Below the
+   * cap this is what makes the box grow: windowSize === revealedCount, so
+   * startIdx is always 0 and every revealed line is drawn from row 0
+   * downward — an already-drawn line's OWN row never moves, but the canvas
+   * (and so, via commit(), the sprite) gets one row taller each reveal.
+   * Canvas row 0 is the TOP of the drawn bubble and maps to the sprite's top
+   * edge (THREE's default texture.flipY keeps a canvas drawn normally
+   * right-side-up on the sprite), while call sites anchor the sprite by its
+   * BOTTOM edge (BUBBLE_GAP_ABOVE_TAG) — so growing the canvas downward in
+   * pixel space reads as the sprite's TOP edge rising in world space: the
+   * "push" feel asked for, earlier lines visibly rising as new ones append
+   * below them, with no change needed at any call site. Past the cap,
+   * windowSize sticks at BUBBLE_MAX_GROWTH_LINES and startIdx starts
+   * advancing instead — the pre-existing scroll fallback, unchanged, for
+   * when a message outgrows the box's maximum size.
+   *
+   * resize() below (which disposes/recreates the CanvasTexture) therefore
+   * runs once per revealed line up to the cap — see update()'s doc for why
+   * that is fine where a per-FRAME resize would not be.
+   *
+   * One consequence of resizing exactly on the reveal frame: the box reaches
+   * its new full height before the newest line has finished (or even
+   * started) fading in, so for BUBBLE_TWEEN_MS (220ms) the newest row's slot
+   * sits mostly empty while the text fades/slides up into it. That's a
+   * deliberate choice, not an oversight — the alternative (interpolating the
+   * SPRITE's scale smoothly across the tween instead of jumping straight to
+   * the new height) was rejected because sprite.scale applies to the WHOLE
+   * texture uniformly (see CanvasSprite.commit): shrinking it during the
+   * tween would visibly squash every already-settled line above the new one
+   * too, not just crop the bottom row. A brief empty beat before text
+   * arrives reads as "the bubble made room, then wrote in it" — consistent
+   * with the push metaphor, and far less distracting than older lines
+   * wobbling on every single reveal would be.
    */
   private redraw(): void {
+    const windowSize = Math.min(this.revealedCount, BUBBLE_MAX_GROWTH_LINES)
+    const height = windowSize * BUBBLE_LINE_HEIGHT + BUBBLE_PAD_Y * 2
+    this.resize(this.canvasWidth, height)
+
     const ctx = this.ctx
     const width = this.canvas.width
-    const height = this.canvas.height
-    ctx.clearRect(0, 0, width, height)
-    roundRect(ctx, 0, 0, width, height, 22)
+    const canvasHeight = this.canvas.height
+    ctx.clearRect(0, 0, width, canvasHeight)
+    roundRect(ctx, 0, 0, width, canvasHeight, 22)
     ctx.fillStyle = 'rgba(240, 243, 250, 0.92)'
     ctx.fill()
     // A thin outline so the bubble stays legible against a near-white sky
@@ -397,7 +477,7 @@ export class ChatBubble extends CanvasSprite {
     ctx.textBaseline = 'middle'
 
     const now = performance.now()
-    const startIdx = Math.max(0, this.revealedCount - this.windowSize)
+    const startIdx = Math.max(0, this.revealedCount - windowSize)
     for (let i = startIdx; i < this.revealedCount; i++) {
       const rowInWindow = i - startIdx
       const restY = BUBBLE_PAD_Y + rowInWindow * BUBBLE_LINE_HEIGHT + BUBBLE_LINE_HEIGHT / 2
@@ -417,6 +497,6 @@ export class ChatBubble extends CanvasSprite {
     }
     ctx.globalAlpha = 1
 
-    this.commit(this.messageWorldHeight)
+    this.commit(BUBBLE_LINE_WORLD_HEIGHT * windowSize + BUBBLE_BASE_WORLD_HEIGHT)
   }
 }
