@@ -23,6 +23,8 @@ export const ja: Dict = {
   'join.roomInvalid': 'ルーム名は英数字・ハイフン・アンダースコアのみ使えます（最大64文字）。',
   'join.nameRequired': '表示名を入力してください。',
   'join.makePublic': '公開ルームとして参加',
+  'join.errorRenderer': 'この端末では3Dを表示できません。WebGLが利用できないか、ブロックされています。',
+  'join.errorTimeout': '再接続に時間がかかりすぎました。もう一度参加してください。',
 
   // Resume（前回のルームへの自動再参加）
   'resume.message': '前回のルーム「{roomId}」に再開中…',

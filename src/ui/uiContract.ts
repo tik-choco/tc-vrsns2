@@ -18,6 +18,10 @@ import type { GenerateOutcome, GenerateProgress, GenerateRequest } from '../scri
 import type { ScriptError, ScriptGraph, ScriptWindow, TriggerVolume, UiAnchor } from '../script/ir'
 import type { ScriptPresetId } from '../script/presets'
 import type { ScreenProjection } from './ScriptWindow'
+// AvatarLoadError is a type-only import, erased by verbatimModuleSyntax, so
+// this does not create a real runtime cycle even though useSession.ts in turn
+// imports value bindings (clampNpcRadius, ObjectScriptInput) from this file.
+import type { AvatarLoadError } from './useSession'
 
 export type { DiscoveredRoom, EditTool, WorldEditPolicy }
 
@@ -62,6 +66,16 @@ export type GameOverlayProps = {
   onUploadAvatar: (file: File) => void
   onEquipAvatar: (cid: string | null) => void // null equips the default
   onRemoveAvatar: (cid: string) => void
+  /** Set when the local player's own VRM failed to parse (World.setLocalAvatar
+   * returned 'invalid' — and only that, never a merely superseded swap) — the
+   * primitive fallback is already in place by the time this is set, so this is
+   * purely "tell the user", not "fix the world". */
+  avatarError: AvatarLoadError | null
+  /** Dismisses avatarError. AvatarPanel calls this the moment the user acts
+   * on a different avatar, so the message doesn't linger over an unrelated
+   * attempt — mirrors useSession's own clear-at-start-of-attempt, belt and
+   * braces against the two ever falling out of sync. */
+  onDismissAvatarError: () => void
   // tc-town character roster (cross-app, read-only)
   townCharacters: CharacterIndexEntry[]
   onEquipTownCharacter: (entry: CharacterIndexEntry) => void

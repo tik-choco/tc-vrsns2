@@ -23,6 +23,8 @@ export const pt: Dict = {
   'join.roomInvalid': 'O nome da sala aceita apenas letras, números, hífen e sublinhado (máx. 64).',
   'join.nameRequired': 'Digite um nome de exibição.',
   'join.makePublic': 'Entrar como sala pública',
+  'join.errorRenderer': 'Este dispositivo não consegue exibir 3D: o WebGL está indisponível ou bloqueado.',
+  'join.errorTimeout': 'A reconexão demorou demais. Tente entrar novamente.',
 
   // Resume
   'resume.message': 'Retomando sua última sala "{roomId}"…',

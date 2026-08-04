@@ -25,6 +25,8 @@ export const en = {
   'join.roomInvalid': 'Room name may use letters, digits, hyphen and underscore only (max 64).',
   'join.nameRequired': 'Please enter a display name.',
   'join.makePublic': 'Join as a public room',
+  'join.errorRenderer': "This device can't display 3D — WebGL is unavailable or blocked.",
+  'join.errorTimeout': 'Reconnecting took too long. Try joining again.',
 
   // Resume (auto-rejoin the last room on startup)
   'resume.message': 'Resuming your last room "{roomId}"…',

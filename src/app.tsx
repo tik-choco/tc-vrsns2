@@ -13,10 +13,9 @@ export function App() {
   const { t } = useTranslation()
   const initialProfile = useMemo<PlayerProfile>(() => loadLocalProfile(), [])
 
-  // A ?room=<id> deep link (invite URL) always wins and keeps today's
-  // behavior exactly: JoinScreen prefilled, no auto-resume (an explicit
-  // invite link means the user chose this join, not "continue where I left
-  // off").
+  // A ?room=<id> deep link (invite URL) prefills JoinScreen. It normally also
+  // suppresses auto-resume, because an explicit invite link means the user
+  // chose THIS join, not "continue where I left off".
   const urlRoomId = useMemo(() => {
     try {
       const fromUrl = new URLSearchParams(location.search).get('room')
@@ -27,10 +26,27 @@ export function App() {
     return null
   }, [])
 
-  // Only consulted without a deep link. Present -> auto-rejoin on mount
-  // (below) instead of showing JoinScreen first; absent -> first-run/manual
-  // flow, unchanged.
-  const resumeRecord = useMemo(() => (urlRoomId ? null : loadResumeState()), [urlRoomId])
+  const storedResume = useMemo(() => loadResumeState(), [])
+
+  // ...but "any ?room= is a deep link" was too broad, and silently disabled
+  // auto-resume for every real reload. useSession syncs the address bar to
+  // ?room=<current room> on each successful join (see roomUrl.ts), so once
+  // you have joined anything, this tab's URL is byte-identical to a pasted
+  // invite link — and pressing F5 preserves it, unlike a fresh navigation to
+  // the bare origin. The resume record was therefore never even consulted on
+  // the one path it exists for.
+  //
+  // So the discriminator isn't "is there a ?room=" but "does it name a
+  // DIFFERENT room than the one we were in". A different room is a genuine
+  // invite and still wins outright, exactly as before. The same room is our
+  // own address-bar echo (or an invite back to where you already were, which
+  // wants the same outcome anyway) and resumes — restoring the saved world
+  // and pose instead of dumping the user on a prefilled form.
+  const resumeRecord = useMemo(() => {
+    if (!storedResume) return null
+    if (urlRoomId && urlRoomId !== storedResume.roomId) return null
+    return storedResume
+  }, [urlRoomId, storedResume])
 
   const initialRoomId = useMemo(
     () => urlRoomId ?? resumeRecord?.roomId ?? loadLastRoomId(),
@@ -57,7 +73,14 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (resumeUi === 'active' && session.phase === 'error') setResumeUi('inactive')
+    // Drop the overlay on any phase that isn't still in flight — 'idle' (the
+    // moment before the mount-only join above actually starts) and 'joining'
+    // are the only two that should leave it up. Written as a negation rather
+    // than `=== 'error'` so a future terminal phase can't quietly reintroduce
+    // the eternal spinner this whole fix exists to close off; 'joined' is
+    // included too, but is already a no-op there since showResume below is
+    // gated on `!joined` independently.
+    if (resumeUi === 'active' && session.phase !== 'idle' && session.phase !== 'joining') setResumeUi('inactive')
   }, [resumeUi, session.phase])
 
   const cancelResume = useCallback(() => {
@@ -106,6 +129,7 @@ export function App() {
         <JoinScreen
           busy={session.phase === 'joining'}
           error={session.error}
+          errorCode={session.errorCode}
           initialProfile={initialProfile}
           initialRoomId={initialRoomId}
           discoveredRooms={session.discoveredRooms}
@@ -128,6 +152,8 @@ export function App() {
           onUploadAvatar={(file) => void session.uploadAvatar(file)}
           onEquipAvatar={(cid) => void session.equipAvatar(cid)}
           onRemoveAvatar={session.removeAvatar}
+          avatarError={session.avatarError}
+          onDismissAvatarError={session.clearAvatarError}
           townCharacters={session.townCharacters}
           onEquipTownCharacter={(entry) => void session.equipTownCharacter(entry)}
           onPlaceTownCharacter={(entry) => void session.placeTownCharacter(entry)}

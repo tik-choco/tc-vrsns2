@@ -34,14 +34,16 @@
 //     catalogBytes, which consults the vault (getForeignModel) BEFORE ever
 //     falling back to the network — see that function's doc comment. This is
 //     the round-trip half: bytes decrypted back out of the same IndexedDB
-//     record this harness inspected directly moments before. (This run also
-//     surfaced that src/world/World.ts's setLocalAvatar, unlike
-//     src/world/NpcView.ts's loadVrm, has no try/catch around VRM parsing —
-//     so with this harness's deliberately-fake bytes the equip call reaches
-//     and uses the decrypted vault bytes, then the GLTF parser legitimately
-//     rejects them, and useSession.ts's own catch swallows that. Assertion 5
-//     below asserts on that call actually being reached with real bytes, not
-//     on the parser accepting fake ones — see its comment for the detail.)
+//     record this harness inspected directly moments before. (This harness is
+//     what originally surfaced that src/world/World.ts's setLocalAvatar,
+//     unlike src/world/NpcView.ts's loadVrm, had no try/catch around VRM
+//     parsing — so a bad VRM rejected the whole equip and useSession.ts's
+//     catch swallowed it into console.debug, telling the user nothing. R7
+//     fixed that: setLocalAvatar now returns 'invalid', restores the
+//     primitive fallback itself, and the Avatar panel shows a real alert.
+//     Assertion 5 below asserts on the equip call actually being reached with
+//     real decrypted bytes, not on the parser accepting fake ones — see its
+//     comment for the detail.)
 //   - The IndexedDB inspection itself (assertions 3/4 below) and the direct
 //     AES-GCM decrypt probe are done with the browser's REAL indexedDB and
 //     crypto.subtle, evaluated inside the page — not reimplemented in Node,
@@ -631,37 +633,41 @@ async function runScenario(browser) {
   // world.setLocalAvatar. That makes it valid, if indirect, proof that the
   // vault fed the avatar path, independent of whatever happens next in the
   // VRM/GLTF parser.
-  const equipFailureLine = newLogs.find((l) => l.includes('avatar equip failed') && l.includes(vrmCid))
+  // R7 replaced the console-only signal this used to match. Before it,
+  // World.setLocalAvatar had no try/catch, so a VRM that failed to parse
+  // rejected the whole equip promise and useSession's equipAvatar swallowed
+  // it into a bare `console.debug('avatar equip failed', cid, e)` — invisible
+  // to the user, and the only thing this harness could latch onto. Now
+  // setLocalAvatar catches, restores the primitive fallback itself and
+  // returns 'invalid', which useSession turns into avatarError and the Avatar
+  // panel renders as a real `.panel-error` alert. So nothing throws any more
+  // and that console line is simply gone — matching on it would be matching
+  // on a bug we deliberately fixed.
+  //
+  // The UI alert is the stronger proof anyway, and it proves exactly the same
+  // thing: neither catalog.ts's catalogBytes nor modelVault.ts's
+  // getForeignModel ever throws (both documented "never throws", falling back
+  // instead), and equipAvatarBytes only reaches 'invalid' via
+  // setLocalAvatar's own catch — i.e. only after real bytes came back out of
+  // the vault and the GLTF/VRM parser rejected them. The failure being AT the
+  // parser rather than before it is what makes this a completed vault round
+  // trip, which is all this assertion is responsible for proving (see this
+  // file's header on why the fixture bytes are deliberately not a real VRM).
+  const invalidAlert = await page.evaluate(() => {
+    const el = document.querySelector('.panel-error[role="alert"]')
+    return el ? el.textContent.trim() : null
+  })
 
   if (finalText === 'Equipped') {
     log('ASSERTION 5 PASSED — the catalog entry equips again after a reload, and the (fake) VRM bytes even parsed without incident')
-  } else if (equipFailureLine) {
-    // This run found that src/world/World.ts's setLocalAvatar has no
-    // try/catch around loadVrmFromBytes, unlike src/world/NpcView.ts's
-    // loadVrm (which does, and is what e2e-npc.mjs's fallback-to-primitive
-    // reliance depends on) — so a VRM that fails to parse rejects the whole
-    // equip promise instead of falling back to a primitive avatar the way an
-    // NPC placement does. equipAvatar's own catch swallows that rejection
-    // (logging exactly the line matched above), so the UI never hangs, but
-    // the button also never reaches "Equipped" for bytes that can't parse —
-    // which is every non-VRM byte string, including this harness's
-    // deliberately-fake fixture (see this file's header). This is a genuine
-    // app-level asymmetry this run surfaced, not a defect in this harness;
-    // it does not affect assertions 1-4, since a foreign entry's catalog
-    // and vault writes both complete before setLocalAvatar is ever called.
-    // Per the spec's own instruction ("assert on storage state and on the
-    // equip path completing, not on anything that needs a real VRM to
-    // parse"), this harness treats "the vault handed real, correct bytes to
-    // world.setLocalAvatar" — proven by the failure being AT the parser, not
-    // before it — as the round trip this assertion is actually responsible
-    // for proving.
-    log('ASSERTION 5 PASSED (vault round trip) — equipAvatar reached world.setLocalAvatar with bytes decrypted fresh out of the vault:')
-    log('  ' + equipFailureLine.slice(0, 300))
-    log('  NOTE: the VRM parse itself then failed, as expected for deliberately-fake bytes on this app\'s LOCAL-avatar path (see this file\'s header on World.setLocalAvatar vs NpcView.loadVrm)')
+  } else if (invalidAlert) {
+    log('ASSERTION 5 PASSED (vault round trip) — equipAvatar reached world.setLocalAvatar with bytes decrypted fresh out of the vault,')
+    log(`  and the parse failure surfaced to the user as a visible alert: ${JSON.stringify(invalidAlert)}`)
+    log('  (expected for deliberately-fake bytes — see this file\'s header; the alert itself is R7\'s fix for what used to be a silent console.debug)')
   } else {
     throw new Error(
       `post-reload equip settled but produced neither a successful "Equipped" state nor the expected ` +
-        `"avatar equip failed ${vrmCid} ..." diagnostic — button text was ${JSON.stringify(finalText)}. ` +
+        `.panel-error alert from R7's avatarError surface — button text was ${JSON.stringify(finalText)}. ` +
         `This is unexplained and should be treated as a real failure, not this harness's fallback reasoning. ` +
         `Console/pageerror lines since the click: ${JSON.stringify(newLogs.slice(0, 20))}`,
     )

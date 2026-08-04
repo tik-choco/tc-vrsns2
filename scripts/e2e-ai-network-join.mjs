@@ -186,11 +186,14 @@ async function main() {
     // Reload the SAME context (sessionStorage/localStorage/OPFS survive a
     // reload of the same tab; only the JS heap resets) — the other
     // plausible reading of "second attempt". Joining wrote `?room=<id>` into
-    // the address bar (ui/roomUrl.ts's syncLocationToUrl), and app.tsx treats
-    // a `?room=` URL as an explicit deep link that always wins over the
-    // auto-resume path (its own header comment) — so this reload lands back
-    // on JoinScreen, prefilled with that room/name, waiting for one more
-    // manual Join click rather than rejoining silently.
+    // the address bar (ui/roomUrl.ts's syncLocationToUrl). This used to defeat
+    // auto-resume entirely — app.tsx treated any `?room=` as an explicit deep
+    // link — so the reload landed back on JoinScreen needing one more manual
+    // Join click. That was the bug scripts/e2e-resume.mjs now guards: a
+    // `?room=` naming the SAME room as the resume record is recognised as our
+    // own address-bar echo and auto-resumes. The JoinScreen branch below is
+    // kept anyway, so this harness passes either way and does not silently
+    // become a second, accidental assertion about resume behaviour.
     await coldPage.reload({ waitUntil: 'load' })
     const joinCard = coldPage.locator('.join-card')
     if (await joinCard.isVisible().catch(() => false)) {
