@@ -4,6 +4,7 @@
 // state machine.
 import * as THREE from 'three'
 import type { AnimState } from '../shared/types'
+import { groundHeightFor } from './boxGround'
 import type { CameraController } from './CameraController'
 import type { CharacterStateMachine } from './stateMachine'
 
@@ -16,6 +17,16 @@ const TURN_RATE = 12
 
 /** Joystick magnitude below this is treated as centered (stick drift). */
 const MOBILE_DEADZONE = 0.08
+
+/**
+ * Query for the box tops (see boxGround.ts's WalkableBox) directly under a
+ * world column — the one thing about the world this class does not already
+ * know. Everything else (which of those tops is actually walkable right
+ * now, given where the player is and whether they're airborne) is
+ * groundHeightFor's job, called from update() below; this only has to
+ * answer "what's there", not "does it count".
+ */
+export type GroundTopsProvider = (x: number, z: number) => number[]
 
 export class CharacterController {
   private keys = { forward: false, backward: false, left: false, right: false, shift: false, space: false }
@@ -44,6 +55,23 @@ export class CharacterController {
   private root: THREE.Object3D
   private cameraController: CameraController
   private stateMachine: CharacterStateMachine
+  /**
+   * The player's current standing height — the `currentGroundY` groundHeightFor
+   * reads to decide whether a new box top counts as "the same ground" (see
+   * its doc). Starts at 0 to match the old hard-coded flat floor, and is only
+   * ever written from update() below (never from a caller — setLocalPose in
+   * World.ts writes this by reaching into private state the same way it
+   * already does for yaw/velocity/grounded, not through a public setter).
+   */
+  private groundY = 0
+  /**
+   * Which box tops (if any) are under a given world column — see
+   * GroundTopsProvider's doc. Defaults to "no boxes anywhere", which combined
+   * with update()'s own unconditional y=0 floor candidate (see below)
+   * reproduces the exact pre-box behaviour: every existing caller and test
+   * that never calls setGroundTopsProvider keeps its old meaning.
+   */
+  private groundTopsAt: GroundTopsProvider = () => []
 
   // Auto-repeat keydown events fire every frame-ish while a key is held.
   // Harmless for held flags (re-setting true is a no-op) but would re-toggle
@@ -73,6 +101,19 @@ export class CharacterController {
       this.mobileCrouchHeld = false
       this.suppressJumpUntilRelease = false
     }
+  }
+
+  /**
+   * Installs the query update()'s grounding step uses to find walkable box
+   * tops under the player (see GroundTopsProvider's doc and boxGround.ts's
+   * groundHeightFor for the rules applied to whatever it returns). Wired by
+   * World once WorldObjects exists, same late-binding pattern as
+   * WorldObjects.setDragGuard/setOwnershipGuard — CharacterController is
+   * constructed before WorldObjects is, so this can't be a constructor arg
+   * without reordering World's own constructor.
+   */
+  setGroundTopsProvider(provider: GroundTopsProvider): void {
+    this.groundTopsAt = provider
   }
 
   /** Virtual-joystick vector from the mobile UI: x = strafe, y = +forward, each -1..1. */
@@ -158,7 +199,9 @@ export class CharacterController {
     this.yaw = normalizeAngle(this.yaw + shortestAngleDelta(this.yaw, targetYaw) * turnStep)
     this.root.rotation.set(0, this.yaw, 0)
 
-    // Gravity, jumping and grounding (flat ground plane at y = 0).
+    // Gravity, jumping and grounding. The actual "what's walkable" decision
+    // lives in boxGround.ts's groundHeightFor — this just drives this
+    // class's own grounded/falling state machine off whatever it returns.
     const jumpPressed = this.keys.space || this.mobileJump
     if (this.grounded && jumpPressed) {
       if (this.crouching) {
@@ -177,12 +220,40 @@ export class CharacterController {
       if (this.velocity.y < 0) this.stateMachine.setAnimState('fall')
     }
 
+    // Captured BEFORE the position update below — groundHeightFor's falling
+    // branch needs the feet height from the START of this frame's fall (see
+    // its doc): filtering by the POST-move height instead would let a fast
+    // fall or a coarse delta drop a thin platform's top out of contention
+    // the instant the player passes it, tunnelling straight through to
+    // whatever is lower.
+    const feetBeforeMove = this.root.position.y
     this.root.position.addScaledVector(this.velocity, delta)
 
-    if (!this.grounded && this.root.position.y <= 0) {
-      this.root.position.y = 0
-      this.velocity.y = 0
-      this.grounded = true
+    // y = 0 is the floor everywhere (see boxGround.ts's header) — folded in
+    // here, unconditionally, rather than inside groundHeightFor itself, so
+    // that module stays pure box-candidate logic with no notion of "the"
+    // floor. A box's own top can be at or below 0 too (nothing stops that),
+    // in which case it simply never wins against the floor candidate.
+    const tops = [0, ...this.groundTopsAt(this.root.position.x, this.root.position.z)]
+    const queried = groundHeightFor(feetBeforeMove, this.groundY, this.grounded, tops)
+    if (!this.grounded) {
+      if (queried !== null && this.root.position.y <= queried) {
+        this.root.position.y = queried
+        this.velocity.y = 0
+        this.grounded = true
+        this.groundY = queried
+      }
+    } else if (queried !== null) {
+      // Stairs: track the (possibly stepped) surface exactly — see
+      // groundHeightFor's grounded branch. No smoothing; a step is small
+      // enough (STEP_UP) that an instant snap reads as a normal footfall.
+      this.root.position.y = queried
+      this.groundY = queried
+    } else {
+      // Walked past an edge — nothing within STEP_UP of where we were
+      // standing. Gravity (already applied above) takes over from here; the
+      // FALLING branch on a later call resolves the actual landing.
+      this.grounded = false
     }
 
     if (this.grounded) {
