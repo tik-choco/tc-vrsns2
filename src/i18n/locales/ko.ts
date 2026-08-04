@@ -149,6 +149,12 @@ export const ko: Dict = {
   'objects.placedBy': '{name} 님이 배치',
   'objects.orphans': '떠난 사람이 남긴 것이 {count}개 있어요. 방을 나갈 때까지 남지만 아무도 편집할 수 없어요.',
 
+  // 음량 / 가청 거리 — 오디오·영상 오브젝트 전용, 편집 도구모음(EditToolbar.tsx)에서 설정
+  'objects.volume': '음량',
+  'objects.volumeValue': '{n}%',
+  'objects.range': '가청 거리',
+  'objects.rangeValue': '{n}m',
+
   // 드롭 임포트 오버레이 — 앱 어디에나 파일을 드롭했을 때
   'dropImport.title': '내 월드에 추가할까요?',
   'dropImport.descAvatar': '내 아바타로 착용됩니다.',

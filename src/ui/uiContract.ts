@@ -12,6 +12,7 @@ import type {
 } from '../shared/types'
 import type { CharacterIndexEntry } from '../interop/townCharacters'
 import type { DiscoveredRoom } from '../net/DiscoverySession'
+import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
 import type { EditTool } from '../world/ObjectEditor'
 import { NPC_LIMITS } from '../npc/limits'
 import type { GenerateOutcome, GenerateProgress, GenerateRequest } from '../script/generate'
@@ -75,6 +76,8 @@ export type GameOverlayProps = {
   currentAvatarCid: string | null // null = default primitive avatar
   avatarBusy: boolean
   onUploadAvatar: (file: File) => void
+  /** Catalogs a VRM without equipping it — the drag-and-drop "save to inventory only" path (see DropImportOverlay). onUploadAvatar above always equips, so this is a distinct call, not an option on it. */
+  onUploadAvatarToCatalog: (file: File) => void
   onEquipAvatar: (cid: string | null) => void // null equips the default
   onRemoveAvatar: (cid: string) => void
   /** Set when the local player's own VRM failed to parse (World.setLocalAvatar
@@ -96,7 +99,8 @@ export type GameOverlayProps = {
   worlds: CatalogItem[]
   currentWorld: WorldEnvironment | null // null = default grid
   worldBusy: boolean
-  onUploadWorld: (file: File) => void
+  /** Resolves the saved item's cid (or null on failure) — the drag-and-drop "add to world" path chains this straight into onApplyWorld; every other caller may discard the result. */
+  onUploadWorld: (file: File) => Promise<string | null>
   onApplyWorld: (cid: string) => void
   onResetWorld: () => void
   /** Room-wide advisory rule for who may edit; 'locked' hides every world edit. */
@@ -111,7 +115,8 @@ export type GameOverlayProps = {
   orphanCount: number
   objectBusy: boolean
   objectError: ObjectUploadError | null
-  onUploadObject: (file: File) => void
+  /** Resolves the saved item's cid (or null on failure) — see onUploadWorld's identical doc for why. */
+  onUploadObject: (file: File) => Promise<string | null>
   onPlaceObject: (cid: string) => void
   onClearObjects: () => void
   // in-world editing of already-placed objects (own placements only)
@@ -147,6 +152,22 @@ export type GameOverlayProps = {
    * it. EditToolbar is the only caller, and only when selectedObject.npc is set.
    */
   onSetNpcVoice: (id: string, voiceName: string) => void
+  /**
+   * Edits an 'audio'/'video' placement's own playback volume multiplier, in
+   * world (R7 follow-up to the NPC radius/voice controls above — same
+   * shape). Only meaningful when `selectedObject.kind` is 'audio' or
+   * 'video' — EditToolbar is the only caller, and it gates the control on
+   * that instead of on `.npc` the way onSetNpcRadius/onSetNpcVoice do. Goes
+   * through the same claim/editableIds path, so it is a no-op for a
+   * placement the local player may not edit.
+   */
+  onSetObjectVolume: (id: string, volume: number) => void
+  /**
+   * Edits an 'audio'/'video' placement's audible range (the positional-audio
+   * ref distance — see PlacedObject.audibleRange's doc), same gating as
+   * onSetObjectVolume above.
+   */
+  onSetObjectAudibleRange: (id: string, range: number) => void
   /**
    * Runs the natural-language "describe it" generator (src/script/generate.ts)
    * against the configured model. A stateless pass-through — the UI owns no AI
@@ -217,4 +238,39 @@ export function editableObjectCount(
 export function clampNpcRadius(radius: number, fallback: number): number {
   if (!Number.isFinite(radius)) return fallback
   return Math.min(NPC_LIMITS.maxRadius, Math.max(NPC_LIMITS.minRadius, radius))
+}
+
+/**
+ * PlacedObject.volume/audibleRange's own "absent means" defaults — see their
+ * doc comments in shared/types.ts, and WorldObjects.ts's DEFAULT_VOLUME /
+ * AUDIO_REF_DISTANCE, which is where they are actually applied to a
+ * placement's live PositionalAudio. Duplicated here as plain numbers
+ * (rather than imported) because WorldObjects.ts pulls in three.js and the
+ * glTF loader — a runtime dependency this presentational contract module,
+ * pulled into pure-function tests, must not carry. Used as clampVolume/
+ * clampAudibleRange's NaN fallback and as EditToolbar's display fallback for
+ * a placement that never explicitly set the field.
+ */
+export const VOLUME_DEFAULT = 1
+export const AUDIBLE_RANGE_DEFAULT = 4
+
+/**
+ * Clamps a volume-multiplier edit to VOLUME_MIN/MAX (net/protocol.ts) before
+ * it is ever committed or broadcast, same "correct rather than propagate"
+ * reasoning as clampNpcRadius above. `fallback` is what a non-finite input
+ * (a stale event, a NaN) resolves to — pass the placement's current volume
+ * (or VOLUME_DEFAULT if it never set one).
+ */
+export function clampVolume(volume: number, fallback: number): number {
+  if (!Number.isFinite(volume)) return fallback
+  return Math.min(VOLUME_MAX, Math.max(VOLUME_MIN, volume))
+}
+
+/**
+ * Clamps an audible-range edit to AUDIBLE_RANGE_MIN/MAX (net/protocol.ts),
+ * same shape as clampVolume above.
+ */
+export function clampAudibleRange(range: number, fallback: number): number {
+  if (!Number.isFinite(range)) return fallback
+  return Math.min(AUDIBLE_RANGE_MAX, Math.max(AUDIBLE_RANGE_MIN, range))
 }

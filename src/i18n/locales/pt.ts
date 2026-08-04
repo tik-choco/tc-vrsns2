@@ -149,6 +149,13 @@ export const pt: Dict = {
   'objects.placedBy': 'colocado por {name}',
   'objects.orphans': '{count} ficaram de pessoas que saíram. Elas permanecem até você sair da sala e ninguém pode editá-las.',
 
+  // Volume / raio audível — somente objetos de áudio e vídeo, ajustado na
+  // barra de edição (EditToolbar.tsx)
+  'objects.volume': 'Volume',
+  'objects.volumeValue': '{n}%',
+  'objects.range': 'Raio audível',
+  'objects.rangeValue': '{n} m',
+
   // Overlay de importação ao soltar um arquivo em qualquer lugar do app
   'dropImport.title': 'Adicionar isso ao seu mundo?',
   'dropImport.descAvatar': 'Isso será vestido como seu avatar.',

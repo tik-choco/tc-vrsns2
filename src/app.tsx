@@ -151,6 +151,7 @@ export function App() {
           currentAvatarCid={session.currentAvatarCid}
           avatarBusy={session.avatarBusy}
           onUploadAvatar={(file) => void session.uploadAvatar(file)}
+          onUploadAvatarToCatalog={(file) => void session.uploadAvatarToCatalog(file)}
           onEquipAvatar={(cid) => void session.equipAvatar(cid)}
           onRemoveAvatar={session.removeAvatar}
           avatarError={session.avatarError}
@@ -161,7 +162,7 @@ export function App() {
           worlds={session.worlds}
           currentWorld={session.currentWorld}
           worldBusy={session.worldBusy}
-          onUploadWorld={(file) => void session.uploadWorld(file)}
+          onUploadWorld={session.uploadWorld}
           onApplyWorld={(cid) => void session.applyWorld(cid)}
           onResetWorld={session.resetWorld}
           worldPolicy={session.worldPolicy}
@@ -172,7 +173,7 @@ export function App() {
           orphanCount={session.orphanCount}
           objectBusy={session.objectBusy}
           objectError={session.objectError}
-          onUploadObject={(file) => void session.uploadObject(file)}
+          onUploadObject={session.uploadObject}
           onPlaceObject={(cid) => void session.placeObject(cid)}
           onClearObjects={session.clearObjects}
           editMode={session.editMode}
@@ -184,6 +185,8 @@ export function App() {
           onSetObjectScript={session.setObjectScript}
           onSetNpcRadius={session.setNpcRadius}
           onSetNpcVoice={session.setNpcVoice}
+          onSetObjectVolume={session.setObjectVolume}
+          onSetObjectAudibleRange={session.setObjectAudibleRange}
           onGenerateBehaviour={session.generateBehaviour}
           scriptProblems={session.scriptProblems}
           getScriptWindows={session.getScriptWindows}

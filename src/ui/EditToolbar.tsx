@@ -6,12 +6,13 @@
 // edited and gate world input, and the behaviour picker below is a native
 // <select> for the same reason: no backdrop, no extra input-gating wiring,
 // and it never steals the global keys GameOverlay listens for.
-import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, Ear, Mic, AlertTriangle } from 'lucide-preact'
+import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, Ear, Mic, Volume2, Waves, AlertTriangle } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
 import { useTtsVoices } from '../lib/ttsVoices'
+import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
 import { NPC_LIMITS } from '../npc/limits'
 import { presetIdOf, SCRIPT_PRESETS, type ScriptPresetId } from '../script/presets'
-import type { EditTool, GameOverlayProps } from './uiContract'
+import { AUDIBLE_RANGE_DEFAULT, VOLUME_DEFAULT, type EditTool, type GameOverlayProps } from './uiContract'
 
 type Props = Pick<
   GameOverlayProps,
@@ -23,6 +24,8 @@ type Props = Pick<
   | 'onSetObjectScript'
   | 'onSetNpcRadius'
   | 'onSetNpcVoice'
+  | 'onSetObjectVolume'
+  | 'onSetObjectAudibleRange'
   | 'scriptProblems'
 > & {
   /**
@@ -69,6 +72,28 @@ type PickerValue = '' | 'custom' | 'describe' | 'editGraph' | ScriptPresetId
  */
 const RADIUS_STEPS = [3, 6, 10, 15, 20, 30].filter(
   (r) => r >= NPC_LIMITS.minRadius && r <= NPC_LIMITS.maxRadius,
+)
+
+/**
+ * Coarse presets for a volume edit — same "no free-text field encouraging an
+ * oddly precise value nobody can perceive the difference of" reasoning as
+ * RADIUS_STEPS, filtered against VOLUME_MIN/MAX so a future change to those
+ * bounds can't leave an out-of-range option sitting in this list. Includes
+ * VOLUME_DEFAULT (1 = 100%, unchanged source loudness) so a placement that
+ * never explicitly set a volume shows a real, selectable option rather than
+ * only ever appearing as the "custom" fallback below.
+ */
+const VOLUME_STEPS = [0, 0.5, 0.75, VOLUME_DEFAULT, 1.25, 1.5, VOLUME_MAX].filter(
+  (v) => v >= VOLUME_MIN && v <= VOLUME_MAX,
+)
+
+/**
+ * Coarse presets for an audible-range edit, same reasoning as VOLUME_STEPS.
+ * Includes AUDIBLE_RANGE_DEFAULT (4, WorldObjects' own ref distance) for the
+ * same "not just a custom fallback" reason.
+ */
+const RANGE_STEPS = [1, 2, AUDIBLE_RANGE_DEFAULT, 6, 10, 20, 40, 100].filter(
+  (r) => r >= AUDIBLE_RANGE_MIN && r <= AUDIBLE_RANGE_MAX,
 )
 
 export function EditToolbar(props: Props) {
@@ -131,6 +156,30 @@ export function EditToolbar(props: Props) {
   // back to the empty option — same "stay honest about the stored value"
   // reasoning as radius.
   const voiceIsCustom = npcVoice !== '' && !ttsVoices.includes(npcVoice)
+
+  // Volume/audible-range controls are gated on kind, not on an optional
+  // field being present (unlike selected?.npc above) — every 'audio'/'video'
+  // placement has a meaningful volume/range even before either is ever
+  // explicitly set, it just falls back to VOLUME_DEFAULT/AUDIBLE_RANGE_DEFAULT.
+  const isAudible = selected?.kind === 'audio' || selected?.kind === 'video'
+
+  const onVolumeChange = (e: Event) => {
+    if (!selected) return
+    const value = Number((e.target as HTMLSelectElement).value)
+    props.onSetObjectVolume(selected.id, value)
+  }
+
+  const volume = selected?.volume ?? VOLUME_DEFAULT
+  const volumeIsCustom = !VOLUME_STEPS.includes(volume)
+
+  const onRangeChange = (e: Event) => {
+    if (!selected) return
+    const value = Number((e.target as HTMLSelectElement).value)
+    props.onSetObjectAudibleRange(selected.id, value)
+  }
+
+  const audibleRange = selected?.audibleRange ?? AUDIBLE_RANGE_DEFAULT
+  const rangeIsCustom = !RANGE_STEPS.includes(audibleRange)
 
   return (
     <div class="edit-bar" role="toolbar" aria-label={t('objects.editing')}>
@@ -215,6 +264,36 @@ export function EditToolbar(props: Props) {
             {ttsVoices.map((voice) => (
               <option key={voice} value={voice}>
                 {voice}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {isAudible && (
+        <label class="edit-bar-script">
+          <Volume2 size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('objects.volume')}</span>
+          <select class="edit-bar-script-select" value={volume} onChange={onVolumeChange}>
+            {volumeIsCustom && (
+              <option value={volume}>{t('objects.volumeValue', { n: Math.round(volume * 100) })}</option>
+            )}
+            {VOLUME_STEPS.map((v) => (
+              <option key={v} value={v}>
+                {t('objects.volumeValue', { n: Math.round(v * 100) })}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {isAudible && (
+        <label class="edit-bar-script">
+          <Waves size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('objects.range')}</span>
+          <select class="edit-bar-script-select" value={audibleRange} onChange={onRangeChange}>
+            {rangeIsCustom && <option value={audibleRange}>{t('objects.rangeValue', { n: audibleRange })}</option>}
+            {RANGE_STEPS.map((r) => (
+              <option key={r} value={r}>
+                {t('objects.rangeValue', { n: r })}
               </option>
             ))}
           </select>

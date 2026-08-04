@@ -149,6 +149,12 @@ export const ja: Dict = {
   'objects.placedBy': '配置：{name}',
   'objects.orphans': '退室した人が残したものが{count}個あります。ルームを出るまで表示されますが、誰も編集できません。',
 
+  // 音量／聞こえる距離 — 音声・動画オブジェクト専用。編集ツールバー（EditToolbar.tsx）で設定
+  'objects.volume': '音量',
+  'objects.volumeValue': '{n}%',
+  'objects.range': '聞こえる距離',
+  'objects.rangeValue': '{n} m',
+
   // ドロップインポートのオーバーレイ — アプリのどこかにファイルをドロップしたとき
   'dropImport.title': 'ワールドに追加しますか？',
   'dropImport.descAvatar': 'あなたのアバターとして装着されます。',

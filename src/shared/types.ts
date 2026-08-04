@@ -180,4 +180,25 @@ export type PlacedObject = {
    * renders, it just never speaks).
    */
   npc?: NpcBinding
+  /**
+   * Playback volume multiplier for a 'video'/'audio' placement. Like scale or
+   * rotation this is SYNCED authoring information, not a per-listener local
+   * setting — the person composing the scene balances it, and the room's
+   * existing WorldEditPolicy governs who may change it; a per-listener master
+   * volume is a deliberately separate, out-of-scope concern. 1 (also the
+   * value when this field is absent) is unchanged source loudness, so a
+   * placement from before this field existed sounds exactly as it always
+   * has. Applied via WorldObjects.attachPositionalAudio. Meaningless for any
+   * other kind.
+   */
+  volume?: number
+  /**
+   * How far (world units) a 'video'/'audio' placement's sound carries at full
+   * volume before it starts falling off with distance — the positional-audio
+   * ref distance WorldObjects.attachPositionalAudio sets. Same synced,
+   * author-set nature as `volume` above (see its doc). Absent means
+   * WorldObjects' own default ref distance, matching every placement from
+   * before this field existed. Meaningless for any other kind.
+   */
+  audibleRange?: number
 }

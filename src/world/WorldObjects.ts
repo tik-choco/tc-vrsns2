@@ -4,7 +4,10 @@
 // from a small speaker marker. Models are auto-scaled to a sane size and
 // centred; media panels are built at their natural aspect ratio and stand on
 // the ground facing whoever placed them. Sound (video and audio placements) is
-// positional — it falls off with distance from the listener on the camera.
+// positional — it falls off with distance from the listener on the camera —
+// and each placement may tune its own volume/audible range on top of that
+// falloff (PlacedObject.volume/audibleRange), independent of every other
+// placement's.
 //
 // Objects are tracked by a unique id so a peer's placements can be reconciled
 // against the authoritative set (add the new, drop the removed) without
@@ -33,6 +36,10 @@ export type PlacementSource = {
   mime?: string
   /** Display name credited as the placer; travels with the object thereafter. */
   placedBy?: string
+  /** Initial PlacedObject.volume, for a placement UI that sets it up front. Absent means the WorldObjects default. */
+  volume?: number
+  /** Initial PlacedObject.audibleRange, for a placement UI that sets it up front. Absent means the WorldObjects default. */
+  audibleRange?: number
 }
 
 // Auto-scale clamp: the largest model dimension is mapped into this size range.
@@ -50,9 +57,22 @@ const FALLBACK_ASPECT = 16 / 9
 const SPEAKER_WIDTH = 0.34
 const SPEAKER_HEIGHT = 0.56
 const SPEAKER_DEPTH = 0.26
-/** Distance (world units) over which positional audio stays at full volume. */
+/**
+ * Distance (world units) over which positional audio stays at full volume —
+ * the default ref distance for a placement that carries no
+ * PlacedObject.audibleRange (every placement before that field existed, and
+ * any that simply never set it).
+ */
 const AUDIO_REF_DISTANCE = 4
 const AUDIO_ROLLOFF = 1.4
+/**
+ * Default gain for a placement that carries no PlacedObject.volume — unity,
+ * i.e. the source media's own unaltered level. This is also what a bare
+ * `new THREE.Audio` starts at without ever calling setVolume, so leaving a
+ * placement's volume unset is audibly identical to before this field
+ * existed.
+ */
+const DEFAULT_VOLUME = 1
 /** Fraction of an NPC's height its voice is emitted from — roughly mouth level (see voiceAnchor). */
 const VOICE_MOUTH_HEIGHT_RATIO = 0.92
 /**
@@ -78,6 +98,15 @@ type Entry = {
   faceTarget?: number
   /** Lazily-created child node an NPC's voice plays from, at mouth height rather than the placement's floor-level origin (see voiceAnchor). */
   voiceAnchor?: THREE.Object3D
+  /**
+   * The live PositionalAudio node for a 'video'/'audio' placement's own
+   * media (set by buildVideo/buildAudio only — never for any other kind,
+   * and never for playOneShot's one-shot sounds, which are not tracked as
+   * an Entry at all). Held so retuneAudio() can adjust an already-playing
+   * placement's volume/refDistance in place — see its doc for why that is a
+   * separate explicit method rather than something applyTransform() does.
+   */
+  sound?: THREE.PositionalAudio
 }
 
 /** A built scene object plus its natural (unscaled) bounding size. */
@@ -87,6 +116,8 @@ type Built = {
   cleanup?: () => void
   pulse?: THREE.Object3D
   npc?: NpcView
+  /** See Entry.sound's doc — carried from buildVideo/buildAudio through track(). */
+  sound?: THREE.PositionalAudio
 }
 
 export class WorldObjects {
@@ -131,7 +162,7 @@ export class WorldObjects {
    */
   async place(bytes: Uint8Array, source: PlacementSource, anchor?: PlacementAnchor): Promise<PlacedObject> {
     const kind = source.kind ?? 'model'
-    const built = await this.build(bytes, kind, source.mime, source.name)
+    const built = await this.build(bytes, kind, source.mime, source.name, source.volume, source.audibleRange)
     const maxDim = Math.max(built.size.x, built.size.y, built.size.z) || 1
     // Media is authored at its final size already; only models are normalized.
     const scale = kind === 'model' ? clamp(MAX_SCALE / maxDim, MIN_SCALE, MAX_SCALE) : 1
@@ -171,6 +202,8 @@ export class WorldObjects {
     if (kind !== 'model') state.kind = kind
     if (source.mime) state.mime = source.mime
     if (source.placedBy) state.placedBy = source.placedBy
+    if (source.volume !== undefined) state.volume = source.volume
+    if (source.audibleRange !== undefined) state.audibleRange = source.audibleRange
     this.track(state, built)
     return { ...state }
   }
@@ -178,7 +211,7 @@ export class WorldObjects {
   /** Build an asset and apply an exact PlacedObject transform (for peer placements). */
   async addFromState(bytes: Uint8Array, state: PlacedObject): Promise<void> {
     if (this.objects.has(state.id)) return
-    const built = await this.build(bytes, state.kind ?? 'model', state.mime, state.name)
+    const built = await this.build(bytes, state.kind ?? 'model', state.mime, state.name, state.volume, state.audibleRange)
     // A concurrent sync may have added this id while the asset was loading.
     if (this.objects.has(state.id)) {
       built.cleanup?.()
@@ -218,6 +251,17 @@ export class WorldObjects {
    * is how an owner's edit of an existing placement reaches everyone else,
    * without rebuilding an asset that hasn't changed. Cheap and idempotent when
    * nothing differs.
+   *
+   * Also the one place a volume/audibleRange edit reaches an already-playing
+   * placement's live PositionalAudio (see retuneAudio's doc for why that
+   * isn't inside applyTransform): the OLD volume/audibleRange is read off
+   * `existing.state` before applyTransform overwrites it, compared against
+   * the incoming ones, and retuneAudio() is called explicitly when they
+   * differ. This runs once per reconcile — a local edit's commit
+   * (useSession's setObjectVolume/setObjectAudibleRange -> commitOwnObjects
+   * -> reconcileObjects) or a peer's MSG_OBJECTS snapshot — never per
+   * animation frame, so both a local and a peer's volume edit take effect
+   * here, with nothing extra to wire on either call site.
    */
   async syncRemote(states: PlacedObject[], resolveBytes: (cid: string) => Promise<Uint8Array | null>): Promise<void> {
     const wanted = new Set(states.map((s) => s.id))
@@ -227,7 +271,12 @@ export class WorldObjects {
     for (const state of states) {
       const existing = this.objects.get(state.id)
       if (existing) {
-        if (stateDiffers(existing.state, state)) this.applyTransform(state)
+        if (stateDiffers(existing.state, state)) {
+          const audioChanged =
+            existing.state.volume !== state.volume || existing.state.audibleRange !== state.audibleRange
+          this.applyTransform(state)
+          if (audioChanged) this.retuneAudio(state.id, state.volume, state.audibleRange)
+        }
         continue
       }
       const bytes = await resolveBytes(state.cid)
@@ -321,6 +370,14 @@ export class WorldObjects {
    * drag) and — since it replaces `entry.state` wholesale — is also
    * syncRemote()'s only path for refreshing non-transform fields like
    * script/trigger onto a placement that hasn't moved (see stateDiffers()).
+   *
+   * Deliberately does NOT retune a 'video'/'audio' placement's live
+   * PositionalAudio even when `state.volume`/`audibleRange` changed: this
+   * runs every frame for a script-moved placement via WorldScriptBridge (see
+   * scriptBridge.ts's applyTransform), so adding Web Audio parameter writes
+   * here would tax every moving audio/video placement on every frame for a
+   * change that in practice only happens on an edit or a peer's resync. See
+   * retuneAudio() and syncRemote()'s doc for where that actually happens.
    */
   applyTransform(state: PlacedObject): void {
     const entry = this.objects.get(state.id)
@@ -335,6 +392,25 @@ export class WorldObjects {
     // reasoning as commitTransform for why restHeading updates here too.
     entry.npc?.setRestHeading(state.rotationY)
     if (state.npc) entry.npc?.setNoticeRange(state.npc.radius)
+  }
+
+  /**
+   * Retunes an already-built 'video'/'audio' placement's LIVE positional
+   * audio (volume + audible range) in place — the explicit counterpart to
+   * applyTransform()'s deliberate no-op on the sound node (see its doc).
+   * Called only from syncRemote(), and only when volume/audibleRange
+   * actually changed, so this never runs on the per-frame script-transform
+   * path (WorldScriptBridge -> applyTransform) and never runs on an edit
+   * that touched some other field only (a script attach, a move). A no-op
+   * for an id that isn't tracked, or one with no live PositionalAudio (any
+   * kind but 'video'/'audio', or the world had no AudioListener when it was
+   * built — see attachPositionalAudio).
+   */
+  retuneAudio(id: string, volume?: number, audibleRange?: number): void {
+    const sound = this.objects.get(id)?.sound
+    if (!sound) return
+    sound.setVolume(volume ?? DEFAULT_VOLUME)
+    sound.setRefDistance(audibleRange ?? AUDIO_REF_DISTANCE)
   }
 
   /**
@@ -448,6 +524,11 @@ export class WorldObjects {
    * the world has no listener. The PositionalAudio is parented to the
    * object's own scene node, so the sound tracks it if it moves, and is torn
    * down when playback ends.
+   *
+   * Deliberately calls attachPositionalAudio with no volume/audibleRange —
+   * this plays a one-shot effect (or, via voiceAnchor, an NPC's speech), not
+   * the object's own placed media, so it must not inherit that placement's
+   * PlacedObject.volume/audibleRange (see attachPositionalAudio's doc).
    */
   playOneShot(objectId: string, bytes: Uint8Array, mime?: string): void {
     const entry = this.objects.get(objectId)
@@ -516,15 +597,29 @@ export class WorldObjects {
 
   // --- builders -------------------------------------------------------------
 
-  /** Dispatch on kind: a glTF scene, an image/video panel, an audio marker, or an NPC's VRM avatar. */
-  private build(bytes: Uint8Array, kind: PlacedKind, mime?: string, name?: string): Promise<Built> {
+  /**
+   * Dispatch on kind: a glTF scene, an image/video panel, an audio marker, or
+   * an NPC's VRM avatar. `volume`/`audibleRange` only ever reach the two
+   * kinds that actually play positional audio (see buildVideo/buildAudio);
+   * passing them through for any other kind would simply be ignored, but
+   * they are not even accepted by those builders' signatures, so there is
+   * nothing to ignore.
+   */
+  private build(
+    bytes: Uint8Array,
+    kind: PlacedKind,
+    mime?: string,
+    name?: string,
+    volume?: number,
+    audibleRange?: number,
+  ): Promise<Built> {
     switch (kind) {
       case 'image':
         return this.buildImage(bytes, mime)
       case 'video':
-        return this.buildVideo(bytes, mime)
+        return this.buildVideo(bytes, mime, volume, audibleRange)
       case 'audio':
-        return this.buildAudio(bytes, mime)
+        return this.buildAudio(bytes, mime, volume, audibleRange)
       case 'npc':
         return this.buildNpc(bytes, name ?? '')
       default:
@@ -598,7 +693,12 @@ export class WorldObjects {
     }
   }
 
-  private async buildVideo(bytes: Uint8Array, mime?: string): Promise<Built> {
+  private async buildVideo(
+    bytes: Uint8Array,
+    mime?: string,
+    volume?: number,
+    audibleRange?: number,
+  ): Promise<Built> {
     const url = blobUrl(bytes, mime)
     let video: HTMLVideoElement
     try {
@@ -612,12 +712,13 @@ export class WorldObjects {
     texture.colorSpace = THREE.SRGBColorSpace
     const aspect = ratioOf(video.videoWidth, video.videoHeight)
     const panel = makePanel(texture, aspect)
-    const sound = this.attachPositionalAudio(panel.object, video)
+    const sound = this.attachPositionalAudio(panel.object, video, volume, audibleRange)
     startMedia(video, this.listener)
 
     return {
       object: panel.object,
       size: panel.size,
+      sound: sound ?? undefined,
       cleanup: () => {
         stopMedia(video, url)
         sound?.disconnect()
@@ -626,7 +727,12 @@ export class WorldObjects {
     }
   }
 
-  private async buildAudio(bytes: Uint8Array, mime?: string): Promise<Built> {
+  private async buildAudio(
+    bytes: Uint8Array,
+    mime?: string,
+    volume?: number,
+    audibleRange?: number,
+  ): Promise<Built> {
     const url = blobUrl(bytes, mime)
     let audio: HTMLAudioElement
     try {
@@ -637,13 +743,14 @@ export class WorldObjects {
     }
 
     const marker = makeSpeakerMarker()
-    const sound = this.attachPositionalAudio(marker.object, audio)
+    const sound = this.attachPositionalAudio(marker.object, audio, volume, audibleRange)
     startMedia(audio, this.listener)
 
     return {
       object: marker.object,
       size: marker.size,
       pulse: marker.pulse,
+      sound: sound ?? undefined,
       cleanup: () => {
         stopMedia(audio, url)
         sound?.disconnect()
@@ -680,16 +787,27 @@ export class WorldObjects {
    * Route a media element's sound through a PositionalAudio parented to the
    * object, so it attenuates with distance from the camera's listener. Returns
    * null when the world has no listener (audio simply stays silent).
+   *
+   * `volume`/`audibleRange` are a PLACEMENT's own PlacedObject.volume/
+   * audibleRange (kind 'audio'/'video') — buildVideo/buildAudio are the only
+   * callers that ever pass them. playOneShot (script `sound` effects, NPC
+   * speech) deliberately calls this with neither argument: those sounds are
+   * not placements and must not inherit a placement's mix, so they always get
+   * DEFAULT_VOLUME/AUDIO_REF_DISTANCE here, same as every placement did
+   * before these fields existed.
    */
   private attachPositionalAudio(
     parent: THREE.Object3D,
     element: HTMLMediaElement,
+    volume?: number,
+    audibleRange?: number,
   ): THREE.PositionalAudio | null {
     if (!this.listener) return null
     const sound = new THREE.PositionalAudio(this.listener)
     sound.setMediaElementSource(element)
-    sound.setRefDistance(AUDIO_REF_DISTANCE)
+    sound.setRefDistance(audibleRange ?? AUDIO_REF_DISTANCE)
     sound.setRolloffFactor(AUDIO_ROLLOFF)
+    sound.setVolume(volume ?? DEFAULT_VOLUME)
     parent.add(sound)
     return sound
   }
@@ -701,6 +819,7 @@ export class WorldObjects {
       cleanup: built.cleanup,
       pulse: built.pulse,
       npc: built.npc,
+      sound: built.sound,
     })
     this.scene.add(built.object)
   }
@@ -966,6 +1085,18 @@ function clamp(value: number, min: number, max: number): number {
  * valid binding — see net/protocol.ts's decode). Without this, that update
  * would hit the exact same "nothing changed" fast path that once swallowed
  * script attachment silently.
+ *
+ * `volume`/`audibleRange` are included for bookkeeping correctness (so
+ * `entry.state` — what list() hands back for rebroadcast/save — never goes
+ * stale relative to what a peer actually sent), same as every other non-
+ * geometry field above. This flag alone does not retune an ALREADY-PLAYING
+ * placement's live PositionalAudio — applyTransform() only ever writes these
+ * onto the plain state object, never onto the sound node (see its own doc
+ * for why: it also runs every frame for a script-moved object via
+ * WorldScriptBridge, so it must stay cheap). syncRemote() is what actually
+ * retunes: it compares the OLD volume/audibleRange (read off `entry.state`
+ * before applyTransform overwrites it) against the incoming ones, and calls
+ * the explicit retuneAudio() when they differ — see its doc and syncRemote's.
  */
 function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
   return (
@@ -978,6 +1109,8 @@ function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
     a.kind !== b.kind ||
     a.mime !== b.mime ||
     a.placedBy !== b.placedBy ||
+    a.volume !== b.volume ||
+    a.audibleRange !== b.audibleRange ||
     JSON.stringify(a.script) !== JSON.stringify(b.script) ||
     JSON.stringify(a.trigger) !== JSON.stringify(b.trigger) ||
     JSON.stringify(a.npc) !== JSON.stringify(b.npc)

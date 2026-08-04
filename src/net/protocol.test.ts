@@ -6,6 +6,8 @@ import { NPC_LIMITS } from '../npc/limits'
 import type { ScriptGraph, ScriptInput, TriggerVolume, UiNode } from '../script/ir'
 import {
   ANNOUNCE_ROOMS_MAX,
+  AUDIBLE_RANGE_MAX,
+  AUDIBLE_RANGE_MIN,
   CID_MAX_LEN,
   EFFECTS_MAX,
   FALLBACK_NAME,
@@ -32,6 +34,8 @@ import {
   parseTriggerVolume,
   sanitizeProfile,
   unwrapEnvelope,
+  VOLUME_MAX,
+  VOLUME_MIN,
 } from './protocol'
 
 function frame(kind: number, body?: unknown): Uint8Array {
@@ -737,6 +741,61 @@ describe('NPC binding validation', () => {
     )
     if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
     expect(msg.objects[0].npc).toEqual({ characterId: 'char-1', radius: 6 })
+  })
+})
+
+describe('placement volume / audibleRange validation', () => {
+  const base = {
+    id: 'a',
+    cid: 'c',
+    name: 'Speaker',
+    x: 0,
+    y: 0,
+    z: 0,
+    rotationY: 0,
+    scale: 1,
+    kind: 'audio' as const,
+  }
+
+  it('round-trips volume and audibleRange', () => {
+    const objects: PlacedObject[] = [{ ...base, volume: 0.5, audibleRange: 12 }]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('clamps volume and audibleRange a peer set beyond the upper bounds', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, { objects: [{ ...base, volume: 999, audibleRange: 999999 }] }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].volume).toBe(VOLUME_MAX)
+    expect(msg.objects[0].audibleRange).toBe(AUDIBLE_RANGE_MAX)
+  })
+
+  it('clamps volume and audibleRange a peer set below the lower bounds', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, { objects: [{ ...base, volume: -5, audibleRange: -5 }] }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].volume).toBe(VOLUME_MIN)
+    expect(msg.objects[0].audibleRange).toBe(AUDIBLE_RANGE_MIN)
+  })
+
+  it('drops only a malformed volume/audibleRange, keeping the rest of the placement', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, { objects: [{ ...base, volume: 'loud', audibleRange: 'far' }] }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(1)
+    expect(msg.objects[0].volume).toBeUndefined()
+    expect(msg.objects[0].audibleRange).toBeUndefined()
+    expect(msg.objects[0].name).toBe('Speaker')
+  })
+
+  it('omits volume/audibleRange entirely when absent (placements from before these fields existed)', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [base] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].volume).toBeUndefined()
+    expect(msg.objects[0].audibleRange).toBeUndefined()
   })
 })
 

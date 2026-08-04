@@ -23,6 +23,8 @@ import type { TranslationKey } from '../i18n'
 import { editableObjectCount, type GameOverlayProps } from './uiContract'
 import { BehaviourDialog } from './BehaviourDialog'
 import { ChatPanel } from './ChatPanel'
+import { DropImportOverlay } from './DropImportOverlay'
+import { routeDroppedFile, type DropImportRoute } from './dropImport'
 import { EditToolbar } from './EditToolbar'
 import { GraphEditor } from './GraphEditor'
 import { MobileControls } from './MobileControls'
@@ -83,6 +85,16 @@ export function GameOverlay(props: GameOverlayProps) {
   // Delete/Enter/V at the window-capture level so they can never reach the
   // handler below or the object being edited — see GraphEditor.tsx's header).
   const [graphEditorOpen, setGraphEditorOpen] = useState(false)
+  // Drag-and-drop file import: dropImport.ts has already routed the file the
+  // instant it landed (name/MIME only — see that module's header for why),
+  // and this holds the result for confirmation rather than acting on it —
+  // equipping/placing/replacing the room's world are all consequential
+  // enough that a stray drop shouldn't do any of them silently. Cleared the
+  // moment the user picks an action or cancels (see the handlers below);
+  // GameOverlay only mounts once joined, so there is no separate "must be
+  // joined" gate to add here — only the world-lock check the listener itself
+  // makes, mirroring every other world-affecting control in this file.
+  const [dropImport, setDropImport] = useState<{ file: File; route: DropImportRoute } | null>(null)
   const selected = props.selectedObject
   /** Is there anything to edit? Gates the HUD toggle and the E shortcut. */
   const canEdit = editableObjectCount(props) > 0
@@ -116,6 +128,12 @@ export function GameOverlay(props: GameOverlayProps) {
   describeOpenRef.current = describeOpen
   const graphEditorOpenRef = useRef(graphEditorOpen)
   graphEditorOpenRef.current = graphEditorOpen
+  const dropImportRef = useRef(dropImport)
+  dropImportRef.current = dropImport
+  // Read by the window-level drop listener below, which is registered once
+  // on mount — must never see a stale worldPolicy.
+  const worldPolicyRef = useRef(props.worldPolicy)
+  worldPolicyRef.current = props.worldPolicy
 
   // Neither dialog ever opens while not editing a selection; if either goes
   // away out from under one (leaving edit mode, the selection being cleared)
@@ -154,6 +172,17 @@ export function GameOverlay(props: GameOverlayProps) {
     }
     const onKey = (e: KeyboardEvent) => {
       if (isEditableFocused()) return
+      // The drop-import confirm prompt takes the same top billing describeOpen
+      // does below, for the same reason: it can appear over any other state
+      // (edit mode, an open panel, mid-menu), and Delete/V/E/Enter reaching
+      // through it to whatever is behind it would be surprising.
+      if (dropImportRef.current) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setDropImport(null)
+        }
+        return
+      }
       // The describe dialog is modal over edit mode: while it's open (and
       // focus isn't in its own text field — that case already returned
       // above), Escape closes IT rather than falling through to "leave edit
@@ -239,8 +268,10 @@ export function GameOverlay(props: GameOverlayProps) {
   // input) is active — the predecessor's InputMode.UIOnly. Driven through the
   // same setInputEnabled path as chat focus (also releases pointer lock).
   useEffect(() => {
-    gateInputRef.current(menuOpen || panel !== null || chatFocused || describeOpen || graphEditorOpen)
-  }, [menuOpen, panel, chatFocused, describeOpen, graphEditorOpen])
+    gateInputRef.current(
+      menuOpen || panel !== null || chatFocused || describeOpen || graphEditorOpen || dropImport !== null,
+    )
+  }, [menuOpen, panel, chatFocused, describeOpen, graphEditorOpen, dropImport])
 
   const openPanel = (id: PanelId) => {
     setPanel(id)
@@ -253,6 +284,90 @@ export function GameOverlay(props: GameOverlayProps) {
   }
 
   const closePanel = () => setPanel(null)
+
+  // Window-level drag-and-drop import. Registered once on mount (reads
+  // worldPolicy through the ref above, same reasoning as every other
+  // once-registered listener in this file) and torn down on unmount, which
+  // for this component only ever happens by leaving the room — so there is
+  // no separate cleanup path to worry about beyond the one below.
+  useEffect(() => {
+    // A drop landing on (or inside) an <input> — the panels' own hidden
+    // file-picker inputs (CatalogPanel.tsx) chief among them — must be left
+    // to that input's native handling, not hijacked into this overlay too.
+    const isInputTarget = (target: EventTarget | null) => target instanceof HTMLInputElement
+    // dataTransfer.files is reliably populated only once 'drop' fires (most
+    // browsers withhold it during dragover for privacy reasons), but `types`
+    // is available throughout — checking it here is what lets a dragged link
+    // or text selection fall through to the browser's own default handling
+    // instead of being preventDefault()'d for no reason.
+    const isFileDrag = (dt: DataTransfer | null) => !!dt && Array.from(dt.types).includes('Files')
+    const onDragOver = (e: DragEvent) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (isInputTarget(e.target)) return
+      if (!isFileDrag(e.dataTransfer)) return
+      e.preventDefault()
+    }
+    const onDrop = (e: DragEvent) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (isInputTarget(e.target)) return
+      const file = e.dataTransfer?.files?.[0]
+      if (!file) return // a dragged link or text selection, not a file — nothing to import
+      e.preventDefault()
+      setDropImport({ file, route: routeDroppedFile(file.name, file.type) })
+    }
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [])
+
+  /**
+   * "Add to World": does whatever route.worldVerb names. Avatar equips via
+   * uploadAvatar (which already both catalogs and equips in one call — see
+   * its own doc); world and object both need the freshly-saved cid to chain
+   * into applyWorld/placeObject, which is exactly why uploadWorld/
+   * uploadObject now resolve it instead of void.
+   */
+  const dropAddToWorld = () => {
+    if (!dropImport || !dropImport.route.recognized) return
+    const { file, route } = dropImport
+    setDropImport(null)
+    if (route.worldVerb === 'equip') {
+      props.onUploadAvatar(file)
+    } else if (route.worldVerb === 'setEnvironment') {
+      void props.onUploadWorld(file).then((cid) => {
+        if (cid) props.onApplyWorld(cid)
+      })
+    } else {
+      void props.onUploadObject(file).then((cid) => {
+        if (cid) props.onPlaceObject(cid)
+      })
+    }
+  }
+
+  /** Only reachable for a route with `alsoValidAsWorld` (a bare glTF/GLB) — see DropImportOverlay's own gating on that flag. Uploads through the WORLD catalog rather than the object one, then applies it. */
+  const dropSetAsWorldEnvironment = () => {
+    if (!dropImport) return
+    const { file } = dropImport
+    setDropImport(null)
+    void props.onUploadWorld(file).then((cid) => {
+      if (cid) props.onApplyWorld(cid)
+    })
+  }
+
+  /** Catalogs the file and stops there — no equip/apply/place. */
+  const dropSaveToCatalogOnly = () => {
+    if (!dropImport || !dropImport.route.recognized) return
+    const { file, route } = dropImport
+    setDropImport(null)
+    if (route.catalogKind === 'avatar') props.onUploadAvatarToCatalog(file)
+    else if (route.catalogKind === 'world') void props.onUploadWorld(file)
+    else void props.onUploadObject(file)
+  }
+
+  const closeDropImport = () => setDropImport(null)
 
   const micState = props.micState
   const voiceClass =
@@ -372,6 +487,8 @@ export function GameOverlay(props: GameOverlayProps) {
           onSetObjectScript={props.onSetObjectScript}
           onSetNpcRadius={props.onSetNpcRadius}
           onSetNpcVoice={props.onSetNpcVoice}
+          onSetObjectVolume={props.onSetObjectVolume}
+          onSetObjectAudibleRange={props.onSetObjectAudibleRange}
           scriptProblems={props.scriptProblems}
           onDescribeBehaviour={() => setDescribeOpen(true)}
           onEditGraph={() => setGraphEditorOpen(true)}
@@ -414,6 +531,23 @@ export function GameOverlay(props: GameOverlayProps) {
           onClose={() => setGraphEditorOpen(false)}
         />
       )}
+
+      {/* A file dropped anywhere on the app (window-level listener above),
+          held for confirmation before it becomes anything — see dropImport's
+          own state comment. */}
+      {dropImport &&
+        (dropImport.route.recognized ? (
+          <DropImportOverlay
+            fileName={dropImport.file.name}
+            route={dropImport.route}
+            onAddToWorld={dropAddToWorld}
+            onSetAsWorldEnvironment={dropImport.route.alsoValidAsWorld ? dropSetAsWorldEnvironment : undefined}
+            onSaveToCatalogOnly={dropSaveToCatalogOnly}
+            onCancel={closeDropImport}
+          />
+        ) : (
+          <DropImportOverlay fileName={dropImport.file.name} route={dropImport.route} onCancel={closeDropImport} />
+        ))}
 
       {/* Windows opened by in-world scripts (ui/showWindow), reprojected every
           frame so they never lag the object they follow. Takes no pointer

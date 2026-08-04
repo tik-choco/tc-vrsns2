@@ -150,6 +150,13 @@ export const de: Dict = {
   'objects.placedBy': 'platziert von {name}',
   'objects.orphans': '{count} stammen von Leuten, die gegangen sind. Sie bleiben, bis du den Raum verlässt, und niemand kann sie bearbeiten.',
 
+  // Lautstärke / Hörweite — nur bei Audio- und Video-Objekten, eingestellt
+  // über die Bearbeitungsleiste (EditToolbar.tsx)
+  'objects.volume': 'Lautstärke',
+  'objects.volumeValue': '{n}%',
+  'objects.range': 'Hörweite',
+  'objects.rangeValue': '{n} m',
+
   // Drop-Import-Overlay — eine Datei irgendwo in der App fallenlassen
   'dropImport.title': 'Das zu deiner Welt hinzufügen?',
   'dropImport.descAvatar': 'Das wird als dein Avatar getragen.',
