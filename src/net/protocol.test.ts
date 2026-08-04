@@ -8,6 +8,10 @@ import {
   ANNOUNCE_ROOMS_MAX,
   AUDIBLE_RANGE_MAX,
   AUDIBLE_RANGE_MIN,
+  BOX_SIZE_MAX,
+  BOX_SIZE_MIN,
+  BOX_TILE_MAX,
+  BOX_TILE_MIN,
   CID_MAX_LEN,
   EFFECTS_MAX,
   FALLBACK_NAME,
@@ -742,6 +746,58 @@ describe('NPC binding validation', () => {
     if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
     expect(msg.objects[0].npc).toEqual({ characterId: 'char-1', radius: 6 })
   })
+
+  it('clamps approachRange a peer set beyond the runtime bounds, both ends', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, approachRange: 9999 } },
+          {
+            ...base,
+            id: 'b',
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, approachRange: -50 },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.approachRange).toBe(NPC_LIMITS.maxApproachRange)
+    expect(msg.objects[1].npc?.approachRange).toBe(NPC_LIMITS.minApproachRange)
+  })
+
+  it('leaves approachRange absent when missing or garbage, unlike radius it has no default', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6 } },
+          {
+            ...base,
+            id: 'b',
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, approachRange: 'near' },
+          },
+          {
+            ...base,
+            id: 'c2',
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, approachRange: NaN },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.approachRange).toBeUndefined()
+    expect(msg.objects[1].npc?.approachRange).toBeUndefined()
+    expect(msg.objects[2].npc?.approachRange).toBeUndefined()
+  })
+
+  it('round-trips approachRange', () => {
+    const objects: PlacedObject[] = [
+      { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, approachRange: 10 } },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
 })
 
 describe('placement volume / audibleRange validation', () => {
@@ -796,6 +852,164 @@ describe('placement volume / audibleRange validation', () => {
     if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
     expect(msg.objects[0].volume).toBeUndefined()
     expect(msg.objects[0].audibleRange).toBeUndefined()
+  })
+})
+
+describe('box primitive validation', () => {
+  const base = {
+    id: 'a',
+    cid: '', // legal for kind 'box' — no model bytes to point at
+    name: 'Crate',
+    x: 0,
+    y: 0,
+    z: 0,
+    rotationY: 0,
+    scale: 1,
+    kind: 'box' as const,
+  }
+
+  it('round-trips a box placement, including a texture', () => {
+    const objects: PlacedObject[] = [
+      {
+        ...base,
+        box: { sx: 2, sy: 1, sz: 3, color: '#ff8800', textureCid: 'bafyTex', textureTile: 0.5 },
+      },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('accepts an empty cid for kind box', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [{ ...base, box: { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' } }],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(1)
+    expect(msg.objects[0].cid).toBe('')
+  })
+
+  it('still rejects kind model with an empty cid, exactly as today', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { id: 'a', cid: '', name: 'n', x: 0, y: 0, z: 0, rotationY: 0, scale: 1 },
+          { id: 'b', cid: '', name: 'n', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, kind: 'model' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(0)
+  })
+
+  it('synthesizes the default appearance when box is missing entirely', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [base] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(1)
+    expect(msg.objects[0].box).toEqual({ sx: 1, sy: 1, sz: 1, color: '#9e9e9e' })
+  })
+
+  it('clamps sx/sy/sz beyond the bounds, both ends', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, box: { sx: 9999, sy: -9999, sz: 0.001, color: '#123456' } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].box).toEqual({
+      sx: BOX_SIZE_MAX,
+      sy: BOX_SIZE_MIN,
+      sz: BOX_SIZE_MIN,
+      color: '#123456',
+    })
+  })
+
+  it('defaults sx/sy/sz to 1 when missing or mistyped', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [{ ...base, box: { sy: 'wide', color: '#123456' } }],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].box).toEqual({ sx: 1, sy: 1, sz: 1, color: '#123456' })
+  })
+
+  it('falls back to the default grey for a bad or missing color', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, box: { sx: 1, sy: 1, sz: 1, color: 'red' } },
+          { ...base, id: 'b', box: { sx: 1, sy: 1, sz: 1, color: '#ff88' } },
+          { ...base, id: 'c2', box: { sx: 1, sy: 1, sz: 1 } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    for (const object of msg.objects) expect(object.box?.color).toBe('#9e9e9e')
+  })
+
+  it('drops an over-long textureCid while the rest of the appearance survives', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          {
+            ...base,
+            box: { sx: 1, sy: 1, sz: 1, color: '#123456', textureCid: 'x'.repeat(CID_MAX_LEN + 1), textureTile: 2 },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].box?.textureCid).toBeUndefined()
+    expect(msg.objects[0].box?.textureTile).toBe(2)
+    expect(msg.objects[0].box?.sx).toBe(1)
+  })
+
+  it('clamps textureTile beyond the bounds and drops it when malformed', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, box: { sx: 1, sy: 1, sz: 1, color: '#123456', textureTile: 999 } },
+          { ...base, id: 'b', box: { sx: 1, sy: 1, sz: 1, color: '#123456', textureTile: -5 } },
+          { ...base, id: 'c2', box: { sx: 1, sy: 1, sz: 1, color: '#123456', textureTile: 'wide' } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].box?.textureTile).toBe(BOX_TILE_MAX)
+    expect(msg.objects[1].box?.textureTile).toBe(BOX_TILE_MIN)
+    expect(msg.objects[2].box?.textureTile).toBeUndefined()
+  })
+
+  it('synthesizes the default appearance when box is present but not an object', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, box: 'nonsense' }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].box).toEqual({ sx: 1, sy: 1, sz: 1, color: '#9e9e9e' })
+  })
+
+  it('never carries a box field for a non-box kind', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          {
+            id: 'a',
+            cid: 'c',
+            name: 'prop',
+            x: 0,
+            y: 0,
+            z: 0,
+            rotationY: 0,
+            scale: 1,
+            kind: 'model',
+            box: { sx: 2, sy: 2, sz: 2, color: '#ff0000' },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].box).toBeUndefined()
   })
 })
 

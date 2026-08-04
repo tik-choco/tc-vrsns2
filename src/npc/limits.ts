@@ -6,6 +6,9 @@ export const NPC_LIMITS = {
   minRadius: 1,
   maxRadius: 30,
   defaultRadius: 6,
+  /** Bounds for NpcBinding.approachRange — how close a player must get before the owning peer walks the NPC toward them. No default: absent means the feature is off, not "use some fallback distance". */
+  minApproachRange: 1,
+  maxApproachRange: 30,
   /** Per-NPC minimum gap between replies. */
   cooldownMs: 3000,
   /** Conversation turns (user+assistant pairs) kept per NPC. */
