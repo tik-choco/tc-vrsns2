@@ -5,9 +5,10 @@
 // walk/run remain the fallback whenever fetch/parse/retarget fails.
 //
 // Retargeting (adapted from tc-vrsns AvatarRuntime.retargetAnimationClip):
-// the JSONs were baked against a VRoid VRM 0.x whose raw bones have identity
-// rest rotations, so their local-space quaternions are already "normalized
-// rig" rotations — but expressed in the VRM 0.x frame (the model 180deg
+// the JSONs were baked against a VRM 0.x model whose raw bones — the
+// `J_Bip_*` names keyed below — have identity rest rotations, so their
+// local-space quaternions are already "normalized rig" rotations, just
+// expressed in the VRM 0.x frame (the model 180deg
 // around Y from VRM 1.0 / glTF +Z-forward). Our rig binds clips to
 // vrm.humanoid.getNormalizedBoneNode(...) names in the VRM 1.0 convention
 // (we apply VRMUtils.rotateVRM0 at load and conjugate procedural clips for
@@ -29,7 +30,13 @@ const SOURCE_FILES: Record<BakedState, string> = {
 /** Hips rest height the clips were baked at (same assumption as tc-vrsns). */
 const SOURCE_HIPS_Y = 1.0
 
-const VROID_TO_VRM_BONE: Record<string, VRMHumanBoneName> = {
+/**
+ * Raw bone name -> VRM humanoid bone. The keys are the `J_Bip_*` names the
+ * baked JSONs' tracks are addressed by, which is the naming convention the
+ * source model was exported with; a track whose bone isn't listed here is a
+ * non-humanoid one (hair, skirt, root) and is dropped during retargeting.
+ */
+const J_BIP_TO_VRM_BONE: Record<string, VRMHumanBoneName> = {
   J_Bip_C_Hips: 'hips',
   J_Bip_C_Spine: 'spine',
   J_Bip_C_Chest: 'chest',
@@ -89,7 +96,7 @@ export function loadBakedSourceClips(): Promise<BakedSources> {
 }
 
 /**
- * Retarget a baked VRoid clip onto one VRM's normalized humanoid rig.
+ * Retarget one baked clip onto a VRM's normalized humanoid rig.
  * Returns null if nothing usable could be mapped (caller keeps procedural).
  */
 export function retargetBakedClip(vrm: VRM, source: THREE.AnimationClip, name: string): THREE.AnimationClip | null {
@@ -107,7 +114,7 @@ export function retargetBakedClip(vrm: VRM, source: THREE.AnimationClip, name: s
       if (dot < 0) continue
       const boneName = track.name.slice(0, dot)
       const property = track.name.slice(dot + 1)
-      const vrmBone = VROID_TO_VRM_BONE[boneName]
+      const vrmBone = J_BIP_TO_VRM_BONE[boneName]
       if (!vrmBone) continue // non-humanoid (hair/skirt/root) tracks: drop
       const node = vrm.humanoid.getNormalizedBoneNode(vrmBone)
       if (!node) continue
