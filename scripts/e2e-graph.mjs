@@ -144,10 +144,21 @@ async function uploadAndPlace(page) {
 }
 
 /** Placing enters edit mode with the new object selected; the canvas clicks
- *  below are the fallback for when the selection didn't take. */
+ *  below are the fallback for when the selection didn't take.
+ *
+ *  Note the `select.` tag qualifier on every `.edit-bar-script-select` locator
+ *  in this file: EditToolbar.tsx's new exact-size field reuses that same
+ *  class name on an `<input type="number">` (placed right before the actual
+ *  Behavior `<select>`), so the bare class alone now matches two elements and
+ *  Playwright's strict mode throws — which every `.catch(() => false)` below
+ *  quietly turned into "not selected", even though placing had, in fact,
+ *  selected the object immediately. The tag qualifier is enough to pick the
+ *  `<select>` back out uniquely for every scenario here (none place an
+ *  npc/audio/video placement, so no other same-classed `<select>` is ever on
+ *  screen at the same time). */
 async function enterEditModeAndSelect(page) {
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
-  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+  if (await page.locator('select.edit-bar-script-select').isEnabled().catch(() => false)) {
     log('placing selected the object — no canvas click needed')
     return
   }
@@ -162,7 +173,7 @@ async function enterEditModeAndSelect(page) {
   ]
   for (const [dx, dy] of offsets) {
     await page.mouse.click(cx + dx, cy + dy)
-    const selected = await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)
+    const selected = await page.locator('select.edit-bar-script-select').isEnabled().catch(() => false)
     if (selected) {
       log(`selected placed object via click at offset (${dx}, ${dy})`)
       return
@@ -184,13 +195,13 @@ async function placeAndSelectObject(page, room, name) {
 
 /** Attaches a built-in preset via the edit toolbar's Behavior picker. */
 async function attachPreset(page, presetId) {
-  await page.locator('.edit-bar-script-select').selectOption(presetId)
+  await page.locator('select.edit-bar-script-select').selectOption(presetId)
   await sleep(200)
 }
 
 /** Opens GraphEditor via the picker's "Edit graph…" entry. */
 async function openGraphEditor(page) {
-  await page.locator('.edit-bar-script-select').selectOption('editGraph')
+  await page.locator('select.edit-bar-script-select').selectOption('editGraph')
   await page.locator('.graph-editor-panel').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
 }
 
