@@ -827,26 +827,36 @@ body {
   }
 }
 
-/* --- Chat (R7) --------------------------------------------------------
+/* --- Chat (R7/R8) -------------------------------------------------------
    Two surfaces, matching ../tc-chat's own split between a full message
    history and passing arrival notices (see that app's ChatWindow/Avatar for
    the bubble anatomy this borrows: an identity chip, the sender's name, a
    speech-bubble shape):
-     - .chat-panel is the persistent history log — every message since
-       joining, opened by focusing .chat-input (Enter in GameOverlay.tsx,
-       the mobile chat button, or a direct click all funnel through the same
-       real DOM focus event; see ChatPanel.tsx's handleFocus) and staying
-       open through chatting or moving around. Only GameOverlay's Escape
-       handler or ChatPanel's own Esc/empty-Enter close it — never blur
-       alone, so it does NOT disappear the moment the composer slides away.
-     - .chat-toasts is the top-right transient notification stack — the OLD
-       always-on corner log's spot, now reserved for arrivals nobody has
-       looked at yet. Suppressed outright while .chat-panel is open (it
-       already shows them), and each entry fades itself out on its own timer
-       (ChatPanel.tsx), independent of its neighbors.
-     - .chat-form is unchanged in spirit from before: a bottom-left composer
-       that slides in on focus and back out on blur, independent of whether
-       .chat-panel above it is open or closed.
+     - .chat-panel is ONE card holding both the persistent history log and
+       the composer beneath it (R8: these used to be two disjoint floating
+       pieces — a top-right panel and a bottom-left input — that read as
+       unrelated; now .chat-form is a normal flex child docked to this
+       panel's own bottom edge, see .chat-form below). Opened by focusing
+       .chat-input (Enter in GameOverlay.tsx, the mobile chat button, or a
+       direct click all funnel through the same real DOM focus event; see
+       ChatPanel.tsx's handleFocus) and staying open through chatting or
+       moving around. Only GameOverlay's Escape handler or ChatPanel's own
+       Esc/empty-Enter close it — never blur alone, so it does NOT disappear
+       the moment the input itself loses focus.
+       The card is ALWAYS mounted (ChatPanel.tsx never conditionally renders
+       it) so .chat-input stays a real, focusable element even before the
+       panel has ever been opened — focusSignal calls .focus() on it
+       directly. Open/closed is therefore a pure CSS state (see
+       .chat-panel--open below), not a mount/unmount — only the history half
+       (header + message list) still mounts/unmounts with `logOpen`, which is
+       what lets the pop-in animation replay on every open.
+     - .chat-toasts is the top-right transient notification stack, in the
+       exact spot .chat-panel occupies (the closed .chat-panel is fully
+       transparent to clicks and paints nothing, see below, so there is no
+       conflict) — reserved for arrivals nobody has looked at yet. Suppressed
+       outright while .chat-panel is open (it already shows them), and each
+       entry fades itself out on its own timer (ChatPanel.tsx), independent
+       of its neighbors.
    .chat-msg / .chat-name / .chat-text are read directly by several e2e
    harnesses (scripts/e2e-npc.mjs, e2e-bubble.mjs, e2e-npc-edit.mjs,
    e2e-sync.mjs) — those three selectors must keep existing and keep meaning
@@ -871,6 +881,15 @@ body {
   backdrop-filter: blur(calc(var(--blur) + 4px));
   overflow: hidden;
   z-index: 5;
+  /* Closed by default: fully invisible and click-through (see the header
+     comment above for why this is a CSS state, not a mount/unmount). No
+     transition on the way OUT — matches the old conditionally-rendered
+     panel's instant disappearance; only the way IN is animated, below. */
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-panel--open {
+  pointer-events: auto;
   animation: modal-in var(--dur-med) var(--ease-out) both;
 }
 .chat-panel-header {
@@ -1005,33 +1024,20 @@ body {
   border-inline-end: 3px solid var(--accent-line);
   background: linear-gradient(135deg, var(--accent-tint-strong), var(--glass-1));
 }
+/* R8: no longer an independent floating widget positioned/animated on its
+   own (that's what used to put it bottom-left while .chat-panel sat
+   top-right) — a plain flex child docked to the bottom of .chat-panel
+   itself. It has no hidden state of its own: visibility rides entirely on
+   the panel's opacity/pointer-events (see .chat-panel / .chat-panel--open
+   above), which also means no RTL-specific transform is needed here any
+   more — .chat-panel's own inset-inline-end already mirrors correctly. */
 .chat-form {
-  position: absolute;
-  inset-block-end: calc(var(--sp-4) + var(--sa-b));
-  inset-inline-start: calc(var(--sp-4) + var(--sa-l));
-  inline-size: min(22rem, calc(100vw - 2rem));
+  flex: none;
   display: flex;
   gap: 0.4rem;
   align-items: center;
-  z-index: 6;
-  transform: translateX(-100%);
-  opacity: 0;
-  pointer-events: none;
-  transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out);
-}
-/* Arabic is this app's one RTL locale (see i18n/index.ts, which flips
-   <html dir>) — inset-inline-start above already rests the composer at the
-   document's start edge (the physical right, in RTL). Without this,
-   translateX(-100%) would still slide in from the physical left every time,
-   crossing the screen behind its own resting spot instead of entering from
-   the edge it actually docks against. */
-:dir(rtl) .chat-form {
-  transform: translateX(100%);
-}
-.chat-form--open {
-  transform: translateX(0);
-  opacity: 1;
-  pointer-events: auto;
+  padding: 0.6rem 0.85rem;
+  border-block-start: 1px solid var(--border);
 }
 .chat-input {
   flex: 1;
@@ -1781,8 +1787,11 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
   }
   .chat-panel,
-  .chat-toasts,
-  .chat-form {
+  .chat-toasts {
+    /* .chat-form is no longer sized independently — it's a flex child that
+       stretches to fill .chat-panel's own inline-size (see .chat-form's own
+       comment), so shrinking the panel here already shrinks the composer
+       with it. */
     inline-size: calc(100vw - 2rem);
   }
   .btn-text-collapse,
@@ -1820,10 +1829,13 @@ body {
    is the .m-meta button column, which also docks top-right (see .m-meta
    below): a plain inline-size: auto lets either shrink to whatever room
    that clearance leaves rather than risk overflowing the opposite edge on
-   narrow phones. .chat-form is left at its own default bottom-left position
-   even here — focusing it to type triggers the on-screen keyboard on real
-   devices, which already dominates that half of the screen, so hand-tuning
-   the composer's rest position around the joystick specifically buys little. */
+   narrow phones. R8 note: .chat-form now lives INSIDE .chat-panel (see that
+   class's own comment) rather than resting bottom-left on its own, so
+   focusing it to type moves with the panel, up here clear of the joystick,
+   instead of sitting where the on-screen keyboard was going to cover it
+   anyway — not independently re-verified on a real device against every
+   keyboard height, so if a phone's keyboard turns out to cover the input
+   itself, revisit this block's offsets first. */
 @media (pointer: coarse) {
   .chat-panel,
   .chat-toasts {
