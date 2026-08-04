@@ -3,6 +3,7 @@ import { App } from './app'
 import './style.css'
 import { writeAppManifest } from './lib/appManifest.js'
 import { BUS_VERSION } from './lib/sharedBus.js'
+import { publishSpaceSnapshot } from './storage/catalog.js'
 import { applyTheme, loadTheme } from './ui/theme.js'
 
 // Applied synchronously before the first paint so there's no flash of the
@@ -15,12 +16,16 @@ render(<App />, document.getElementById('app')!)
 writeAppManifest({
   app: 'tc-vrsns2',
   busVersion: BUS_VERSION,
-  publishes: [],
+  publishes: ['vrsns2-space-inbox'],
   consumes: ['character-index'],
   reads: [
-    'tc-storage-snapshot-v1',
     'tc-storage-did-identity-v1',
     'tc-chat-did-identity-v1',
     'tc-vrm-viewer-did-identity-v1',
   ],
 })
+
+// The space snapshot otherwise only refreshes on a catalog mutation, so a
+// user whose catalog predates the topic would stay invisible to tc-storage
+// until they next add or remove something. One boot-time publish closes that.
+publishSpaceSnapshot()
