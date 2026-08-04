@@ -230,7 +230,17 @@ export class NpcView {
     // pivoting to track a passer-by reads as creepy rather than alive, and it
     // would also fight the heading the placer set with the gizmo (restHeading)
     // for as long as anyone stood nearby.
-    if (this.addressedRemaining > 0) {
+    //
+    // The countdown is FROZEN while this NPC's own utterance is still in
+    // flight (speakingRemaining > 0) — a bubble's reveal-plus-dwell time is no
+    // longer bounded by anything ADDRESSED_HOLD_SECONDS could safely outlast
+    // (a long reply can run well past it), so without this freeze the hold
+    // could lapse and the body would ease back to restHeading mid-sentence.
+    // speakingRemaining is only decremented further down in this same
+    // update(), so this check reads the PREVIOUS frame's value — at most one
+    // frame stale, which is harmless, but don't reorder the two blocks
+    // without re-checking that it stays that way.
+    if (this.addressedRemaining > 0 && this.speakingRemaining <= 0) {
       this.addressedRemaining -= delta
       if (this.addressedRemaining <= 0) this.addressedHeading = null
     }

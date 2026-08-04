@@ -57,10 +57,19 @@ export const DEFAULT_NOTICE_RANGE = 6
 
 /**
  * How long an NPC keeps its body turned toward whoever last spoke to it before
- * easing back to its resting heading. Refreshed by every further line, so this
- * only ever expires after a conversation has actually stopped — it is sized to
- * outlast one LLM round trip plus the resulting speech bubble's longest dwell
- * (bubbleDwellMs caps at 10s), so an NPC never turns away mid-sentence.
+ * easing back to its resting heading, once the NPC has actually gone quiet.
+ * Refreshed by every further line, so this only ever expires after a
+ * conversation has actually stopped.
+ *
+ * "Never turns away mid-sentence" is NOT this constant being sized against
+ * the bubble's duration — the bubble's reveal time scales with reply length
+ * (see bubbleDwellMs's doc: dwell alone is clamped to 10s, but reveal is
+ * unbounded on top of that for a long line), so no fixed number here could
+ * safely outlast it. Instead NpcView.update() freezes this countdown outright
+ * while the NPC's own utterance is still in flight (speakingRemaining > 0),
+ * so the hold can only ever start counting down after speech has stopped;
+ * this value is purely how long the body then lingers turned through the
+ * silence that follows, e.g. a pause before the next line in a conversation.
  */
 export const ADDRESSED_HOLD_SECONDS = 12
 
