@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { Send } from 'lucide-preact'
 import type { ChatMessage } from '../shared/types'
 import { useTranslation } from '../i18n'
+import { CHAT_INPUT_MAX_CHARS } from './chatLimits'
+
+// Counter only draws the eye once typing gets close to the cap — otherwise
+// it's just quiet chrome next to the send button.
+const CHAT_COUNTER_WARN_THRESHOLD = 0.8
 
 type Props = {
   messages: ChatMessage[]
@@ -72,13 +77,24 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal }: Prop
           ref={inputRef}
           class="chat-input"
           value={draft}
-          maxLength={1000}
+          maxLength={CHAT_INPUT_MAX_CHARS}
           placeholder={t('chat.placeholder')}
           onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
           onKeyDown={onKeyDown}
           onFocus={() => onFocusChange(true)}
           onBlur={() => onFocusChange(false)}
         />
+        {/* Numbers only, so this needs no locale strings — it reads the same
+            in every language. Stays quiet until the player nears the cap. */}
+        <span
+          class={
+            draft.length >= CHAT_INPUT_MAX_CHARS * CHAT_COUNTER_WARN_THRESHOLD
+              ? 'chat-counter chat-counter-warn'
+              : 'chat-counter'
+          }
+        >
+          {draft.length}/{CHAT_INPUT_MAX_CHARS}
+        </span>
         <button type="submit" class="chat-send" aria-label={t('chat.send')} disabled={!draft.trim()}>
           <Send size={16} aria-hidden="true" />
         </button>

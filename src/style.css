@@ -891,6 +891,19 @@ body {
   border-color: var(--accent-line);
   box-shadow: var(--ring);
 }
+.chat-counter {
+  flex: none;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  /* Unobtrusive by default — only the color flips below, on approach to the
+     cap, so the counter doesn't compete with the input for attention. */
+  opacity: 0.7;
+}
+.chat-counter-warn {
+  color: var(--accent-line);
+  opacity: 1;
+}
 .chat-send {
   display: inline-flex;
   align-items: center;

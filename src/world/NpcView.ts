@@ -34,7 +34,7 @@ import {
   type SpeakingLevelReading,
   type Vec3,
 } from './npcPresence'
-import { ChatBubble, NameTag } from './overheadSprites'
+import { BUBBLE_GAP_ABOVE_TAG, ChatBubble, NameTag } from './overheadSprites'
 import { loadVrmFromBytes } from './vrmLoader'
 
 /** NPCs have no PlayerProfile of their own to pull a color from, so the tag/rig tint is fixed — distinct from the default player blue and the UI's teal accent. */
@@ -64,6 +64,23 @@ export class NpcView {
   private lastLevel: SpeakingLevelReading = IDLE_SPEAKING_LEVEL
   /** True once a loudness reading has arrived for the current line — i.e. this utterance really is being spoken aloud. See showSpeech/setSpeakingLevel. */
   private voiceFeedSeen = false
+  /**
+   * Seconds left before THIS NPC's own current utterance counts as finished,
+   * for lipsync purposes only. Seeded in showSpeech from the bubble's own
+   * `totalDurationMs` (reveal time for every line PLUS the trailing dwell)
+   * rather than dwell alone — a multi-line reply takes real time to reveal,
+   * and seeding from dwell alone would stop the mouth partway through the
+   * bubble still animating out the rest of the sentence. Ticked down in
+   * update() exactly like addressedRemaining above.
+   *
+   * Tracked independently of the bubble's own visibility
+   * (`chatBubble.sprite.visible` / `isLatestActive()`) rather than read
+   * directly from either: this class needs zero knowledge of how ChatBubble
+   * times out or redraws a message, so it stays correct no matter how that
+   * internal timing evolves — it only ever reads the one number
+   * (`totalDurationMs`) the bubble publishes for exactly this purpose.
+   */
+  private speakingRemaining = 0
 
   constructor(name: string) {
     this.root = new THREE.Group()
@@ -152,6 +169,10 @@ export class NpcView {
   showSpeech(text: string): void {
     const trimmed = text.trim()
     if (!trimmed) return
+    // bubbleDwellMs(trimmed) is now only the TRAILING dwell after the last
+    // line finishes revealing (see ChatBubble.show's doc) — not this
+    // utterance's whole lifetime, so it is passed through to show() as-is
+    // and NOT used to seed speakingRemaining below.
     this.chatBubble.show(trimmed, bubbleDwellMs(trimmed))
     this.mouth = INITIAL_MOUTH_STATE
     this.lastLevel = IDLE_SPEAKING_LEVEL
@@ -161,6 +182,12 @@ export class NpcView {
     // runs the stand-in cadence; the moment a reading lands it switches to the
     // real voice and stays there for the rest of the line. See MouthMode.
     this.voiceFeedSeen = false
+    // Seed from the bubble's ACTUAL total duration (reveal + dwell) instead —
+    // read only after show() so it reflects the message just shown, not
+    // whatever was showing before. totalDurationMs is milliseconds;
+    // update() ticks in seconds (THREE.Clock delta), same units as
+    // addressedRemaining. See speakingRemaining's doc.
+    this.speakingRemaining = this.chatBubble.totalDurationMs / 1000
   }
 
   /**
@@ -224,12 +251,16 @@ export class NpcView {
     const headPos = eyePosition(origin, this.height)
     this.gaze = stepGaze(this.gaze, headPos, this.root.rotation.y, target, delta)
 
+    // Count down this NPC's own utterance deadline — see speakingRemaining's
+    // doc for why this drives lipsync instead of chatBubble.sprite.visible.
+    if (this.speakingRemaining > 0) this.speakingRemaining -= delta
+
     // A real voice outranks the bubble in BOTH directions: it keeps the mouth
     // moving if the audio outlasts the bubble's dwell, and shuts it when the
     // audio ends even though the bubble is still up.
     const mouthMode: MouthMode = this.voiceFeedSeen
       ? 'level'
-      : this.chatBubble.sprite.visible
+      : this.speakingRemaining > 0
         ? 'cadence'
         : 'closed'
     this.mouth = stepMouth(this.mouth, mouthMode, this.lastLevel, delta)
@@ -239,7 +270,10 @@ export class NpcView {
 
     const tagY = this.rig.getHeight() + 0.25
     this.nameTag.sprite.position.set(0, tagY, 0)
-    this.chatBubble.sprite.position.set(0, tagY + 0.45, 0)
+    // Anchor by the bubble's BOTTOM edge, not its centre, so it grows
+    // upward as lines stack instead of sinking into the name tag below it
+    // (see BUBBLE_GAP_ABOVE_TAG's comment for the derivation).
+    this.chatBubble.sprite.position.set(0, tagY + BUBBLE_GAP_ABOVE_TAG + this.chatBubble.worldHeight / 2, 0)
 
     return this.committedHeading !== previousCommitted ? this.committedHeading : null
   }

@@ -23,7 +23,8 @@
     "test:e2e:npc-edit": "node scripts/e2e-npc-edit.mjs",
     "test:e2e:ai-network-join": "node scripts/e2e-ai-network-join.mjs",
     "test:e2e:vault": "node scripts/e2e-vault.mjs",
-    "test:e2e:resume": "node scripts/e2e-resume.mjs"
+    "test:e2e:resume": "node scripts/e2e-resume.mjs",
+    "test:e2e:bubble": "node scripts/e2e-bubble.mjs"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
