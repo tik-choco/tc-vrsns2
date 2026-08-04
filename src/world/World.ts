@@ -19,6 +19,7 @@ import type {
 } from '../shared/types'
 import { AvatarRig } from './AvatarRig'
 import { loadBakedSourceClips } from './bakedClips'
+import { boxTopsAt, groundHeightFor } from './boxGround'
 import { CameraController } from './CameraController'
 import { CharacterController } from './CharacterController'
 import { CharacterStateMachine } from './stateMachine'
@@ -220,6 +221,17 @@ export class World {
     this.audioListener = new THREE.AudioListener()
     this.camera.add(this.audioListener)
     this.worldObjects = new WorldObjects(this.scene, this.audioListener)
+    // Lets the character controller stand on / step up onto placed 'box'
+    // primitives (see boxGround.ts) instead of only the flat y=0 floor.
+    // Wired here (a setter, not a constructor arg) because worldObjects does
+    // not exist yet when characterController is constructed above — same
+    // late-binding reason WorldObjects.setDragGuard/setOwnershipGuard are
+    // setters rather than constructor args. NO side collision in this pass:
+    // a player still walks straight through a box's sides — see
+    // boxGround.ts's header for that known follow-up.
+    this.characterController.setGroundTopsProvider((x, z) =>
+      boxTopsAt(x, z, this.worldObjects.walkableBoxes()),
+    )
     this.objectEditor = new ObjectEditor(this.scene, this.camera, canvas, this.worldObjects)
     // An NPC's runtime-driven turn (see faceObject) must yield to a user
     // actively dragging that same placement's gizmo — see WorldObjects'
@@ -404,13 +416,23 @@ export class World {
       yaw: number
       velocity: THREE.Vector3
       grounded: boolean
+      groundY: number
     }
     controllerState.yaw = pose.ry
     controllerState.velocity.set(0, 0, 0)
-    // Ground plane is flat at y = 0 (see CharacterController); treat the
-    // pose as standing when it's at/below that, airborne (falls naturally)
-    // otherwise.
-    controllerState.grounded = pose.y <= 0
+    // Land on the highest surface at or below the pose — box top or the
+    // y=0 floor, same one-way-platform rule update()'s own grounding uses
+    // (see boxGround.ts's groundHeightFor) — treating the pose as standing
+    // when it's at/below that surface, airborne (falls naturally) otherwise.
+    // `groundY` MUST be refreshed here too, not just `grounded`: it is what
+    // the next update() call reads as "current ground" for the step-up
+    // check, and leaving it stale (e.g. still the height of a box the
+    // player was on before this teleport) would read a perfectly flat
+    // landing spot as an edge to fall off on the very next frame.
+    const landing =
+      groundHeightFor(pose.y, 0, false, [0, ...boxTopsAt(pose.x, pose.z, this.worldObjects.walkableBoxes())]) ?? 0
+    controllerState.grounded = pose.y <= landing
+    controllerState.groundY = landing
     // A large delta collapses the camera's exponential follow smoothing to
     // its converged end state in one call, snapping it to the new spot
     // instead of panning in from the old one over the next few frames.

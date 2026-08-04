@@ -14,11 +14,15 @@
 // reloading what is already present.
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import type { ObjectState, PlacedKind, PlacedObject } from '../shared/types'
+import type { BoxAppearance, ObjectState, PlacedKind, PlacedObject } from '../shared/types'
+import type { WalkableBox } from './boxGround'
 import { normalizeAngle } from './CharacterController'
 import { isMediaKind } from './mediaFormat'
 import { isFacingDone, NpcView, stepYawTowards } from './NpcView'
 import type { SpeakingLevelReading, Vec3 } from './npcPresence'
+
+/** Resolves a cid to its bytes from the shared store, or null if unavailable. */
+type ResolveBytes = (cid: string) => Promise<Uint8Array | null>
 
 /** Where and which way a placed object faces, from the placer's viewpoint. */
 export type PlacementAnchor = {
@@ -85,6 +89,29 @@ const EDIT_POS_LIMIT = 500
 const EDIT_SCALE_MIN = 0.05
 const EDIT_SCALE_MAX = 20
 
+/** Appearance a 'box' placement falls back to when it has none yet — mirrors net/protocol.ts's parsePlacedObject default. */
+const DEFAULT_BOX: BoxAppearance = { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' }
+/** A box placement's own cid is always empty (see PlacedObject.box's doc) — this stands in wherever build()/addFromState() otherwise expect asset bytes. */
+const EMPTY_BYTES = new Uint8Array(0)
+
+/**
+ * Live per-axis-pair texture-repeat state for a 'box' placement's tiled
+ * surface (kind 'box' with BoxAppearance.textureCid only — see buildBox).
+ * `textures` stays undefined until the texture bytes actually resolve (a box
+ * with no texture, or one still loading, never gets a BoxTileState at all —
+ * see buildBox). `object` is the box's own scene node, re-read for its LIVE
+ * scale each time repeats are recomputed (refreshBoxTileRepeat) rather than
+ * captured once, because the whole point is staying world-locked across
+ * later transform edits that never rebuild the mesh (see applyTransform/
+ * commitTransform/applyRemoteState's calls into it).
+ */
+type BoxTileState = {
+  object: THREE.Object3D
+  dims: { sx: number; sy: number; sz: number }
+  tile: number
+  textures?: [THREE.Texture, THREE.Texture, THREE.Texture]
+}
+
 type Entry = {
   state: PlacedObject
   object: THREE.Object3D
@@ -107,6 +134,8 @@ type Entry = {
    * separate explicit method rather than something applyTransform() does.
    */
   sound?: THREE.PositionalAudio
+  /** Present iff this is a 'box' placement with a texture — see BoxTileState's doc. */
+  boxTile?: BoxTileState
 }
 
 /** A built scene object plus its natural (unscaled) bounding size. */
@@ -118,6 +147,8 @@ type Built = {
   npc?: NpcView
   /** See Entry.sound's doc — carried from buildVideo/buildAudio through track(). */
   sound?: THREE.PositionalAudio
+  /** See Entry.boxTile's doc — carried through track() the same way. */
+  boxTile?: BoxTileState
 }
 
 export class WorldObjects {
@@ -170,8 +201,10 @@ export class WorldObjects {
       anchor,
       // An NPC's AvatarRig is feet-rooted like a player, not centre-rooted
       // like a glTF prop (see centeredContainer) — no half-height lift, or it
-      // would float.
-      kind === 'npc' ? 0 : built.size.y * scale,
+      // would float. A box is likewise base-rooted (see buildBox) — its own
+      // origin already sits at the anchor's y, deliberately, so it and the
+      // next box stacked on top of it can both use a plain y + sy*scale.
+      kind === 'npc' || kind === 'box' ? 0 : built.size.y * scale,
       {
         // A picture or screen is meant to be looked at, so it turns to face
         // the placer instead of pointing the same way they do.
@@ -188,6 +221,11 @@ export class WorldObjects {
     // later via applyTransform (see its doc) — so only restHeading, not
     // noticeRange, has anything to set here.
     built.npc?.setRestHeading(rotationY)
+    // A box's texture tile is world-locked to dims x scale (see buildBox /
+    // refreshBoxTileRepeat) — scale has only just been set above, so this is
+    // the first point it can be computed correctly. A no-op for every
+    // non-box placement and for a box with no (or not-yet-resolved) texture.
+    if (built.boxTile) refreshBoxTileRepeat(built.boxTile)
 
     const state: PlacedObject = {
       id: crypto.randomUUID(),
@@ -204,14 +242,35 @@ export class WorldObjects {
     if (source.placedBy) state.placedBy = source.placedBy
     if (source.volume !== undefined) state.volume = source.volume
     if (source.audibleRange !== undefined) state.audibleRange = source.audibleRange
+    // PlacementSource carries no BoxAppearance yet (box-authoring UI is a
+    // later wave — see this file's WorldObjects doc), so any 'box' placed
+    // through this path today gets the same default net/protocol.ts's
+    // decoder falls back to. Kept populated here too (not left undefined)
+    // so `state.box` is "always populated once tracked", matching the
+    // invariant PlacedObject.box's own doc describes for the wire.
+    if (kind === 'box') state.box = DEFAULT_BOX
     this.track(state, built)
     return { ...state }
   }
 
-  /** Build an asset and apply an exact PlacedObject transform (for peer placements). */
-  async addFromState(bytes: Uint8Array, state: PlacedObject): Promise<void> {
+  /**
+   * Build an asset and apply an exact PlacedObject transform (for peer
+   * placements). `resolveBytes` is only ever consulted for a 'box' placement
+   * with a texture (see buildBox) — `bytes` itself already covers every
+   * other kind's own cid, resolved by the caller before this runs.
+   */
+  async addFromState(bytes: Uint8Array, state: PlacedObject, resolveBytes?: ResolveBytes): Promise<void> {
     if (this.objects.has(state.id)) return
-    const built = await this.build(bytes, state.kind ?? 'model', state.mime, state.name, state.volume, state.audibleRange)
+    const built = await this.build(
+      bytes,
+      state.kind ?? 'model',
+      state.mime,
+      state.name,
+      state.volume,
+      state.audibleRange,
+      state.box,
+      resolveBytes,
+    )
     // A concurrent sync may have added this id while the asset was loading.
     if (this.objects.has(state.id)) {
       built.cleanup?.()
@@ -223,6 +282,9 @@ export class WorldObjects {
     built.object.position.set(state.x, state.y, state.z)
     built.npc?.setRestHeading(state.rotationY)
     if (state.npc) built.npc?.setNoticeRange(state.npc.radius)
+    // Same reasoning as place()'s own call into this — scale is only just
+    // set above.
+    if (built.boxTile) refreshBoxTileRepeat(built.boxTile)
     this.track({ ...state }, built)
   }
 
@@ -262,8 +324,15 @@ export class WorldObjects {
    * -> reconcileObjects) or a peer's MSG_OBJECTS snapshot — never per
    * animation frame, so both a local and a peer's volume edit take effect
    * here, with nothing extra to wire on either call site.
+   *
+   * A 'box' appearance change (dims/colour/texture — see boxAppearanceChanged)
+   * gets different treatment from every other field-only change: a box's
+   * geometry/material are baked in at build time (see buildBox), so unlike a
+   * transform there is nothing applyTransform() can just write onto the live
+   * object — this REMOVES the entry and falls through to the same add path a
+   * brand-new id takes below, rebuilding it from scratch.
    */
-  async syncRemote(states: PlacedObject[], resolveBytes: (cid: string) => Promise<Uint8Array | null>): Promise<void> {
+  async syncRemote(states: PlacedObject[], resolveBytes: ResolveBytes): Promise<void> {
     const wanted = new Set(states.map((s) => s.id))
     for (const id of [...this.objects.keys()]) {
       if (!wanted.has(id)) this.remove(id)
@@ -271,12 +340,27 @@ export class WorldObjects {
     for (const state of states) {
       const existing = this.objects.get(state.id)
       if (existing) {
-        if (stateDiffers(existing.state, state)) {
+        if (!stateDiffers(existing.state, state)) continue
+        if (state.kind === 'box' && boxAppearanceChanged(existing.state.box, state.box)) {
+          this.remove(state.id)
+        } else {
           const audioChanged =
             existing.state.volume !== state.volume || existing.state.audibleRange !== state.audibleRange
           this.applyTransform(state)
           if (audioChanged) this.retuneAudio(state.id, state.volume, state.audibleRange)
+          continue
         }
+      }
+      // A box's whole appearance rides in `state.box`, not bytes in the
+      // shared store — its own cid is always empty (see PlacedObject.box's
+      // doc) — so there is nothing to resolveBytes() here at all. That call
+      // is still threaded through to addFromState so a box's OPTIONAL
+      // texture (box.textureCid) can be resolved independently, entirely
+      // inside buildBox — see its doc for why that must not block this
+      // method the way every other kind's cid fetch below does.
+      if (state.kind === 'box') {
+        if (this.objects.has(state.id)) continue
+        await this.addFromState(EMPTY_BYTES, state, resolveBytes)
         continue
       }
       const bytes = await resolveBytes(state.cid)
@@ -362,6 +446,9 @@ export class WorldObjects {
     // is released. Committing a heading by hand cancels it — see
     // NpcView.clearAddressedTurn.
     entry.npc?.clearAddressedTurn()
+    // A gizmo resize changes `scale` above like any other edit — keep a
+    // box's texture tile world-locked to it (see refreshBoxTileRepeat's doc).
+    if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
     return { ...entry.state }
   }
 
@@ -392,6 +479,13 @@ export class WorldObjects {
     // reasoning as commitTransform for why restHeading updates here too.
     entry.npc?.setRestHeading(state.rotationY)
     if (state.npc) entry.npc?.setNoticeRange(state.npc.radius)
+    // A box's texture tile is WORLD-LOCKED (see refreshBoxTileRepeat's doc),
+    // so any transform that touches scale — including this one, called every
+    // frame for a script-moved object via WorldScriptBridge — must keep it
+    // in step, or a resized/animated box's texture would visibly stretch.
+    // Cheap and a no-op for every non-box entry and every box with no
+    // texture (yet).
+    if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
   }
 
   /**
@@ -442,6 +536,9 @@ export class WorldObjects {
       rotationY: state.rotationY,
       scale: state.scale,
     }
+    // Same reasoning as applyTransform's own call into this — this stream
+    // can carry a script-driven scale change too.
+    if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
   }
 
   /**
@@ -598,12 +695,13 @@ export class WorldObjects {
   // --- builders -------------------------------------------------------------
 
   /**
-   * Dispatch on kind: a glTF scene, an image/video panel, an audio marker, or
-   * an NPC's VRM avatar. `volume`/`audibleRange` only ever reach the two
-   * kinds that actually play positional audio (see buildVideo/buildAudio);
-   * passing them through for any other kind would simply be ignored, but
-   * they are not even accepted by those builders' signatures, so there is
-   * nothing to ignore.
+   * Dispatch on kind: a glTF scene, an image/video panel, an audio marker, an
+   * NPC's VRM avatar, or a box primitive. `volume`/`audibleRange` only ever
+   * reach the two kinds that actually play positional audio (see
+   * buildVideo/buildAudio); `box`/`resolveBytes` only ever reach 'box' (see
+   * buildBox). Passing any of them through for a kind that doesn't use them
+   * would simply be ignored, but the other builders' signatures don't even
+   * accept them, so there is nothing to ignore.
    */
   private build(
     bytes: Uint8Array,
@@ -612,6 +710,8 @@ export class WorldObjects {
     name?: string,
     volume?: number,
     audibleRange?: number,
+    box?: BoxAppearance,
+    resolveBytes?: ResolveBytes,
   ): Promise<Built> {
     switch (kind) {
       case 'image':
@@ -622,6 +722,8 @@ export class WorldObjects {
         return this.buildAudio(bytes, mime, volume, audibleRange)
       case 'npc':
         return this.buildNpc(bytes, name ?? '')
+      case 'box':
+        return this.buildBox(box ?? DEFAULT_BOX, resolveBytes)
       default:
         return this.buildModel(bytes)
     }
@@ -759,6 +861,91 @@ export class WorldObjects {
   }
 
   /**
+   * A primitive cuboid placement, authored entirely from BoxAppearance
+   * rather than model/media bytes (see PlacedObject.box's doc — a box's own
+   * `cid` is always empty). Deliberately NOT centeredContainer()'d like
+   * buildModel: the geometry is translated so the placement's own origin
+   * sits at the BASE (bottom-centre), not the middle. That is a deliberate
+   * divergence from every centred-model placement, because the whole point
+   * of a box primitive is to be a stackable, walkable-on ground piece (see
+   * boxGround.ts) — the next box placed "on top" only needs the previous
+   * box's TOP height (y + sy*scale), not a half-height correction the way a
+   * centred model would need.
+   *
+   * The fill colour (BoxAppearance.color) renders IMMEDIATELY, synchronously
+   * with this method returning — a box's own cid is always empty, so unlike
+   * every other kind this never makes the placement itself wait on a store
+   * round-trip. A texture (BoxAppearance.textureCid), if present, is fetched
+   * and applied asynchronously afterward via `resolveBytes`: a fire-and-
+   * forget continuation that swaps the flat material for the tiled one once
+   * the bytes resolve (see buildBoxTexture), or leaves the flat colour in
+   * place forever if they never do (missing/undecodable texture bytes are
+   * swallowed, same "still visible, never a hole in the world" spirit as
+   * buildNpc's VRM-load failure). `resolveBytes` may be omitted entirely —
+   * addFromState only ever passes it for a box with textureCid set.
+   */
+  private async buildBox(box: BoxAppearance, resolveBytes?: ResolveBytes): Promise<Built> {
+    const geometry = new THREE.BoxGeometry(box.sx, box.sy, box.sz)
+    // Base (bottom-centre) origin — see this method's own doc above.
+    geometry.translate(0, box.sy / 2, 0)
+    const flatMaterial = new THREE.MeshStandardMaterial({ color: box.color })
+    // Typed to allow the later swap to a 6-slot array once a texture
+    // resolves (see below) — three's own Mesh type parameter otherwise locks
+    // onto whichever single material it was constructed with.
+    const mesh: THREE.Mesh<THREE.BoxGeometry, THREE.Material | THREE.Material[]> = new THREE.Mesh(
+      geometry,
+      flatMaterial,
+    )
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    const group = new THREE.Group()
+    group.add(mesh)
+
+    // Populated once (if) a texture resolves below. Kept on the RETURNED
+    // Built (and from there, on the tracked Entry — see track()) rather than
+    // computed once and forgotten, because applyTransform()/commitTransform()/
+    // applyRemoteState() all re-read it on every later scale change so a
+    // resized box's tiling never stretches (see refreshBoxTileRepeat's doc).
+    const boxTile: BoxTileState | undefined = box.textureCid
+      ? { object: group, dims: { sx: box.sx, sy: box.sy, sz: box.sz }, tile: box.textureTile ?? 1 }
+      : undefined
+
+    // `cancelled`/`dispose` together let cleanup() do the right thing
+    // whichever side of the async gap it lands on: cancel the pending apply
+    // if the placement is removed before the texture resolves, or dispose
+    // the textures it actually created if removed after.
+    let dispose: (() => void) | undefined
+    if (box.textureCid && resolveBytes && boxTile) {
+      let cancelled = false
+      dispose = () => {
+        cancelled = true
+      }
+      void resolveBytes(box.textureCid)
+        .then((bytes) => (cancelled || !bytes ? null : buildBoxTexture(bytes)))
+        .then((applied) => {
+          if (!applied) return
+          if (cancelled) {
+            applied.dispose()
+            return
+          }
+          flatMaterial.dispose()
+          mesh.material = applied.materials
+          boxTile.textures = applied.textures
+          refreshBoxTileRepeat(boxTile)
+          dispose = applied.dispose
+        })
+        .catch(() => undefined)
+    }
+
+    return {
+      object: group,
+      size: new THREE.Vector3(box.sx, box.sy, box.sz),
+      boxTile,
+      cleanup: () => dispose?.(),
+    }
+  }
+
+  /**
    * The node an NPC's voice is emitted from: a child of the placement sitting
    * at roughly mouth height, created on first use and reused after that.
    *
@@ -820,8 +1007,37 @@ export class WorldObjects {
       pulse: built.pulse,
       npc: built.npc,
       sound: built.sound,
+      boxTile: built.boxTile,
     })
     this.scene.add(built.object)
+  }
+
+  /**
+   * Live transform + dims of every currently tracked 'box' placement, for
+   * World's walkable-ground query (see boxGround.ts's WalkableBox and
+   * groundHeightFor). Reads straight off each entry's own scene node rather
+   * than caching anything, so a box moved by a script (WorldScriptBridge's
+   * per-frame applyTransform) or dragged in ObjectEditor is reflected the
+   * very next call — cheap even so, since this only ever iterates the
+   * (typically small) subset of placements that are boxes.
+   */
+  walkableBoxes(): WalkableBox[] {
+    const boxes: WalkableBox[] = []
+    for (const entry of this.objects.values()) {
+      const appearance = entry.state.box
+      if (entry.state.kind !== 'box' || !appearance) continue
+      boxes.push({
+        x: entry.object.position.x,
+        y: entry.object.position.y,
+        z: entry.object.position.z,
+        rotationY: entry.object.rotation.y,
+        scale: entry.object.scale.x,
+        sx: appearance.sx,
+        sy: appearance.sy,
+        sz: appearance.sz,
+      })
+    }
+    return boxes
   }
 }
 
@@ -894,6 +1110,84 @@ function makeSpeakerMarker(): { object: THREE.Object3D; size: THREE.Vector3; pul
     size: new THREE.Vector3(SPEAKER_WIDTH, SPEAKER_HEIGHT, SPEAKER_DEPTH),
     pulse,
   }
+}
+
+/**
+ * Decodes texture bytes for a 'box' placement and builds the 3 per-axis-pair
+ * clones + 6-slot material array its tiled surface needs (see buildBox's
+ * doc for why 3 clones, not 6, back a 6-entry array). Repeat is left at its
+ * default (1,1) here — refreshBoxTileRepeat sets the real, scale-aware value
+ * once this returns, since that depends on the box's CURRENT rendered size,
+ * not anything decodable from the image itself.
+ *
+ * Face-pair -> axis mapping follows THREE.BoxGeometry's own material-index
+ * order and UV assignment (see its source): materials are [+x, -x, +y, -y,
+ * +z, -z]; ±x faces map U to Z and V to Y, ±y map U to X and V to Z, ±z map
+ * U to X and V to Y.
+ *
+ * No `mime` parameter — unlike buildImage's, BoxAppearance has no mime field
+ * for its texture (the browser's own image decoder sniffs the content), so
+ * there is nothing to thread through here.
+ */
+async function buildBoxTexture(bytes: Uint8Array): Promise<{
+  textures: [THREE.Texture, THREE.Texture, THREE.Texture]
+  materials: THREE.Material[]
+  dispose: () => void
+}> {
+  const url = blobUrl(bytes)
+  let image: HTMLImageElement
+  try {
+    image = await loadImageElement(url)
+  } catch (error) {
+    URL.revokeObjectURL(url)
+    throw error
+  }
+  URL.revokeObjectURL(url)
+
+  const base = new THREE.Texture(image)
+  base.colorSpace = THREE.SRGBColorSpace
+  base.wrapS = THREE.RepeatWrapping
+  base.wrapT = THREE.RepeatWrapping
+  base.needsUpdate = true
+  const textures: [THREE.Texture, THREE.Texture, THREE.Texture] = [base, base.clone(), base.clone()]
+  for (const texture of textures) texture.needsUpdate = true
+
+  const matX = new THREE.MeshStandardMaterial({ map: textures[0] })
+  const matY = new THREE.MeshStandardMaterial({ map: textures[1] })
+  const matZ = new THREE.MeshStandardMaterial({ map: textures[2] })
+  const materials = [matX, matX, matY, matY, matZ, matZ]
+
+  return {
+    textures,
+    materials,
+    // Materials are disposed generically by disposeObject() (it traverses
+    // mesh.material, array or not, on remove() — see its own doc), so only
+    // the textures need an explicit dispose here, same division of labour
+    // buildImage's own cleanup relies on for its single texture.
+    dispose: () => {
+      for (const texture of textures) texture.dispose()
+    },
+  }
+}
+
+/**
+ * Recomputes a box's texture-tile repeat counts from its CURRENT rendered
+ * size (BoxTileState.dims × the box's LIVE object.scale) ÷ the tile size, so
+ * a world-locked tile stays the same physical size no matter how the box is
+ * scaled — a plain 0..1 UV would stretch instead. A no-op until a texture
+ * has actually resolved (`tile.textures` unset — see buildBox); callers
+ * invoke this unconditionally on every transform update and rely on that
+ * no-op for every non-textured box to stay cheap.
+ */
+function refreshBoxTileRepeat(tile: BoxTileState): void {
+  const textures = tile.textures
+  if (!textures) return
+  const scale = tile.object.scale.x
+  const { sx, sy, sz } = tile.dims
+  const per = tile.tile
+  textures[0].repeat.set((sz * scale) / per, (sy * scale) / per)
+  textures[1].repeat.set((sx * scale) / per, (sz * scale) / per)
+  textures[2].repeat.set((sx * scale) / per, (sy * scale) / per)
 }
 
 function measureSize(model: THREE.Object3D): THREE.Vector3 {
@@ -1097,6 +1391,14 @@ function clamp(value: number, min: number, max: number): number {
  * retunes: it compares the OLD volume/audibleRange (read off `entry.state`
  * before applyTransform overwrites it) against the incoming ones, and calls
  * the explicit retuneAudio() when they differ — see its doc and syncRemote's.
+ *
+ * `box` is included for the same bookkeeping reason as `volume`/
+ * `audibleRange` above — so `entry.state` never goes stale relative to what
+ * a peer sent — but unlike those two, a `box` change ALSO drives a real
+ * behaviour on top of the generic path this flag gates: syncRemote()'s own
+ * boxAppearanceChanged() check (separate from this function, since it needs
+ * the OLD and NEW `box` individually, not just "did anything change")
+ * decides whether that change is transform-only or needs a full rebuild.
  */
 function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
   return (
@@ -1113,7 +1415,30 @@ function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
     a.audibleRange !== b.audibleRange ||
     JSON.stringify(a.script) !== JSON.stringify(b.script) ||
     JSON.stringify(a.trigger) !== JSON.stringify(b.trigger) ||
-    JSON.stringify(a.npc) !== JSON.stringify(b.npc)
+    JSON.stringify(a.npc) !== JSON.stringify(b.npc) ||
+    JSON.stringify(a.box) !== JSON.stringify(b.box)
+  )
+}
+
+/**
+ * True when two 'box' appearances differ in a way that requires a fresh
+ * mesh/material/texture (see syncRemote's rebuild branch) rather than an
+ * in-place transform update. Both sides are always populated for a
+ * kind==='box' placement once decoded (see net/protocol.ts's
+ * parsePlacedObject), so `undefined` here only ever means "not a box (yet)",
+ * which syncRemote already filters for via `state.kind === 'box'` before
+ * calling this.
+ */
+function boxAppearanceChanged(a: BoxAppearance | undefined, b: BoxAppearance | undefined): boolean {
+  if (a === b) return false
+  if (!a || !b) return true
+  return (
+    a.sx !== b.sx ||
+    a.sy !== b.sy ||
+    a.sz !== b.sz ||
+    a.color !== b.color ||
+    a.textureCid !== b.textureCid ||
+    a.textureTile !== b.textureTile
   )
 }
 
