@@ -149,6 +149,20 @@ export const ja: Dict = {
   'objects.placedBy': '配置：{name}',
   'objects.orphans': '退室した人が残したものが{count}個あります。ルームを出るまで表示されますが、誰も編集できません。',
 
+  // ドロップインポートのオーバーレイ — アプリのどこかにファイルをドロップしたとき
+  'dropImport.title': 'ワールドに追加しますか？',
+  'dropImport.descAvatar': 'あなたのアバターとして装着されます。',
+  'dropImport.descModel': '3Dモデルとしてワールドに配置されます。',
+  'dropImport.descImage': '画像としてワールドに配置されます。',
+  'dropImport.descVideo': '動画としてワールドに配置されます。',
+  'dropImport.descAudio': 'サウンドとしてワールドに配置されます。',
+  'dropImport.descWorld': 'ルームにいる全員に見える環境になります。',
+  'dropImport.addToWorld': 'ワールドに追加',
+  'dropImport.setAsWorldEnvironment': '代わりにワールドの環境として設定する',
+  'dropImport.saveOnly': 'インベントリにのみ保存',
+  'dropImport.unsupportedTitle': 'このファイルは追加できません',
+  'dropImport.unsupportedBody': '「{fileName}」はアバター・ワールド・オブジェクトのいずれとしても扱えないファイルです。',
+
   // ビヘイビア（スクリプト）の付与 — 編集ツールバーの「ビヘイビア」選択
   'objects.script.label': 'ビヘイビア',
   'objects.script.none': 'なし',

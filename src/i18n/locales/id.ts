@@ -150,6 +150,20 @@ export const id: Dict = {
   'objects.placedBy': 'ditempatkan oleh {name}',
   'objects.orphans': '{count} ditinggalkan orang yang sudah pergi. Tetap ada sampai kamu keluar dari ruang, dan tidak ada yang bisa mengeditnya.',
 
+  // Overlay impor saat berkas dijatuhkan di mana pun pada aplikasi
+  'dropImport.title': 'Tambahkan ini ke duniamu?',
+  'dropImport.descAvatar': 'Ini akan dikenakan sebagai avatarmu.',
+  'dropImport.descModel': 'Ini akan ditempatkan di dunia sebagai model 3D.',
+  'dropImport.descImage': 'Ini akan ditempatkan di dunia sebagai gambar.',
+  'dropImport.descVideo': 'Ini akan ditempatkan di dunia sebagai layar video.',
+  'dropImport.descAudio': 'Ini akan ditempatkan di dunia sebagai suara.',
+  'dropImport.descWorld': 'Ini akan menjadi lingkungan yang dilihat semua orang di ruang ini.',
+  'dropImport.addToWorld': 'Tambahkan ke dunia',
+  'dropImport.setAsWorldEnvironment': 'Atau jadikan sebagai lingkungan dunia',
+  'dropImport.saveOnly': 'Hanya simpan ke inventaris',
+  'dropImport.unsupportedTitle': 'Berkas ini tidak bisa ditambahkan',
+  'dropImport.unsupportedBody': '"{fileName}" bukan berkas avatar, dunia, atau objek yang bisa digunakan aplikasi ini.',
+
   // Room panel
   'room.title': 'Ruang',
   'room.subtitle': 'Undang orang lain atau pindah ruang.',
