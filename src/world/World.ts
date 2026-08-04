@@ -970,11 +970,19 @@ export class World {
     this.localRig.update(delta)
     this.localChatBubble.update()
 
+    // You never see your own name tag: it tells you only what you already
+    // know, and in third person it sits between the camera and your avatar.
+    // The sprite is kept (rather than never added) so setLocalProfile can go
+    // on labelling it unconditionally, and so this stays a one-line decision
+    // if it ever becomes a preference. Remote tags are unaffected — those are
+    // the ones that actually carry information.
+    this.localNameTag.sprite.visible = false
+    // Still the anchor the bubble hangs off, even with the tag itself hidden:
+    // it is derived from the rig's height, not from the tag, so it remains
+    // "just above this avatar's head" regardless of what is drawn there.
     const localTagY = this.localRig.getHeight() + 0.25
-    this.localNameTag.sprite.visible = !firstPerson
-    this.localNameTag.sprite.position.set(0, localTagY, 0)
     // Anchor by the bubble's BOTTOM edge, not its centre, so it grows
-    // upward as lines stack instead of sinking into the name tag below it
+    // upward as lines stack instead of sinking toward the head below it
     // (see BUBBLE_GAP_ABOVE_TAG's comment for the derivation).
     this.localChatBubble.sprite.position.set(
       0,
