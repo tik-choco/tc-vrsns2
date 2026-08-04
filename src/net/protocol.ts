@@ -177,6 +177,26 @@ export const INPUTS_MAX = 32
 /** Uniform-scale bounds for a placed object. */
 export const SCALE_MIN = 0.01
 export const SCALE_MAX = 100
+/**
+ * Bounds for a placement's own volume multiplier (PlacedObject.volume, kind
+ * 'audio'/'video' only). 1 is unchanged source loudness — see
+ * WorldObjects.attachPositionalAudio's default, applied when this field is
+ * absent so an existing placement plays exactly as it always has. The
+ * ceiling allows a modest boost for a source clip recorded too quietly to
+ * balance against louder placements in the same scene.
+ */
+export const VOLUME_MIN = 0
+export const VOLUME_MAX = 2
+/**
+ * Bounds, in world units, for a placement's audible range (PlacedObject.
+ * audibleRange, kind 'audio'/'video' only) — the positional-audio ref
+ * distance WorldObjects.attachPositionalAudio sets, i.e. how far the sound
+ * carries at full volume before it starts falling off. Absent means
+ * WorldObjects' own default ref distance, matching every placement from
+ * before this field existed.
+ */
+export const AUDIBLE_RANGE_MIN = 0.5
+export const AUDIBLE_RANGE_MAX = 100
 /** Cap on a placed object's MIME string (RFC 6838 names are far shorter). */
 export const MIME_MAX_LEN = 100
 /** Largest frame we bother decoding — bigger than a full object set could need. */
@@ -329,7 +349,8 @@ export function parseWorldEnv(raw: unknown): WorldEnvironment | null {
  * optional (an older peer only ever placed models, so its absence means
  * 'model'), but an unrecognized one drops the whole placement: we cannot build
  * something we don't understand, and quietly treating it as a model would try
- * to parse arbitrary bytes as glTF. A malformed `mime` only drops that field.
+ * to parse arbitrary bytes as glTF. A malformed `mime`, `volume`, or
+ * `audibleRange` only drops that one field.
  *
  * Exported for the same reason as parseWorldEnv: the world autosave validates
  * restored placements through it.
@@ -374,6 +395,20 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
   if (o.npc !== undefined) {
     const npc = parseNpcBinding(o.npc)
     if (npc) object.npc = npc
+  }
+  // Per-placement audio tuning (meaningful for kind 'audio'/'video' only, but
+  // harmless to accept on any kind — WorldObjects simply never reads either
+  // field for anything else). Both are OPTIONAL fields, so this gets the same
+  // "drop just this field" tolerance as `mime`/`script`/`trigger`/`npc`
+  // above, not the reject-the-whole-placement treatment `scale` gets for a
+  // bad value — `scale` is REQUIRED, these are not.
+  if (o.volume !== undefined) {
+    const volume = clampNumber(o.volume, VOLUME_MIN, VOLUME_MAX)
+    if (volume !== null) object.volume = volume
+  }
+  if (o.audibleRange !== undefined) {
+    const audibleRange = clampNumber(o.audibleRange, AUDIBLE_RANGE_MIN, AUDIBLE_RANGE_MAX)
+    if (audibleRange !== null) object.audibleRange = audibleRange
   }
   return object
 }

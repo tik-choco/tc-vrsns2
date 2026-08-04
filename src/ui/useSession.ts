@@ -21,7 +21,14 @@ import {
 } from '../script/generate'
 import type { ScriptError, ScriptWindow, UiAnchor } from '../script/ir'
 import { scriptPreset } from '../script/presets'
-import { clampNpcRadius, type ObjectScriptInput } from './uiContract'
+import {
+  AUDIBLE_RANGE_DEFAULT,
+  clampAudibleRange,
+  clampNpcRadius,
+  clampVolume,
+  VOLUME_DEFAULT,
+  type ObjectScriptInput,
+} from './uiContract'
 import type { ScreenProjection } from './ScriptWindow'
 import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat'
 import { shrinkImageForPlacement } from '../storage/imageResize'
@@ -164,19 +171,23 @@ export type SessionApi = {
   setInputEnabled: (enabled: boolean) => void
   // avatar
   uploadAvatar: (file: File) => Promise<void>
+  /** Catalogs a VRM without equipping it — the drag-and-drop "save to inventory only" path (dropImport.ts / DropImportOverlay.tsx). uploadAvatar above always equips, so this is a genuinely separate call, not an option on it. */
+  uploadAvatarToCatalog: (file: File) => Promise<void>
   equipAvatar: (cid: string | null) => Promise<void>
   equipTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
   removeAvatar: (cid: string) => void
   /** Dismisses the current avatar load error. */
   clearAvatarError: () => void
   // world
-  uploadWorld: (file: File) => Promise<void>
+  /** Resolves the new catalog item's cid (or null on failure) so a caller — the drag-and-drop "add to world" path — can chain straight into applyWorld without re-deriving it. */
+  uploadWorld: (file: File) => Promise<string | null>
   applyWorld: (cid: string) => Promise<void>
   resetWorld: () => void
   /** Announces who may edit this room's world (advisory, last writer wins). */
   setWorldPolicy: (policy: WorldEditPolicy) => void
   // objects
-  uploadObject: (file: File) => Promise<void>
+  /** Resolves the new catalog item's cid (or null on failure) — see uploadWorld's doc for why. */
+  uploadObject: (file: File) => Promise<string | null>
   placeObject: (cid: string) => Promise<void>
   /** Places a tc-town character into the world as an NPC (R5) — see CharactersPanel's "Place in world". */
   placeTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
@@ -199,6 +210,10 @@ export type SessionApi = {
    * re-reads it. Gated the same as any other edit.
    */
   setNpcVoice: (id: string, voiceName: string) => void
+  /** Edits an 'audio'/'video' placement's own playback volume multiplier, clamped to VOLUME_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
+  setObjectVolume: (id: string, volume: number) => void
+  /** Edits an 'audio'/'video' placement's audible range, clamped to AUDIBLE_RANGE_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
+  setObjectAudibleRange: (id: string, range: number) => void
   /**
    * Runs the natural-language "describe it" generator against the configured
    * model. Exposed straight from src/script/generate.ts (no session state
@@ -1417,6 +1432,34 @@ export function useSession(): SessionApi {
     [equipAvatarBytes, hydrateThumbs],
   )
 
+  /**
+   * Catalogs a VRM WITHOUT equipping it — the sibling uploadAvatar above
+   * cannot serve this: it equips unconditionally in the same call, so there
+   * is no way to stop at "just save it" from outside. That gap is what left
+   * the drag-and-drop "save to inventory only" choice (DropImportOverlay)
+   * unimplementable for an avatar drop until this existed. Otherwise an
+   * exact copy of uploadAvatar's catalog-write half.
+   */
+  const uploadAvatarToCatalog = useCallback(
+    async (file: File) => {
+      setAvatarBusy(true)
+      setAvatarError(null)
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        await addToCatalog('avatar', file.name, localUploadBytes(bytes))
+        const list = listCatalog('avatar')
+        setAvatars(list)
+        hydrateThumbs('avatar', list, setAvatars)
+      } catch (e) {
+        console.debug('avatar catalog save failed', e)
+        setAvatarError('invalid')
+      } finally {
+        setAvatarBusy(false)
+      }
+    },
+    [hydrateThumbs],
+  )
+
   const equipAvatar = useCallback(
     async (cid: string | null) => {
       // Busy for the whole call, including the "equip default" (cid === null)
@@ -1502,17 +1545,26 @@ export function useSession(): SessionApi {
 
   // --- worlds ----------------------------------------------------------------
 
-  const uploadWorld = useCallback(async (file: File) => {
+  /**
+   * Resolves the uploaded item's cid (or null on failure) rather than void —
+   * widened so the drag-and-drop "add to world" path (GameOverlay) can chain
+   * straight into applyWorld(cid) without a second lookup. The panels'
+   * existing upload buttons (WorldPanel via CatalogPanel) still just discard
+   * the result, which TS's void-context call sites already allow.
+   */
+  const uploadWorld = useCallback(async (file: File): Promise<string | null> => {
     setWorldBusy(true)
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
       const format = detectWorldFormat(file.name, bytes)
-      await addToCatalog('world', file.name, localUploadBytes(bytes), { format })
+      const item = await addToCatalog('world', file.name, localUploadBytes(bytes), { format })
       const list = listCatalog('world')
       setWorlds(list)
       hydrateThumbs('world', list, setWorlds)
+      return item.cid
     } catch (e) {
       console.debug('world upload failed', e)
+      return null
     } finally {
       setWorldBusy(false)
     }
@@ -1723,19 +1775,23 @@ export function useSession(): SessionApi {
    * keeps raw bytes only, and media needs its type back to decode. Images and
    * videos also get a real thumbnail for the catalog card instead of the
    * letter-badge fallback.
+   *
+   * Resolves the saved item's cid (or null on failure) rather than void —
+   * see uploadWorld's identical doc for why (the drag-and-drop "add to
+   * world" path needs it to chain into placeObject(cid)).
    */
-  const uploadObject = useCallback(async (file: File) => {
+  const uploadObject = useCallback(async (file: File): Promise<string | null> => {
     setObjectBusy(true)
     setObjectError(null)
     try {
       if (file.size > MAX_PLACEABLE_BYTES) {
         setObjectError('tooLarge')
-        return
+        return null
       }
       const bytes = new Uint8Array(await file.arrayBuffer())
       if (bytes.byteLength > MAX_PLACEABLE_BYTES) {
         setObjectError('tooLarge')
-        return
+        return null
       }
       const asset = detectPlacedAsset(file.name, bytes, file.type)
       // Publish-time shrink, BEFORE anything derives from these bytes: what
@@ -1757,7 +1813,7 @@ export function useSession(): SessionApi {
       // Taken from the PUBLISHED bytes so it can never describe something the
       // room will not actually receive.
       const thumb = (await captureMediaThumbnail(published, asset.kind, publishedMime)) ?? undefined
-      await addToCatalog('object', file.name, localUploadBytes(published), {
+      const item = await addToCatalog('object', file.name, localUploadBytes(published), {
         asset: asset.kind,
         mime: publishedMime,
         thumb,
@@ -1765,9 +1821,11 @@ export function useSession(): SessionApi {
       const list = listCatalog('object')
       setObjectModels(list)
       hydrateThumbs('object', list, setObjectModels)
+      return item.cid
     } catch (e) {
       console.debug('object upload failed', e)
       setObjectError('invalid')
+      return null
     } finally {
       setObjectBusy(false)
     }
@@ -2009,6 +2067,56 @@ export function useSession(): SessionApi {
     [commitOwnObjects, reconcileObjects],
   )
 
+  /**
+   * Edits an 'audio'/'video' placement's own volume multiplier from
+   * EditToolbar. Same shape as setNpcRadius above: gate on worldPolicy +
+   * editableIds, read the live placement off worldRef (not the render-time
+   * `objects` state, which can be stale), clamp, claim + commitOwnObjects,
+   * then reconcile. reconcileObjects()'s world.syncObjects call is also what
+   * retunes the placement's already-playing PositionalAudio in place — see
+   * WorldObjects.syncRemote/retuneAudio — not this function directly; that
+   * one path also covers a peer's own volume edit arriving over MSG_OBJECTS,
+   * so there is nothing extra to wire here for that case.
+   */
+  const setObjectVolume = useCallback(
+    (id: string, volume: number) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current || (current.kind !== 'audio' && current.kind !== 'video')) return
+      const fallback = current.volume ?? VOLUME_DEFAULT
+      const clamped = clampVolume(volume, fallback)
+      if (clamped === fallback) return
+      const next: PlacedObject = { ...current, volume: clamped }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Edits an 'audio'/'video' placement's audible range from EditToolbar.
+   * Same shape (and same live-retune path via reconcileObjects) as
+   * setObjectVolume above.
+   */
+  const setObjectAudibleRange = useCallback(
+    (id: string, range: number) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current || (current.kind !== 'audio' && current.kind !== 'video')) return
+      const fallback = current.audibleRange ?? AUDIBLE_RANGE_DEFAULT
+      const clamped = clampAudibleRange(range, fallback)
+      if (clamped === fallback) return
+      const next: PlacedObject = { ...current, audibleRange: clamped }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
   /** Every script window currently open. Called fresh every frame by ScriptWindowsHost — never memoize the result. */
   const getScriptWindows = useCallback((): ScriptWindow[] => worldRef.current?.scriptWindows() ?? [], [])
 
@@ -2202,6 +2310,7 @@ export function useSession(): SessionApi {
     toggleMic,
     setInputEnabled,
     uploadAvatar,
+    uploadAvatarToCatalog,
     equipAvatar,
     equipTownCharacter,
     removeAvatar,
@@ -2220,6 +2329,8 @@ export function useSession(): SessionApi {
     setObjectScript,
     setNpcRadius,
     setNpcVoice,
+    setObjectVolume,
+    setObjectAudibleRange,
     generateBehaviour: runGenerateBehaviour,
     scriptProblems,
     getScriptWindows,

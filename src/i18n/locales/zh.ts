@@ -149,6 +149,12 @@ export const zh: Dict = {
   'objects.placedBy': '由 {name} 放置',
   'objects.orphans': '有 {count} 个是已离开的人留下的。它们会保留到你离开房间，且无人能编辑。',
 
+  // 音量／可听范围 — 仅音频和视频对象，通过编辑工具栏（EditToolbar.tsx）设置
+  'objects.volume': '音量',
+  'objects.volumeValue': '{n}%',
+  'objects.range': '可听范围',
+  'objects.rangeValue': '{n} 米',
+
   // 拖放导入浮层 — 把文件拖放到应用的任意位置时弹出
   'dropImport.title': '要将它添加到你的世界吗？',
   'dropImport.descAvatar': '它将作为你的虚拟形象被穿上。',

@@ -149,6 +149,13 @@ export const ar: Dict = {
   'objects.placedBy': 'وضعه {name}',
   'objects.orphans': '{count} تركها أشخاص غادروا. تبقى حتى تخرج من الغرفة ولا يمكن لأحد تعديلها.',
 
+  // مستوى الصوت / نطاق السماع — لعناصر الصوت والفيديو فقط، يُضبطان من شريط
+  // التحرير (EditToolbar.tsx)
+  'objects.volume': 'مستوى الصوت',
+  'objects.volumeValue': '{n}%',
+  'objects.range': 'نطاق السماع',
+  'objects.rangeValue': '{n} م',
+
   // نافذة استيراد السحب والإفلات — عند إسقاط ملف في أي مكان من التطبيق
   'dropImport.title': 'هل تريد إضافة هذا إلى عالمك؟',
   'dropImport.descAvatar': 'سيتم ارتداؤه كأفاتار لك.',

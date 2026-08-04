@@ -151,6 +151,13 @@ export const en = {
   'objects.placedBy': 'placed by {name}',
   'objects.orphans': '{count} left behind by people who have gone. They stay until you leave the room, and nobody can edit them.',
 
+  // Volume / audible range — audio and video objects only, edited from the
+  // edit toolbar (EditToolbar.tsx)
+  'objects.volume': 'Volume',
+  'objects.volumeValue': '{n}%',
+  'objects.range': 'Audible range',
+  'objects.rangeValue': '{n} m',
+
   // Drop-import overlay — dragging a file anywhere onto the app (see
   // ui/dropImport.ts for how a file is routed, ui/DropImportOverlay.tsx for
   // the prompt itself)

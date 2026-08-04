@@ -150,6 +150,13 @@ export const id: Dict = {
   'objects.placedBy': 'ditempatkan oleh {name}',
   'objects.orphans': '{count} ditinggalkan orang yang sudah pergi. Tetap ada sampai kamu keluar dari ruang, dan tidak ada yang bisa mengeditnya.',
 
+  // Volume / radius terdengar — khusus objek audio dan video, diatur dari
+  // toolbar edit (EditToolbar.tsx)
+  'objects.volume': 'Volume',
+  'objects.volumeValue': '{n}%',
+  'objects.range': 'Radius terdengar',
+  'objects.rangeValue': '{n} m',
+
   // Overlay impor saat berkas dijatuhkan di mana pun pada aplikasi
   'dropImport.title': 'Tambahkan ini ke duniamu?',
   'dropImport.descAvatar': 'Ini akan dikenakan sebagai avatarmu.',

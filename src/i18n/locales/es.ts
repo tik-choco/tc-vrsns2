@@ -149,6 +149,13 @@ export const es: Dict = {
   'objects.placedBy': 'colocado por {name}',
   'objects.orphans': '{count} quedaron de personas que se fueron. Permanecen hasta que salgas de la sala y nadie puede editarlas.',
 
+  // Volumen / alcance audible — solo objetos de audio y vídeo, se editan
+  // desde la barra de edición (EditToolbar.tsx)
+  'objects.volume': 'Volumen',
+  'objects.volumeValue': '{n}%',
+  'objects.range': 'Radio audible',
+  'objects.rangeValue': '{n} m',
+
   // Overlay de importación al soltar un archivo en cualquier parte de la app
   'dropImport.title': '¿Añadir esto a tu mundo?',
   'dropImport.descAvatar': 'Se llevará puesto como tu avatar.',
