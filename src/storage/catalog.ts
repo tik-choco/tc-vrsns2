@@ -25,6 +25,7 @@
 // Everything here is defensive: a corrupt or adversarial localStorage value
 // resolves to an empty list rather than throwing.
 import type { CatalogItem, PlacedKind, WorldFormat } from '../shared/types'
+import { syncTcSpace, type SpaceCatalogEntry } from '../interop/tcSpace.js'
 import { forgetForeignModel, getForeignModel, putForeignModel } from './modelVault.js'
 import { publishVrmBytes, vrmBytesFromCid } from './vrmSource.js'
 
@@ -170,6 +171,34 @@ function write(kind: CatalogKind, items: StoredItem[]): void {
   } catch {
     // Storage full or unavailable — the catalog just won't persist.
   }
+}
+
+const CATALOG_KINDS: readonly CatalogKind[] = ['avatar', 'world', 'object']
+
+/**
+ * Republishes the "TC Space" shared-bus snapshot (interop/tcSpace.ts) from
+ * every catalog's current contents. Foreign items are excluded — see this
+ * module's header and interop/tcSpace.ts's header for why a device must
+ * never offer someone else's bytes as its own. Called after every operation
+ * that can change which LOCAL items exist in any catalog: an add
+ * (addToCatalog), a removal (removeFromCatalog), a foreign promotion that
+ * drops a legacy entry out of the feed (markCatalogItemForeign), and a
+ * foreign import that happens to replace a same-cid local entry
+ * (addForeignToCatalog — a rare edge case, but publishSpaceSnapshot always
+ * recomputes from scratch so it costs nothing to cover). syncTcSpace itself
+ * never throws, so a publish hiccup here can never fail the catalog
+ * operation that triggered it. Exported for the one boot-time call in
+ * main.tsx — a catalog that predates the topic has no mutation coming.
+ */
+export function publishSpaceSnapshot(): void {
+  const entries: SpaceCatalogEntry[] = []
+  for (const kind of CATALOG_KINDS) {
+    for (const item of read(kind)) {
+      if (item.origin === 'foreign') continue
+      entries.push({ cid: item.cid, name: item.name, category: kind, format: item.format, asset: item.asset, mime: item.mime })
+    }
+  }
+  syncTcSpace(entries)
 }
 
 /**
@@ -345,6 +374,7 @@ export async function addToCatalog(
 
   const rest = read(kind).filter((i) => i.cid !== cid)
   write(kind, [item, ...rest])
+  publishSpaceSnapshot()
   return displayThumb ? { ...item, thumb: displayThumb } : item
 }
 
@@ -396,6 +426,10 @@ export async function addForeignToCatalog(
 
   const rest = read(kind).filter((i) => i.cid !== cid)
   write(kind, [item, ...rest])
+  // Foreign items are excluded from the "TC Space" feed themselves, but this
+  // can still displace a same-cid LOCAL entry that publishSpaceSnapshot was
+  // previously including — recompute so that removal is reflected.
+  publishSpaceSnapshot()
   return displayThumb ? { ...item, thumb: displayThumb } : item
 }
 
@@ -434,6 +468,7 @@ export function markCatalogItemForeign(
   }
   items[index] = updated
   write(kind, items)
+  publishSpaceSnapshot()
   return true
 }
 
@@ -471,6 +506,7 @@ export function removeFromCatalog(kind: CatalogKind, cid: string): CatalogItem[]
   const next = read(kind).filter((i) => i.cid !== cid)
   write(kind, next)
   void forgetForeignModel(cid)
+  publishSpaceSnapshot()
   return next
 }
 

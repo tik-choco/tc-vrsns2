@@ -2,17 +2,20 @@
 // encrypted-vault split between owned (local upload) and foreign (tc-town
 // character / peer avatar) items. localStorage isn't available under
 // vitest's node environment, so a minimal in-memory Storage stand-in is
-// stubbed in (mirrors worldSave.test.ts). vrmSource and modelVault are
-// mocked so the assertions are about WHICH store each path writes to, not
-// about mistlib or IndexedDB.
+// stubbed in (mirrors worldSave.test.ts). vrmSource, modelVault and
+// interop/tcSpace are mocked so the assertions are about WHICH store each
+// path writes to (and, for tcSpace, WHAT it republishes), not about mistlib,
+// IndexedDB, or the real shared bus.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CatalogItem } from '../shared/types'
+import type { SpaceCatalogEntry } from '../interop/tcSpace.js'
 
 let publishCalls: Array<{ name: string; bytes: Uint8Array }> = []
 let vaultPuts: Array<{ cid: string; bytes: Uint8Array }> = []
 let vaultForgets: string[] = []
 /** cid -> bytes the fake vault is holding, so getForeignModel can serve a hit. */
 const vaulted = new Map<string, Uint8Array>()
+let spaceSyncCalls: SpaceCatalogEntry[][] = []
 
 vi.mock('./vrmSource.js', () => ({
   publishVrmBytes: async (name: string, bytes: Uint8Array) => {
@@ -31,6 +34,12 @@ vi.mock('./modelVault.js', () => ({
   forgetForeignModel: async (cid: string) => {
     vaultForgets.push(cid)
     vaulted.delete(cid)
+  },
+}))
+
+vi.mock('../interop/tcSpace.js', () => ({
+  syncTcSpace: (entries: SpaceCatalogEntry[]) => {
+    spaceSyncCalls.push(entries)
   },
 }))
 
@@ -69,6 +78,7 @@ beforeEach(() => {
   vaultPuts = []
   vaultForgets = []
   vaulted.clear()
+  spaceSyncCalls = []
 })
 
 afterEach(() => {
@@ -213,6 +223,50 @@ describe('markCatalogItemForeign', () => {
 
     expect(result).toBe(false)
     expect(listCatalog('avatar')[0].source).toEqual({ name: 'Mira' })
+  })
+})
+
+describe('the "TC Space" shared-bus hook (interop/tcSpace.ts)', () => {
+  it('republishes after a local add, including the new item', async () => {
+    await addToCatalog('avatar', 'My Avatar', localUploadBytes(new Uint8Array([1])))
+
+    expect(spaceSyncCalls.length).toBeGreaterThan(0)
+    const lastCall = spaceSyncCalls[spaceSyncCalls.length - 1]
+    expect(lastCall).toEqual([{ cid: 'published-My Avatar', name: 'My Avatar', category: 'avatar', format: undefined, asset: undefined, mime: undefined }])
+  })
+
+  it('never includes a foreign item', async () => {
+    await addForeignToCatalog('avatar', 'Mira', 'town-cid-space-1', new Uint8Array([1]), { name: 'Mira' })
+
+    const lastCall = spaceSyncCalls[spaceSyncCalls.length - 1]
+    expect(lastCall).toEqual([])
+  })
+
+  it('drops the entry from the next snapshot after removal', async () => {
+    const item = await addToCatalog('object', 'A Prop', localUploadBytes(new Uint8Array([1])), { asset: 'model' })
+    expect(spaceSyncCalls[spaceSyncCalls.length - 1]).toHaveLength(1)
+
+    removeFromCatalog('object', item.cid)
+
+    expect(spaceSyncCalls[spaceSyncCalls.length - 1]).toEqual([])
+  })
+
+  it('drops the entry once a legacy item is promoted to foreign', async () => {
+    storage.raw.set('tc-vrsns2:catalog:avatars-v1', JSON.stringify([{ cid: 'legacy-cid-space', name: 'Old' }]))
+
+    markCatalogItemForeign('avatar', 'legacy-cid-space')
+
+    expect(spaceSyncCalls[spaceSyncCalls.length - 1]).toEqual([])
+  })
+
+  it('carries world format and object asset/mime through to the published entry', async () => {
+    await addToCatalog('world', 'My World', localUploadBytes(new Uint8Array([1])), { format: 'glb' })
+    let lastCall = spaceSyncCalls[spaceSyncCalls.length - 1]
+    expect(lastCall.find((e) => e.category === 'world')).toMatchObject({ format: 'glb' })
+
+    await addToCatalog('object', 'A Clip', localUploadBytes(new Uint8Array([1])), { asset: 'video', mime: 'video/mp4' })
+    lastCall = spaceSyncCalls[spaceSyncCalls.length - 1]
+    expect(lastCall.find((e) => e.category === 'object')).toMatchObject({ asset: 'video', mime: 'video/mp4' })
   })
 })
 
