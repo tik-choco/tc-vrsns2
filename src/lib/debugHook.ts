@@ -60,6 +60,44 @@ export type VrsnsDebug = {
    * peer id and nothing else.
    */
   peerScopes: (() => { room: string[]; node: string[]; strangers: string[] }) | null
+  /**
+   * R8 spike probe (ttsClient.ts populates this at module scope): runs one
+   * TTS synthesis and reports what came back, including a sha256 of the
+   * bytes so scripts/spike-voice-network.mjs can prove a chunked AI-Network
+   * transfer reassembled byte-identical to a direct-HTTP synthesis, not just
+   * "something non-empty arrived". Left `null` outside `?debug` builds like
+   * every other field here.
+   */
+  tts:
+    | ((req: {
+        text: string
+        voiceModel?: string
+        voiceName?: string
+        /** 'network' forces the room path, 'direct' forces HTTP, 'auto' uses the dispatcher. */
+        route?: 'auto' | 'direct' | 'network'
+      }) => Promise<{
+        ok: boolean
+        route: 'direct' | 'network'
+        byteLength: number
+        mime: string
+        /** lowercase hex sha256 of the returned bytes — proves the payload survived chunking intact */
+        sha256: string
+        ms: number
+        error?: string
+        /**
+         * The underlying error's diagnostic identity, when one is
+         * available: a MistaiError's `.code` (TTS_OUT_OF_ORDER,
+         * PROVIDER_DISCONNECTED, ...), falling back to a plain Error's
+         * `.name` otherwise. Only populated for a forced `route:'network'`
+         * probe today (ttsClient.ts's runTtsProbe) — the one path where a
+         * real thrown error reaches the probe instead of being swallowed
+         * into a generic null upstream. `error` alone ("no audio produced")
+         * couldn't distinguish a real mistai failure from any other
+         * unhappy path; this is what closed that gap.
+         */
+        errorCode?: string
+      }>)
+    | null
 }
 
 export const vrsnsDebug: VrsnsDebug | null = createBag()
@@ -88,6 +126,7 @@ function createBag(): VrsnsDebug | null {
     editable: null,
     npcs: null,
     peerScopes: null,
+    tts: null,
   }
   ;(window as unknown as { __vrsnsDebug?: VrsnsDebug }).__vrsnsDebug = bag
   return bag

@@ -24,7 +24,8 @@
     "test:e2e:ai-network-join": "node scripts/e2e-ai-network-join.mjs",
     "test:e2e:vault": "node scripts/e2e-vault.mjs",
     "test:e2e:resume": "node scripts/e2e-resume.mjs",
-    "test:e2e:bubble": "node scripts/e2e-bubble.mjs"
+    "test:e2e:bubble": "node scripts/e2e-bubble.mjs",
+    "spike:voice": "node scripts/spike-voice-network.mjs"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",

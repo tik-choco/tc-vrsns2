@@ -14,8 +14,8 @@
 // dead for anyone who had not configured TTS elsewhere. `stt`/`mic` stay
 // omitted rather than stubbed (checklist item 8): tc-vrsns2 still has no
 // speech input, and a row that configures nothing is worse than no row.
-import { useEffect, useMemo, useState } from 'preact/hooks'
-import type { LlmCallFn } from '@tik-choco/mistai'
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
+import type { LlmCallFn, SynthesizeFn } from '@tik-choco/mistai'
 import { streamChatCompletion } from '@tik-choco/mistai'
 import {
   LlmSettings,
@@ -30,6 +30,7 @@ import {
   isNetworkProviderBaseUrl,
   loadLlmConfig,
   resolvePreset,
+  resolveVoice,
   subscribeLlmConfig,
   type ResolvedLlmTargetV1,
   type SharedLlmConfigV1,
@@ -38,6 +39,7 @@ import { useTranslation } from '../../i18n'
 import { PanelShell } from './PanelShell'
 import { createMistaiNode } from '../../lib/mistaiNode'
 import { getAiConsumerClient } from '../../lib/aiClient'
+import { synthesizeDirect } from '../../lib/ttsClient'
 import { useTtsVoices } from '../../lib/ttsVoices'
 import {
   loadLlmProviderSettings,
@@ -121,6 +123,50 @@ export function AiPanel({ onClose }: Props) {
     )
   }
 
+  // Whether this device can actually answer a tts_request right now — gates
+  // both `synthesize` and `advertisedVoices` below. mistai derives
+  // provider_hello.services purely from which upstream functions are
+  // non-null (deriveHelloServices, @tik-choco/mistai/preact — it never asks
+  // whether the function would succeed), so passing a `synthesize` here
+  // unconditionally would make this device advertise 'tts' even with no TTS
+  // configured at all; a consumer would then route a request here just to
+  // collect a voice_error instead of failing over to a provider that can
+  // actually serve it. Mirrors tc-translate's ttsConfigured gate
+  // (src/hooks/useNetworkProvider.ts). The isNetworkProviderBaseUrl check is
+  // load-bearing on its own, same as shareablePresets' filter above: a
+  // device whose own TTS is itself "use the network" must not advertise
+  // TTS, or a room could route a request straight back into itself.
+  const ttsConfigured = useMemo(() => {
+    const voice = resolveVoice(shared, 'tts')
+    return Boolean(voice?.baseUrl && !isNetworkProviderBaseUrl(voice.baseUrl))
+  }, [shared])
+
+  // Provider-side TTS handler: paired with `ttsConfigured` below, this is
+  // the thing that actually makes this device advertise 'tts' in
+  // provider_hello (see this file's header comment on why NPC voice config
+  // already lives here). Reuses the same direct-HTTP path NPCs already
+  // synthesize their own lines through (ttsClient.ts's synthesizeDirect)
+  // instead of a second TTS implementation. synthesizeDirect never throws on
+  // its own — it resolves null on every unhappy path, including a config
+  // that goes away between the hello and this request — but mistai only
+  // knows to reply voice_error when the upstream function throws, so a null
+  // result is re-thrown here. Memoized (useCallback) for the same reason
+  // advertisedModels is memoized above: useNetworkProvider re-broadcasts
+  // provider_hello whenever its hello inputs change identity, and a fresh
+  // closure every render would thrash the room with hellos.
+  const synthesize: SynthesizeFn = useCallback(
+    async (text, model, voice) => {
+      const clip = await synthesizeDirect({ text, voiceModel: model, voiceName: voice })
+      if (!clip) throw new Error(t('ai.network.notConfigured'))
+      // Cast matches profile/sharedProfile.ts's base64ToBlob: lib.dom's
+      // Uint8Array<ArrayBufferLike> vs BlobPart's narrower
+      // ArrayBufferView<ArrayBuffer> is a TS/lib mismatch, not a real runtime
+      // concern — Blob has always accepted a plain Uint8Array.
+      return { blob: new Blob([clip.bytes as unknown as BlobPart], { type: clip.mime }), mime: clip.mime }
+    },
+    [t],
+  )
+
   const providerResult = useNetworkProvider({
     enabled: settings.networkProviderEnabled,
     roomId,
@@ -128,6 +174,13 @@ export function AiPanel({ onClose }: Props) {
     nodeIdStorageKey: PROVIDER_NODE_ID_STORAGE_KEY,
     callLlm,
     advertisedModels,
+    synthesize: ttsConfigured ? synthesize : undefined,
+    // useTtsVoices() falls back to OPENAI_TTS_VOICES whenever TTS is
+    // unconfigured or the live fetch came back empty (lib/ttsVoices.ts,
+    // getTtsVoices), so advertising it unconditionally would announce voice
+    // names this device's upstream may not actually have. Gating on the
+    // same ttsConfigured flag keeps the advertisement honest.
+    advertisedVoices: ttsConfigured ? ttsVoices : undefined,
   })
 
   return (
