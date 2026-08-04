@@ -827,49 +827,211 @@ body {
   }
 }
 
-/* --- Chat ----------------------------------------------------------------- */
+/* --- Chat (R7) --------------------------------------------------------
+   Two surfaces, matching ../tc-chat's own split between a full message
+   history and passing arrival notices (see that app's ChatWindow/Avatar for
+   the bubble anatomy this borrows: an identity chip, the sender's name, a
+   speech-bubble shape):
+     - .chat-panel is the persistent history log — every message since
+       joining, opened by focusing .chat-input (Enter in GameOverlay.tsx,
+       the mobile chat button, or a direct click all funnel through the same
+       real DOM focus event; see ChatPanel.tsx's handleFocus) and staying
+       open through chatting or moving around. Only GameOverlay's Escape
+       handler or ChatPanel's own Esc/empty-Enter close it — never blur
+       alone, so it does NOT disappear the moment the composer slides away.
+     - .chat-toasts is the top-right transient notification stack — the OLD
+       always-on corner log's spot, now reserved for arrivals nobody has
+       looked at yet. Suppressed outright while .chat-panel is open (it
+       already shows them), and each entry fades itself out on its own timer
+       (ChatPanel.tsx), independent of its neighbors.
+     - .chat-form is unchanged in spirit from before: a bottom-left composer
+       that slides in on focus and back out on blur, independent of whether
+       .chat-panel above it is open or closed.
+   .chat-msg / .chat-name / .chat-text are read directly by several e2e
+   harnesses (scripts/e2e-npc.mjs, e2e-bubble.mjs, e2e-npc-edit.mjs,
+   e2e-sync.mjs) — those three selectors must keep existing and keep meaning
+   what they already mean, even though the markup nested under `.chat-msg`
+   below is otherwise new. Unlike tc-chat's opaque page, every surface here
+   floats over a live, arbitrarily-colored 3D scene, so bubbles lean on a
+   stronger glass fill + blur + shadow than a page-backed bubble needs for
+   the same legibility. */
 
-.chat {
+.chat-panel {
+  position: absolute;
+  inset-block-start: calc(4.25rem + var(--sa-t));
+  inset-inline-end: calc(var(--sp-4) + var(--sa-r));
+  inline-size: min(24rem, calc(100vw - 2rem));
+  block-size: min(60vh, 34rem);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: var(--glass-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(calc(var(--blur) + 4px));
+  overflow: hidden;
+  z-index: 5;
+  animation: modal-in var(--dur-med) var(--ease-out) both;
+}
+.chat-panel-header {
+  display: flex;
+  justify-content: flex-end;
+  flex: none;
+  padding: 0.3rem 0.3rem 0;
+}
+.chat-panel-close {
+  inline-size: 1.9rem;
+  block-size: 1.9rem;
+}
+.chat-panel-body {
+  flex: 1;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.3rem 0.85rem 0.85rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* .chat-toasts sits in the exact spot .chat-panel does (they are never both
+   visible at once — see the header above), just without the card chrome:
+   each .chat-toast keeps its own glass bubble, like the old always-on log
+   did, rather than sitting inside one shared container surface. */
+.chat-toasts {
+  position: absolute;
+  inset-block-start: calc(4.25rem + var(--sa-t));
+  inset-inline-end: calc(var(--sp-4) + var(--sa-r));
+  inline-size: min(22rem, calc(100vw - 2rem));
+  max-block-size: 40vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  overflow: hidden;
+  /* Passive notices, not a control — clicks fall through to the 3D scene
+     underneath rather than this stack ever intercepting them. */
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Shared bubble-row anatomy for both surfaces (see this section's header) —
+   an identity chip, the sender's name, and a speech bubble. */
+.chat-msg,
+.chat-toast {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  max-inline-size: 100%;
+  animation: chat-rise-in var(--dur-fast) var(--ease-out) both;
+}
+.chat-msg--own,
+.chat-toast--own {
+  flex-direction: row-reverse;
+  align-self: flex-end;
+}
+/* Same sender, back to back within a few minutes — mirrors tc-chat's
+   grouped consecutive rows, but (deliberately, unlike tc-chat) never hides
+   the repeated chip or name: several e2e harnesses read `.chat-name` off
+   every `.chat-msg` unconditionally, including an exact-name equality check
+   on an NPC reply that may itself follow an earlier line from that same NPC
+   (see scripts/e2e-npc.mjs) — so only the gap between bubbles tightens
+   here, nothing about a message's own markup is ever conditional on its
+   neighbor. */
+.chat-msg--grouped {
+  margin-block-start: -0.35rem;
+}
+/* A toast fading itself out on its own timer (see ChatPanel.tsx) — a plain
+   opacity + tiny-rise transition, never a keyframe: the global
+   prefers-reduced-motion rule below already collapses transition-duration
+   to ~0, so this needs no separate reduced-motion override. */
+.chat-toast {
+  transition: opacity var(--dur-med) var(--ease), transform var(--dur-med) var(--ease);
+}
+.chat-toast--leaving {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.chat-avatar {
+  flex: none;
+  inline-size: 1.8rem;
+  block-size: 1.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-1);
+}
+.chat-bubble-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-inline-size: 0;
+  max-inline-size: calc(100% - 2.3rem);
+}
+.chat-msg--own .chat-bubble-col,
+.chat-toast--own .chat-bubble-col {
+  align-items: flex-end;
+}
+.chat-name {
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-inline-start: 0.3rem;
+}
+.chat-msg--own .chat-name,
+.chat-toast--own .chat-name {
+  margin-inline-start: 0;
+  margin-inline-end: 0.3rem;
+}
+.chat-bubble {
+  padding: 0.45rem 0.8rem;
+  border-radius: var(--r-lg);
+  background: var(--glass-1);
+  border-inline-start: 3px solid var(--accent-line);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(12px);
+  font-size: 0.85rem;
+  line-height: 1.35;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+.chat-msg--own .chat-bubble,
+.chat-toast--own .chat-bubble {
+  border-inline-start: none;
+  border-inline-end: 3px solid var(--accent-line);
+  background: linear-gradient(135deg, var(--accent-tint-strong), var(--glass-1));
+}
+.chat-form {
   position: absolute;
   inset-block-end: calc(var(--sp-4) + var(--sa-b));
   inset-inline-start: calc(var(--sp-4) + var(--sa-l));
   inline-size: min(22rem, calc(100vw - 2rem));
   display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  z-index: 5;
-}
-.chat-log {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  max-block-size: 32vh;
-  overflow-y: auto;
-  padding: 0.4rem;
-  mask-image: linear-gradient(to top, #000 78%, transparent);
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-.chat-msg {
-  padding: 0.3rem 0.6rem;
-  border-radius: 4px 12px 12px 12px;
-  background: var(--glass-2);
-  border-inline-start: 3px solid var(--accent-line);
-  backdrop-filter: blur(8px);
-  font-size: 0.85rem;
-  line-height: 1.35;
-  max-inline-size: 100%;
-  overflow-wrap: anywhere;
-  animation: rise var(--dur-med) var(--ease-out) both;
-}
-.chat-name {
-  font-weight: 700;
-  margin-inline-end: 0.4rem;
-}
-.chat-form {
-  display: flex;
   gap: 0.4rem;
   align-items: center;
+  z-index: 6;
+  transform: translateX(-100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out);
+}
+/* Arabic is this app's one RTL locale (see i18n/index.ts, which flips
+   <html dir>) — inset-inline-start above already rests the composer at the
+   document's start edge (the physical right, in RTL). Without this,
+   translateX(-100%) would still slide in from the physical left every time,
+   crossing the screen behind its own resting spot instead of entering from
+   the edge it actually docks against. */
+:dir(rtl) .chat-form {
+  transform: translateX(100%);
+}
+.chat-form--open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 .chat-input {
   flex: 1;
@@ -882,6 +1044,7 @@ body {
   color: var(--text);
   font: inherit;
   font-size: 0.9rem;
+  box-shadow: var(--shadow-2);
 }
 .chat-input::placeholder {
   color: var(--text-faint);
@@ -893,12 +1056,16 @@ body {
 }
 .chat-counter {
   flex: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--glass-1);
+  backdrop-filter: blur(var(--blur));
   font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
   /* Unobtrusive by default — only the color flips below, on approach to the
      cap, so the counter doesn't compete with the input for attention. */
-  opacity: 0.7;
+  opacity: 0.85;
 }
 .chat-counter-warn {
   color: var(--accent-line);
@@ -915,6 +1082,7 @@ body {
   background: var(--accent);
   color: var(--accent-contrast);
   cursor: pointer;
+  box-shadow: var(--shadow-2);
   transition: transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
 .chat-send:active {
@@ -1612,7 +1780,9 @@ body {
     max-block-size: none;
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
   }
-  .chat {
+  .chat-panel,
+  .chat-toasts,
+  .chat-form {
     inline-size: calc(100vw - 2rem);
   }
   .btn-text-collapse,
@@ -1643,18 +1813,20 @@ body {
   }
 }
 
-/* Touch portrait: the chat log grows upward from its default bottom anchor and
-   spans nearly the full width, which climbs tall enough — once messages pile
-   up — to pass behind the joystick and jump/sprint buttons (both painted
-   above it, z-index 10 vs 5), hiding messages under them. The joystick and
-   jump/sprint buttons flank the bottom corners with only a slim gap between
-   them (too narrow to slot a chat bar into on most phones), so instead anchor
-   chat from the top, below the HUD, where it can grow downward into open
-   space. Stay clear of the .m-meta button column docked top-right. */
-@media (pointer: coarse) and (orientation: portrait) {
-  .chat {
-    inset-block-start: calc(4.25rem + var(--sa-t));
-    inset-block-end: auto;
+/* Touch: unlike the old single stacked chat block, .chat-panel/.chat-toasts
+   no longer grow tall with message count where the joystick/jump/sprint
+   buttons live — they're a fixed top-right region now (see the base rules
+   above), clear of them by construction. The only thing left to dodge here
+   is the .m-meta button column, which also docks top-right (see .m-meta
+   below): a plain inline-size: auto lets either shrink to whatever room
+   that clearance leaves rather than risk overflowing the opposite edge on
+   narrow phones. .chat-form is left at its own default bottom-left position
+   even here — focusing it to type triggers the on-screen keyboard on real
+   devices, which already dominates that half of the screen, so hand-tuning
+   the composer's rest position around the joystick specifically buys little. */
+@media (pointer: coarse) {
+  .chat-panel,
+  .chat-toasts {
     inset-inline-end: calc(5rem + var(--sa-r));
     inline-size: auto;
   }
@@ -1669,20 +1841,13 @@ body {
     flex-direction: row-reverse;
     align-items: center;
   }
-  .chat {
-    /* Short landscape height means a bottom-anchored chat can overlap the
-       joystick (left) and jump/sprint buttons (right) even before it grows —
-       but landscape's width has plenty to spare, so slot it into the gap
-       between them instead of spanning full width. The start offset mirrors
-       the joystick's own inset+size formula (so it always clears the
-       joystick's right edge); the end offset clears the jump/sprint row,
-       which in landscape is laid out horizontally (their combined width plus
-       gap, a fixed rem sum, not viewport-scaled). */
-    inset-inline-start: calc(
-      var(--sa-l) + clamp(1.5rem, 8vw, 3.5rem) + clamp(7rem, 20vw, 10rem) + 0.75rem
-    );
-    inset-inline-end: calc(12rem + var(--sa-r));
-    inline-size: auto;
+  .chat-panel,
+  .chat-toasts {
+    /* .m-meta is a 4-button ROW here (row-reverse above), not portrait's
+       single-file column, so it needs proportionally more end clearance
+       than the default @media (pointer: coarse) rule gives it — landscape's
+       width has plenty to spare either way. */
+    inset-inline-end: calc(16rem + var(--sa-r));
   }
 }
 
@@ -1704,6 +1869,20 @@ body {
   }
   to {
     opacity: 1;
+  }
+}
+/* Chat is a stream, not a card — a small, opacity-led rise (no scale, unlike
+   .rise above) for each new line, mirroring ../tc-chat/src/styles/motion.css's
+   own guiding rule for exactly this case ("new lines may fade in gently,
+   opacity-led, tiny rise, short; no overshoot or bounce anywhere"). */
+@keyframes chat-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 /* Shared modal/menu entrance — a soft ease-out scale+fade rather than an

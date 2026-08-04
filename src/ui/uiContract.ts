@@ -52,6 +52,17 @@ export type CatalogItem = {
 
 export type GameOverlayProps = {
   profile: PlayerProfile
+  /**
+   * RoomSession.selfId (via useSession's SessionApi), so ChatPanel can tell
+   * its own lines apart from everyone else's the same reliable way the
+   * network layer already does — every locally-sent ChatMessage's `fromId`
+   * is set to exactly this (see RoomSession.sendChat). Deliberately NOT
+   * derived from `profile.name`: two players may share a display name, and
+   * matching on it would misattribute messages between them. Null for the
+   * brief window before a room is actually joined (GameOverlay only mounts
+   * once joined, but selfId itself resolves asynchronously inside join()).
+   */
+  selfId: string | null
   roomId: string
   peerCount: number
   messages: ChatMessage[]
