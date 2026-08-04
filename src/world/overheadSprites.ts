@@ -235,13 +235,19 @@ function revealIntervalMs(line: string): number {
   return clamp(BUBBLE_REVEAL_BASE_MS + line.length * BUBBLE_REVEAL_PER_CHAR_MS, BUBBLE_REVEAL_MIN_MS, BUBBLE_REVEAL_MAX_MS)
 }
 
-// Fade + small upward slide on the incoming line only (requirement: reveal
-// "with animation"). Older lines already in the visible window are drawn at
-// rest — animating just the newest line is enough to read as "revealed in
-// order" without paying a redraw every frame for pixels that aren't
-// changing (see update()'s doc).
-const BUBBLE_TWEEN_MS = 220
-const BUBBLE_TWEEN_SLIDE_PX = 14
+// How long one reveal takes to settle. Everything that moves on a reveal —
+// the box's height while it is still growing, the whole text block once it
+// has started scrolling, and the incoming line's fade — runs on this single
+// clock, so they cannot drift apart.
+//
+// An earlier version tweened ONLY the newest line and let the box height and
+// the scroll step happen instantly, which is what made this look unfinished:
+// the box popped a row taller before its text existed, and past the growth
+// cap every line jumped a full row at once while just one of them faded.
+// Both were consequences of the canvas height BEING the box height, so any
+// height change had to be a discrete resize — see redraw() for how that is
+// decoupled now.
+const BUBBLE_TWEEN_MS = 320
 
 function easeOutCubic(t: number): number {
   const inv = 1 - t
@@ -264,6 +270,21 @@ export class ChatBubble extends CanvasSprite {
   private tweenStartAt = 0
   /** Whether the newest line's tween was still in flight as of the LAST redraw. Kept so update() draws exactly one extra frame after a tween crosses its threshold (locking in the fully-settled alpha/position) instead of potentially stopping one frame short of it — see update(). */
   private tweenWasActive = false
+  /**
+   * Rows the canvas is tall for THIS message — min(lines.length, cap), fixed
+   * in show(). The canvas is deliberately sized to the message's EVENTUAL
+   * maximum rather than its current one, so the box's own height can be a
+   * drawn quantity that eases, instead of a canvas dimension that can only
+   * jump. Rows the box has not grown into yet are simply transparent, and the
+   * sprite's world height stays constant for the whole message — which also
+   * makes the call sites' bottom-edge anchoring exact rather than
+   * recomputed every reveal.
+   */
+  private canvasRows = 1
+  /** Visible-window size as of the previous reveal — the value the eased box height animates FROM. */
+  private prevWindowSize = 1
+  /** First visible line index as of the previous reveal — the value the eased scroll animates FROM. Only ever differs from the current one past the growth cap. */
+  private prevStartIdx = 0
 
   constructor() {
     super()
@@ -315,6 +336,15 @@ export class ChatBubble extends CanvasSprite {
     let textWidth = 0
     for (const line of lines) textWidth = Math.max(textWidth, Math.ceil(this.ctx.measureText(line).width))
     this.canvasWidth = Math.max(80, textWidth + BUBBLE_PAD_X * 2)
+
+    // Height is fixed here too, to the tallest the box will ever get for this
+    // message — so resize() runs exactly once per message and never again
+    // mid-animation. The box grows inside this canvas instead of by resizing
+    // it (see redraw()).
+    this.canvasRows = Math.min(lines.length, BUBBLE_MAX_GROWTH_LINES)
+    this.prevWindowSize = 1
+    this.prevStartIdx = 0
+    this.resize(this.canvasWidth, this.canvasRows * BUBBLE_LINE_HEIGHT + BUBBLE_PAD_Y * 2)
 
     this.redraw()
     this.sprite.visible = true
@@ -368,17 +398,15 @@ export class ChatBubble extends CanvasSprite {
    * frame once the message has settled into its trailing dwell. This is the
    * per-avatar-per-frame method the spec's performance note is about: a
    * naive unconditional redraw here would turn a cosmetic feature into a
-   * real perf regression. redraw() below does call resize() on every
-   * invocation, but resize() itself is a no-op unless the canvas's
-   * dimensions actually changed (see CanvasSprite.resize) — and this
-   * bubble's dimensions only change once per REVEALED line (up to
-   * BUBBLE_MAX_GROWTH_LINES), not once per frame: a tweening-but-not-just-
-   * revealed frame calls resize() with the SAME height as last frame, so it
-   * costs a dimension comparison, nothing more. That is a deliberate
-   * departure from the previous version of this file, which never resized
-   * after show() at all — growing the box changes the calculus (see
-   * BUBBLE_MAX_GROWTH_LINES's doc): a resize per revealed line (roughly ten
-   * times across a long message) is nothing like a resize per frame.
+   * real perf regression.
+   *
+   * redraw() no longer resizes at all — the canvas is sized once per message
+   * in show(), to its eventual maximum, and the box's height is drawn into it
+   * rather than being the canvas's own height (see redraw()). So the only
+   * cost of a tweening frame is a 2D redraw and a texture upload, and the
+   * CanvasTexture is never disposed and recreated mid-message. An earlier
+   * version resized once per revealed line, which was affordable but is what
+   * forced the box's height to jump a whole row at a time.
    */
   update(): void {
     if (this.revealedCount === 0) return
@@ -396,6 +424,15 @@ export class ChatBubble extends CanvasSprite {
     // dwellMs of 0, which the type signature doesn't forbid.
     let revealChanged = false
     while (this.revealedCount < this.lines.length && now >= this.revealAt[this.revealedCount]) {
+      // Snapshot where the layout was BEFORE this reveal — those are the
+      // values the eased box height and scroll animate away from. Captured
+      // only on the first crossing of the frame, so a frame that skipped
+      // several reveals animates once, from where it was actually drawn last,
+      // rather than from an intermediate state nobody ever saw.
+      if (!revealChanged) {
+        this.prevWindowSize = Math.min(this.revealedCount, BUBBLE_MAX_GROWTH_LINES)
+        this.prevStartIdx = Math.max(0, this.revealedCount - this.prevWindowSize)
+      }
       this.revealedCount++
       revealChanged = true
     }
@@ -455,14 +492,32 @@ export class ChatBubble extends CanvasSprite {
    */
   private redraw(): void {
     const windowSize = Math.min(this.revealedCount, BUBBLE_MAX_GROWTH_LINES)
-    const height = windowSize * BUBBLE_LINE_HEIGHT + BUBBLE_PAD_Y * 2
-    this.resize(this.canvasWidth, height)
+    const startIdx = Math.max(0, this.revealedCount - windowSize)
+
+    // One eased clock for everything that moves on a reveal.
+    const eased = easeOutCubic(clamp((performance.now() - this.tweenStartAt) / BUBBLE_TWEEN_MS, 0, 1))
+    // Fractional rows, not integers: this is what buys smooth motion. While
+    // the box is still growing, `rows` slides between two row counts; once it
+    // has hit the cap, `rows` is pinned and `scroll` slides instead. The two
+    // phases never overlap — below the cap startIdx is always 0, at the cap
+    // windowSize stops changing — so one formula covers both.
+    const rows = this.prevWindowSize + (windowSize - this.prevWindowSize) * eased
+    const scroll = this.prevStartIdx + (startIdx - this.prevStartIdx) * eased
 
     const ctx = this.ctx
     const width = this.canvas.width
     const canvasHeight = this.canvas.height
+    // The canvas is sized to the message's MAXIMUM height and never resized
+    // again (see show()), so the box is drawn into it bottom-up: its top edge
+    // is wherever the current, eased height puts it, and everything above
+    // that stays transparent. That is the whole trick — the bottom edge, the
+    // one the call sites anchor to, never moves, while the top can sit at any
+    // sub-pixel height instead of snapping a full row at a time.
+    const boxHeight = rows * BUBBLE_LINE_HEIGHT + BUBBLE_PAD_Y * 2
+    const boxTop = canvasHeight - boxHeight
+
     ctx.clearRect(0, 0, width, canvasHeight)
-    roundRect(ctx, 0, 0, width, canvasHeight, 22)
+    roundRect(ctx, 0, boxTop, width, boxHeight, 22)
     ctx.fillStyle = 'rgba(240, 243, 250, 0.92)'
     ctx.fill()
     // A thin outline so the bubble stays legible against a near-white sky
@@ -473,30 +528,34 @@ export class ChatBubble extends CanvasSprite {
     ctx.strokeStyle = 'rgba(20, 22, 30, 0.18)'
     ctx.stroke()
 
+    // Clip to the box before drawing text. Mid-scroll the outgoing line is
+    // partly above the box's top edge, and without this it would draw over
+    // the transparent area above the bubble as a detached, floating row.
+    ctx.save()
+    roundRect(ctx, 0, boxTop, width, boxHeight, 22)
+    ctx.clip()
+
     ctx.font = BUBBLE_FONT
     ctx.textBaseline = 'middle'
-
-    const now = performance.now()
-    const startIdx = Math.max(0, this.revealedCount - windowSize)
-    for (let i = startIdx; i < this.revealedCount; i++) {
-      const rowInWindow = i - startIdx
-      const restY = BUBBLE_PAD_Y + rowInWindow * BUBBLE_LINE_HEIGHT + BUBBLE_LINE_HEIGHT / 2
-
-      let alpha = 1
-      let y = restY
-      if (i === this.revealedCount - 1) {
-        const t = clamp((now - this.tweenStartAt) / BUBBLE_TWEEN_MS, 0, 1)
-        const eased = easeOutCubic(t)
-        alpha = eased
-        y = restY + (1 - eased) * BUBBLE_TWEEN_SLIDE_PX
-      }
-
-      ctx.globalAlpha = alpha
-      ctx.fillStyle = '#161a24'
+    ctx.fillStyle = '#161a24'
+    // Start one row above the window so the line currently sliding out is
+    // drawn (and clipped) rather than popping out of existence.
+    const firstDrawn = Math.max(0, Math.floor(scroll) - 1)
+    for (let i = firstDrawn; i < this.revealedCount; i++) {
+      const y = boxTop + BUBBLE_PAD_Y + (i - scroll) * BUBBLE_LINE_HEIGHT + BUBBLE_LINE_HEIGHT / 2
+      // Only the newest line fades; the rest are already legible and are
+      // moving as a block, so fading them too would read as a flicker.
+      ctx.globalAlpha = i === this.revealedCount - 1 ? eased : 1
       ctx.fillText(this.lines[i], BUBBLE_PAD_X, y)
     }
     ctx.globalAlpha = 1
+    ctx.restore()
 
-    this.commit(BUBBLE_LINE_WORLD_HEIGHT * windowSize + BUBBLE_BASE_WORLD_HEIGHT)
+    // Constant for the whole message, since the canvas no longer changes
+    // size: the sprite quad covers the box's maximum extent and the unused
+    // rows are transparent. Call sites anchoring by the bottom edge
+    // (BUBBLE_GAP_ABOVE_TAG) therefore get a fixed value instead of one that
+    // changed under them on every reveal.
+    this.commit(BUBBLE_LINE_WORLD_HEIGHT * this.canvasRows + BUBBLE_BASE_WORLD_HEIGHT)
   }
 }
