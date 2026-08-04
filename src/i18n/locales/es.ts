@@ -146,6 +146,7 @@ export const es: Dict = {
   'objects.move': 'Mover',
   'objects.rotate': 'Girar',
   'objects.scale': 'Redimensionar',
+  'objects.size': 'Tamaño',
   'objects.placedBy': 'colocado por {name}',
   'objects.orphans': '{count} quedaron de personas que se fueron. Permanecen hasta que salgas de la sala y nadie puede editarlas.',
 

@@ -25,6 +25,7 @@ import {
   AUDIBLE_RANGE_DEFAULT,
   clampAudibleRange,
   clampNpcRadius,
+  clampScale,
   clampVolume,
   VOLUME_DEFAULT,
   type ObjectScriptInput,
@@ -214,6 +215,16 @@ export type SessionApi = {
   setObjectVolume: (id: string, volume: number) => void
   /** Edits an 'audio'/'video' placement's audible range, clamped to AUDIBLE_RANGE_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
   setObjectAudibleRange: (id: string, range: number) => void
+  /**
+   * Edits any placement's uniform scale by exact number, clamped to
+   * SCALE_MIN/SCALE_MAX (net/protocol.ts) — the same bounds
+   * parsePlacedObject clamps a peer's scale to on the wire. The numeric
+   * counterpart to dragging the Resize gizmo (EditToolbar's size field);
+   * unlike setObjectVolume/setObjectAudibleRange this is NOT limited to
+   * 'audio'/'video' placements, since every placement has a scale. Gated
+   * the same as any other edit.
+   */
+  setObjectScale: (id: string, scale: number) => void
   /**
    * Runs the natural-language "describe it" generator against the configured
    * model. Exposed straight from src/script/generate.ts (no session state
@@ -2117,6 +2128,33 @@ export function useSession(): SessionApi {
     [commitOwnObjects, reconcileObjects],
   )
 
+  /**
+   * Edits any placement's uniform scale from EditToolbar's numeric field —
+   * the exact-value counterpart to dragging the Resize gizmo (a drag can't
+   * land on an exact number or make two objects match). Same shape as
+   * setObjectVolume/setObjectAudibleRange above (gate on worldPolicy +
+   * editableIds, read the live placement off worldRef, clamp, claim +
+   * commitOwnObjects, then reconcile), but with no `kind` guard: scale is a
+   * required field on every PlacedObject, not an optional one like
+   * volume/audibleRange, so `fallback` for clampScale is simply the
+   * placement's current scale rather than a *_DEFAULT constant.
+   */
+  const setObjectScale = useCallback(
+    (id: string, scale: number) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current) return
+      const clamped = clampScale(scale, current.scale)
+      if (clamped === current.scale) return
+      const next: PlacedObject = { ...current, scale: clamped }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
   /** Every script window currently open. Called fresh every frame by ScriptWindowsHost — never memoize the result. */
   const getScriptWindows = useCallback((): ScriptWindow[] => worldRef.current?.scriptWindows() ?? [], [])
 
@@ -2331,6 +2369,7 @@ export function useSession(): SessionApi {
     setNpcVoice,
     setObjectVolume,
     setObjectAudibleRange,
+    setObjectScale,
     generateBehaviour: runGenerateBehaviour,
     scriptProblems,
     getScriptWindows,

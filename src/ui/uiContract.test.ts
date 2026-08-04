@@ -4,11 +4,14 @@
 // like the wire decoder's clamp (src/net/protocol.ts) even though it can't
 // import that module's private helper. clampVolume/clampAudibleRange are the
 // same guard for the volume/audible-range edits (see useSession.
-// setObjectVolume/setObjectAudibleRange).
+// setObjectVolume/setObjectAudibleRange), and clampScale is the same guard
+// for the scale edit (see useSession.setObjectScale) — it must agree with
+// parsePlacedObject's own SCALE_MIN/SCALE_MAX clamp so a typed value can
+// never disagree with what a peer would accept over the wire.
 import { describe, expect, it } from 'vitest'
-import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
+import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, SCALE_MAX, SCALE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
 import { NPC_LIMITS } from '../npc/limits'
-import { clampAudibleRange, clampNpcRadius, clampVolume } from './uiContract'
+import { clampAudibleRange, clampNpcRadius, clampScale, clampVolume } from './uiContract'
 
 describe('clampNpcRadius', () => {
   it('passes an in-range radius through unchanged', () => {
@@ -83,5 +86,31 @@ describe('clampAudibleRange', () => {
     expect(clampAudibleRange(Number.NaN, 6)).toBe(6)
     expect(clampAudibleRange(Number.POSITIVE_INFINITY, 6)).toBe(6)
     expect(clampAudibleRange(Number.NEGATIVE_INFINITY, 6)).toBe(6)
+  })
+})
+
+describe('clampScale', () => {
+  it('passes an in-range scale through unchanged', () => {
+    expect(clampScale(2.5, 1)).toBe(2.5)
+  })
+
+  it('clamps below SCALE_MIN up to SCALE_MIN', () => {
+    expect(clampScale(0, 1)).toBe(SCALE_MIN)
+    expect(clampScale(-5, 1)).toBe(SCALE_MIN)
+  })
+
+  it('clamps above SCALE_MAX down to SCALE_MAX', () => {
+    expect(clampScale(9999, 1)).toBe(SCALE_MAX)
+  })
+
+  it('accepts the exact bounds', () => {
+    expect(clampScale(SCALE_MIN, 1)).toBe(SCALE_MIN)
+    expect(clampScale(SCALE_MAX, 1)).toBe(SCALE_MAX)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampScale(Number.NaN, 3)).toBe(3)
+    expect(clampScale(Number.POSITIVE_INFINITY, 3)).toBe(3)
+    expect(clampScale(Number.NEGATIVE_INFINITY, 3)).toBe(3)
   })
 })

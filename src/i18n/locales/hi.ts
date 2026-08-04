@@ -146,6 +146,7 @@ export const hi: Dict = {
   'objects.move': 'खिसकाएँ',
   'objects.rotate': 'घुमाएँ',
   'objects.scale': 'आकार',
+  'objects.size': 'साइज़',
   'objects.placedBy': '{name} ने रखा',
   'objects.orphans': '{count} चीज़ें जा चुके लोगों की हैं। रूम छोड़ने तक दिखती रहेंगी, पर इन्हें कोई संपादित नहीं कर सकता।',
 

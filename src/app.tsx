@@ -187,6 +187,7 @@ export function App() {
           onSetNpcVoice={session.setNpcVoice}
           onSetObjectVolume={session.setObjectVolume}
           onSetObjectAudibleRange={session.setObjectAudibleRange}
+          onSetObjectScale={session.setObjectScale}
           onGenerateBehaviour={session.generateBehaviour}
           scriptProblems={session.scriptProblems}
           getScriptWindows={session.getScriptWindows}

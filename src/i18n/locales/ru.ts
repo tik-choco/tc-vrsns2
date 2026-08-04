@@ -147,6 +147,7 @@ export const ru: Dict = {
   'objects.move': 'Переместить',
   'objects.rotate': 'Повернуть',
   'objects.scale': 'Размер',
+  'objects.size': 'Масштаб',
   'objects.placedBy': 'поставил(а) {name}',
   'objects.orphans': '{count} осталось от ушедших. Они видны, пока вы не выйдете из комнаты, и никто не может их изменить.',
 

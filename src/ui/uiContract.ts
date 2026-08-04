@@ -12,7 +12,7 @@ import type {
 } from '../shared/types'
 import type { CharacterIndexEntry } from '../interop/townCharacters'
 import type { DiscoveredRoom } from '../net/DiscoverySession'
-import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
+import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, SCALE_MAX, SCALE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
 import type { EditTool } from '../world/ObjectEditor'
 import { NPC_LIMITS } from '../npc/limits'
 import type { GenerateOutcome, GenerateProgress, GenerateRequest } from '../script/generate'
@@ -169,6 +169,17 @@ export type GameOverlayProps = {
    */
   onSetObjectAudibleRange: (id: string, range: number) => void
   /**
+   * Edits any placement's uniform scale, typed as an exact number — the
+   * alternative to dragging the Resize gizmo, which can't land on an exact
+   * value or make two objects match. Unlike onSetObjectVolume/
+   * onSetObjectAudibleRange this is NOT gated on `kind`: every placement has
+   * a scale (PlacedObject.scale is required, not optional), so EditToolbar
+   * shows this for any selected object. Goes through the same
+   * claim/editableIds path, so it is a no-op for a placement the local
+   * player may not edit.
+   */
+  onSetObjectScale: (id: string, scale: number) => void
+  /**
    * Runs the natural-language "describe it" generator (src/script/generate.ts)
    * against the configured model. A stateless pass-through — the UI owns no AI
    * state itself, it only renders the returned outcome (see BehaviourDialog)
@@ -273,4 +284,19 @@ export function clampVolume(volume: number, fallback: number): number {
 export function clampAudibleRange(range: number, fallback: number): number {
   if (!Number.isFinite(range)) return fallback
   return Math.min(AUDIBLE_RANGE_MAX, Math.max(AUDIBLE_RANGE_MIN, range))
+}
+
+/**
+ * Clamps a scale edit to SCALE_MIN/SCALE_MAX (net/protocol.ts) — the same
+ * bounds parsePlacedObject already clamps a peer's scale to on the wire, so
+ * a typed value can never disagree with what would survive a round trip
+ * through another peer. Same "correct rather than propagate" shape as
+ * clampVolume/clampAudibleRange above, but `fallback` is simply the
+ * placement's current scale rather than a *_DEFAULT constant: unlike
+ * volume/audibleRange, PlacedObject.scale is a required field, so there is
+ * no "never explicitly set" case to fall back to.
+ */
+export function clampScale(scale: number, fallback: number): number {
+  if (!Number.isFinite(scale)) return fallback
+  return Math.min(SCALE_MAX, Math.max(SCALE_MIN, scale))
 }
