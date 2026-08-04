@@ -815,6 +815,27 @@ body {
   }
 }
 
+/* R9: .chat-panel moved back to bottom-left and, unlike the block above,
+   doesn't move again above 1200px — it's always docked there on any
+   pointer:fine width (see the Chat section below). So .edit-bar needs its
+   own width ceiling at every width, not just the narrow one: centred OR
+   shifted right, cap how wide it's allowed to get before wrapping into an
+   extra row, so it can never grow back into .chat-panel's column. The
+   26rem budget is that column's own worst case (24rem inline-size + its
+   own sp-4 inset) plus a visible gap; centred, that has to come off BOTH
+   sides of the box for the box to stay centred at all (only the left side
+   actually needs it — the right side has nothing to dodge — so this is
+   deliberately more cautious than the bare minimum). Without this, an
+   object with enough fields to need one (an NPC's Behaviour/Voice/Hearing-
+   radius row, say) can render wide enough, even centred at 1280px, to
+   physically sit on top of .chat-send — confirmed by a real Playwright
+   click on it failing outright, not just a visual near-miss. */
+@media (pointer: fine) {
+  .edit-bar {
+    max-inline-size: max(18rem, calc(100vw - 2 * 26rem));
+  }
+}
+
 /* Touch: the bottom belt is the joystick and action buttons, so dock the bar
    under the HUD at the top instead. */
 @media (pointer: coarse) {
@@ -827,7 +848,7 @@ body {
   }
 }
 
-/* --- Chat (R7/R8) -------------------------------------------------------
+/* --- Chat (R7-R9) --------------------------------------------------------
    Two surfaces, matching ../tc-chat's own split between a full message
    history and passing arrival notices (see that app's ChatWindow/Avatar for
    the bubble anatomy this borrows: an identity chip, the sender's name, a
@@ -836,13 +857,23 @@ body {
        the composer beneath it (R8: these used to be two disjoint floating
        pieces — a top-right panel and a bottom-left input — that read as
        unrelated; now .chat-form is a normal flex child docked to this
-       panel's own bottom edge, see .chat-form below). Opened by focusing
-       .chat-input (Enter in GameOverlay.tsx, the mobile chat button, or a
-       direct click all funnel through the same real DOM focus event; see
-       ChatPanel.tsx's handleFocus) and staying open through chatting or
-       moving around. Only GameOverlay's Escape handler or ChatPanel's own
-       Esc/empty-Enter close it — never blur alone, so it does NOT disappear
-       the moment the input itself loses focus.
+       panel's own bottom edge, see .chat-form below). R9 moved the whole
+       card to the bottom-LEFT (inset-inline-start + inset-block-end) — it's
+       the notifications below that kept the top-right spot — nothing else
+       about the card changed: history still scrolls above a composer
+       pinned at the card's own bottom edge, so anchoring the whole card
+       there just means it now grows upward as history fills, instead of
+       downward. On touch (see the coarse-pointer override below) the true
+       bottom-left corner is where .joystick already lives, so there the
+       card is pinned between hud-top and the joystick instead of floating
+       freely above a fixed bottom edge — same shape, just less room to
+       grow into. Opened by focusing .chat-input (Enter in GameOverlay.tsx,
+       the mobile chat button, or a direct click all funnel through the same
+       real DOM focus event; see ChatPanel.tsx's handleFocus) and staying
+       open through chatting or moving around. Only GameOverlay's Escape
+       handler or ChatPanel's own Esc/empty-Enter close it — never blur
+       alone, so it does NOT disappear the moment the input itself loses
+       focus.
        The card is ALWAYS mounted (ChatPanel.tsx never conditionally renders
        it) so .chat-input stays a real, focusable element even before the
        panel has ever been opened — focusSignal calls .focus() on it
@@ -850,13 +881,15 @@ body {
        .chat-panel--open below), not a mount/unmount — only the history half
        (header + message list) still mounts/unmounts with `logOpen`, which is
        what lets the pop-in animation replay on every open.
-     - .chat-toasts is the top-right transient notification stack, in the
-       exact spot .chat-panel occupies (the closed .chat-panel is fully
-       transparent to clicks and paints nothing, see below, so there is no
-       conflict) — reserved for arrivals nobody has looked at yet. Suppressed
-       outright while .chat-panel is open (it already shows them), and each
-       entry fades itself out on its own timer (ChatPanel.tsx), independent
-       of its neighbors.
+     - .chat-toasts is the top-right transient notification stack — a
+       different corner from .chat-panel since R9, so the two can no longer
+       physically overlap — reserved for arrivals nobody has looked at yet.
+       Still suppressed outright while .chat-panel is open: that rule was
+       never about the two colliding on screen, it's about not telling
+       someone about a message twice (the panel already shows it), so it
+       stays even though collision itself is now impossible. Each toast
+       fades itself out on its own timer (ChatPanel.tsx), independent of its
+       neighbors.
    .chat-msg / .chat-name / .chat-text are read directly by several e2e
    harnesses (scripts/e2e-npc.mjs, e2e-bubble.mjs, e2e-npc-edit.mjs,
    e2e-sync.mjs) — those three selectors must keep existing and keep meaning
@@ -868,8 +901,16 @@ body {
 
 .chat-panel {
   position: absolute;
-  inset-block-start: calc(4.25rem + var(--sa-t));
-  inset-inline-end: calc(var(--sp-4) + var(--sa-r));
+  /* R9: bottom-left — grows upward as history fills, with the composer
+     (.chat-form, docked at the end of this flex column below) always
+     sitting at the card's own bottom edge, right at this anchor. Mirrors to
+     the right under RTL like every other inset-inline-* element already in
+     this HUD (the joystick, hud-top's own children, ...). See the
+     coarse-pointer override below for the touch-specific version, pinned to
+     both block edges instead — the true bottom-left corner on touch is
+     .joystick's, not this card's to float freely above. */
+  inset-block-end: calc(var(--sp-4) + var(--sa-b));
+  inset-inline-start: calc(var(--sp-4) + var(--sa-l));
   inline-size: min(24rem, calc(100vw - 2rem));
   block-size: min(60vh, 34rem);
   display: flex;
@@ -914,10 +955,12 @@ body {
   scrollbar-width: thin;
 }
 
-/* .chat-toasts sits in the exact spot .chat-panel does (they are never both
-   visible at once — see the header above), just without the card chrome:
+/* Its own top-right corner since R9 (.chat-panel now lives at the opposite,
+   start-side, corner — see the header above), just without the card chrome:
    each .chat-toast keeps its own glass bubble, like the old always-on log
-   did, rather than sitting inside one shared container surface. */
+   did, rather than sitting inside one shared container surface. Still never
+   shown at the same time as .chat-panel — see the header above for why that
+   suppression outlived the two corners no longer being able to collide. */
 .chat-toasts {
   position: absolute;
   inset-block-start: calc(4.25rem + var(--sa-t));
@@ -1030,7 +1073,8 @@ body {
    itself. It has no hidden state of its own: visibility rides entirely on
    the panel's opacity/pointer-events (see .chat-panel / .chat-panel--open
    above), which also means no RTL-specific transform is needed here any
-   more — .chat-panel's own inset-inline-end already mirrors correctly. */
+   more — .chat-panel's own inset-inline-start (R9) already mirrors
+   correctly. */
 .chat-form {
   flex: none;
   display: flex;
@@ -1824,23 +1868,52 @@ body {
 
 /* Touch: unlike the old single stacked chat block, .chat-panel/.chat-toasts
    no longer grow tall with message count where the joystick/jump/sprint
-   buttons live — they're a fixed top-right region now (see the base rules
-   above), clear of them by construction. The only thing left to dodge here
-   is the .m-meta button column, which also docks top-right (see .m-meta
-   below): a plain inline-size: auto lets either shrink to whatever room
-   that clearance leaves rather than risk overflowing the opposite edge on
-   narrow phones. R8 note: .chat-form now lives INSIDE .chat-panel (see that
-   class's own comment) rather than resting bottom-left on its own, so
-   focusing it to type moves with the panel, up here clear of the joystick,
-   instead of sitting where the on-screen keyboard was going to cover it
-   anyway — not independently re-verified on a real device against every
-   keyboard height, so if a phone's keyboard turns out to cover the input
-   itself, revisit this block's offsets first. */
+   buttons live — they're fixed regions now (see the base rules above),
+   clear of them by construction, each dodging whatever mobile control shares
+   its own corner:
+     - .chat-toasts stays top-right, so the thing it must clear is the
+       .m-meta button column, which also docks top-right (see .m-meta
+       below): a plain inline-size: auto lets it shrink to whatever room
+       that leaves, rather than risk overflowing the far edge on narrow
+       phones.
+     - .chat-panel (R9: bottom-left on desktop, see the base rule above)
+       can't keep floating freely above a fixed bottom edge here — the true
+       bottom-left corner on touch already belongs to .joystick. So instead
+       of one more inset, it's pinned to BOTH block edges: hud-top above
+       (the same "4.25rem" clearance .edit-bar's own coarse-pointer override
+       already uses below) and .joystick below, with block-size: auto
+       stretching it to fill whatever gap that leaves — shorter in
+       landscape, where the joystick eats a much bigger share of the
+       shorter viewport height (see the landscape block below for the
+       matching width bump). The composer still ends up sitting at the
+       card's own bottom edge either way; it's only the message list above
+       it that gives up room when the gap is tight. Its own left edge can
+       stay flush (no joystick clearance needed once the two are vertically
+       separated instead, the same way .chat-toasts and .m-meta already
+       are), but the right edge still needs the same kind of clearance from
+       .m-meta that .chat-toasts uses above it.
+       Both clearances are computed straight off the thing they're dodging
+       (.joystick's own offset + width; .edit-bar's own top clearance)
+       rather than a second flat constant, so neither can silently drift out
+       of sync if those numbers ever change.
+   R8 note: .chat-form still lives INSIDE .chat-panel (see that class's own
+   comment) rather than resting on its own, so focusing it to type moves
+   with the panel, already clear of the joystick either way — not
+   independently re-verified on a real device against every keyboard height,
+   so if a phone's keyboard turns out to cover the input itself, revisit
+   this block's offsets first. */
 @media (pointer: coarse) {
-  .chat-panel,
   .chat-toasts {
     inset-inline-end: calc(5rem + var(--sa-r));
     inline-size: auto;
+  }
+  .chat-panel {
+    inset-block-start: calc(4.25rem + var(--sa-t));
+    inset-block-end: calc(
+      clamp(3.5rem, 12vh, 7rem) + clamp(7rem, 20vw, 10rem) + var(--sa-b) + var(--sp-3)
+    );
+    block-size: auto;
+    inline-size: min(24rem, calc(100vw - var(--sp-4) - var(--sa-l) - 5rem - var(--sa-r)));
   }
 }
 
@@ -1853,13 +1926,24 @@ body {
     flex-direction: row-reverse;
     align-items: center;
   }
-  .chat-panel,
   .chat-toasts {
     /* .m-meta is a 4-button ROW here (row-reverse above), not portrait's
        single-file column, so it needs proportionally more end clearance
        than the default @media (pointer: coarse) rule gives it — landscape's
        width has plenty to spare either way. */
     inset-inline-end: calc(16rem + var(--sa-r));
+  }
+  /* Same reason as .chat-toasts just above: .m-meta is a wide row here, not
+     a narrow column, so .chat-panel needs the same bumped clearance on its
+     own right edge. Its block-axis pinning (see the coarse-pointer block
+     above) needs no landscape override of its own — .joystick's geometry
+     never changes with orientation, so that calc already adapts on its own.
+     It does mean this corner is genuinely tight on short landscape phones
+     though (as little as ~90px of message-list room, by hand, on a 375px-
+     tall viewport) — a direct consequence of the bottom-left corner there
+     already belonging to .joystick, not something this rule can fix. */
+  .chat-panel {
+    inline-size: min(24rem, calc(100vw - var(--sp-4) - var(--sa-l) - 16rem - var(--sa-r)));
   }
 }
 
