@@ -123,6 +123,18 @@ export const ru: Dict = {
   'world.policyEveryoneHint': 'Любой в комнате может перемещать, менять размер и удалять поставленное.',
   'world.policyLockedHint': 'Никто не может менять окружение и трогать поставленное.',
   'world.lockedNotice': 'Этот мир заблокирован. Измените настройку выше, чтобы редактировать.',
+  'world.transferLabel': 'Сохранить этот мир в файл',
+  'world.transferHint': 'Экспортируйте окружение и объекты этой комнаты в файл, который можно будет вернуть позже или передать кому-то ещё.',
+  'world.exportButton': 'Экспортировать в файл',
+  'world.importButton': 'Импортировать из файла',
+  'world.importParseError': 'Этот файл не является экспортом мира, который может прочитать это приложение.',
+  'world.importSummaryTitle': 'Импортировать «{fileName}»?',
+  'world.importObjectCount': 'В этом файле {count} объект(ов).',
+  'world.importHasEnvironment': 'Он также задаёт окружение комнаты.',
+  'world.importUnavailable': '{count} из {total} ресурсов этого файла ещё не на этом устройстве. Пока их нет, они будут выглядеть пустыми — как и любой другой отсутствующий элемент.',
+  'world.importAllAvailable': 'Все ресурсы, нужные этому файлу, уже есть на этом устройстве.',
+  'world.importConfirm': 'Импортировать',
+  'world.importing': 'Импорт…',
 
   // Objects panel
   'objects.title': 'Объекты',

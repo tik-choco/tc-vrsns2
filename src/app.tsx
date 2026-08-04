@@ -167,6 +167,8 @@ export function App() {
           onResetWorld={session.resetWorld}
           worldPolicy={session.worldPolicy}
           onSetWorldPolicy={session.setWorldPolicy}
+          onExportWorldManifest={session.exportWorldManifest}
+          onImportWorldManifest={session.importWorldManifest}
           objectModels={session.objectModels}
           placedCount={session.placedCount}
           ownPlacedCount={session.ownPlacedCount}

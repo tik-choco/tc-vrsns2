@@ -72,6 +72,31 @@ export function serializeWorldManifest(
   }
 }
 
+/** Characters invalid (or awkward) in a filename across common filesystems: path separators and reserved punctuation. */
+const FILENAME_UNSAFE = /[\\/:*?"<>|]/g
+
+/**
+ * Turns a world/room display name into a safe filename STEM (no extension —
+ * the caller appends `.json`) for WorldPanel's Export button. Strips
+ * characters invalid across common filesystems, collapses whitespace to a
+ * single hyphen, drops a leading run of dots (would otherwise read as a
+ * hidden file, or a lone `.`/`..` as a directory reference), and caps length
+ * so a pathologically long world/room name can't produce an unusable path.
+ * Deliberately does NOT lowercase or transliterate — a Japanese/Arabic/etc.
+ * world name should still read as itself in the downloaded filename, not be
+ * mangled into ASCII. `fallback` (default 'world') is what an empty or
+ * entirely-unsafe name resolves to, so a caller never has to special-case "".
+ */
+export function sanitizeManifestFilename(name: string, fallback = 'world'): string {
+  const cleaned = name
+    .replace(FILENAME_UNSAFE, ' ')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/^\.+/, '')
+    .slice(0, 64)
+  return cleaned.length > 0 ? cleaned : fallback
+}
+
 /**
  * cfg key every node that acts on another object uses to name it (see
  * nodes.ts's shared TARGET_CFG: `{ name: 'target', ... }`, reused across

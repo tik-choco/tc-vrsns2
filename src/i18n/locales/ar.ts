@@ -122,6 +122,18 @@ export const ar: Dict = {
   'world.policyEveryoneHint': 'يمكن لأي شخص في الغرفة تحريك ما وُضع أو تغيير حجمه أو حذفه.',
   'world.policyLockedHint': 'لا يمكن لأحد تغيير البيئة ولا لمس ما وُضع.',
   'world.lockedNotice': 'هذا العالم مقفل. غيّر الإعداد أعلاه للتعديل.',
+  'world.transferLabel': 'حفظ هذا العالم كملف',
+  'world.transferHint': 'صدّر بيئة هذه الغرفة وعناصرها كملف يمكنك استعادته لاحقًا أو مشاركته مع شخص آخر.',
+  'world.exportButton': 'تصدير كملف',
+  'world.importButton': 'استيراد من ملف',
+  'world.importParseError': 'هذا الملف ليس تصدير عالم يمكن لهذا التطبيق قراءته.',
+  'world.importSummaryTitle': 'استيراد "{fileName}"؟',
+  'world.importObjectCount': '{count} عنصر (عناصر) في هذا الملف.',
+  'world.importHasEnvironment': 'كما يحدد بيئة الغرفة.',
+  'world.importUnavailable': '{count} من {total} من الأصول في هذا الملف غير متاحة على هذا الجهاز بعد. ستظهر فارغة حتى تصبح متاحة، مثل أي عنصر آخر مفقود.',
+  'world.importAllAvailable': 'كل الأصول التي يحتاجها هذا الملف موجودة بالفعل على هذا الجهاز.',
+  'world.importConfirm': 'استيراد',
+  'world.importing': 'جارٍ الاستيراد…',
 
   // Objects panel
   'objects.title': 'العناصر',

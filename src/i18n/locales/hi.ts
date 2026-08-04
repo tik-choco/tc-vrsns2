@@ -122,6 +122,18 @@ export const hi: Dict = {
   'world.policyEveryoneHint': 'रूम में कोई भी रखी हुई चीज़ों को खिसका, आकार बदल या हटा सकता है।',
   'world.policyLockedHint': 'न माहौल बदला जा सकता है, न रखी हुई चीज़ों को छुआ जा सकता है।',
   'world.lockedNotice': 'यह दुनिया लॉक है। संपादित करने के लिए ऊपर की सेटिंग बदलें।',
+  'world.transferLabel': 'इस दुनिया को फ़ाइल के रूप में सेव करें',
+  'world.transferHint': 'इस रूम के वातावरण और ऑब्जेक्ट को एक फ़ाइल के रूप में एक्सपोर्ट करें, जिसे आप बाद में वापस ला सकें या किसी और के साथ शेयर कर सकें।',
+  'world.exportButton': 'फ़ाइल के रूप में एक्सपोर्ट करें',
+  'world.importButton': 'फ़ाइल से इम्पोर्ट करें',
+  'world.importParseError': 'यह फ़ाइल ऐसी दुनिया एक्सपोर्ट फ़ाइल नहीं है, जिसे यह ऐप पढ़ सके।',
+  'world.importSummaryTitle': '"{fileName}" इम्पोर्ट करें?',
+  'world.importObjectCount': 'इस फ़ाइल में {count} ऑब्जेक्ट हैं।',
+  'world.importHasEnvironment': 'यह रूम का वातावरण भी सेट करती है।',
+  'world.importUnavailable': 'इस फ़ाइल में मौजूद {total} में से {count} एसेट अभी इस डिवाइस पर नहीं हैं। जब तक ये उपलब्ध नहीं होतीं, तब तक ये खाली दिखेंगी — ठीक वैसे ही जैसे कोई और गायब चीज़ दिखती है।',
+  'world.importAllAvailable': 'इस फ़ाइल को जिन एसेट की ज़रूरत है, वे सभी पहले से इस डिवाइस पर मौजूद हैं।',
+  'world.importConfirm': 'इम्पोर्ट करें',
+  'world.importing': 'इम्पोर्ट हो रहा है…',
 
   // Objects panel
   'objects.title': 'ऑब्जेक्ट',

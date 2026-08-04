@@ -123,6 +123,18 @@ export const id: Dict = {
   'world.policyEveryoneHint': 'Siapa pun di ruang ini boleh memindah, mengubah ukuran, atau menghapus yang sudah ditempatkan.',
   'world.policyLockedHint': 'Tidak ada yang boleh mengubah lingkungan atau menyentuh yang sudah ditempatkan.',
   'world.lockedNotice': 'Dunia ini terkunci. Ubah pengaturan di atas untuk mengedit.',
+  'world.transferLabel': 'Simpan dunia ini sebagai file',
+  'world.transferHint': 'Ekspor lingkungan dan objek di ruang ini sebagai file yang bisa kamu pulihkan nanti atau bagikan ke orang lain.',
+  'world.exportButton': 'Ekspor sebagai file',
+  'world.importButton': 'Impor dari file',
+  'world.importParseError': 'File ini bukan file ekspor dunia yang bisa dibaca aplikasi ini.',
+  'world.importSummaryTitle': 'Impor "{fileName}"?',
+  'world.importObjectCount': '{count} objek dalam file ini.',
+  'world.importHasEnvironment': 'File ini juga mengatur lingkungan ruang.',
+  'world.importUnavailable': '{count} dari {total} aset dalam file ini belum ada di perangkat ini. Aset akan tampak kosong sampai tersedia, sama seperti item lain yang hilang.',
+  'world.importAllAvailable': 'Semua aset yang dibutuhkan file ini sudah ada di perangkat ini.',
+  'world.importConfirm': 'Impor',
+  'world.importing': 'Mengimpor…',
 
   // Objects panel
   'objects.title': 'Objek',

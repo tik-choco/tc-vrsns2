@@ -123,6 +123,18 @@ export const fr: Dict = {
   'world.policyEveryoneHint': 'Tout le monde dans le salon peut déplacer, redimensionner ou supprimer ce qui a été posé.',
   'world.policyLockedHint': 'Personne ne peut changer le décor ni toucher aux objets posés.',
   'world.lockedNotice': 'Ce monde est verrouillé. Changez le réglage ci-dessus pour le modifier.',
+  'world.transferLabel': 'Enregistrer ce monde dans un fichier',
+  'world.transferHint': 'Exportez l\'environnement et les objets de ce salon dans un fichier que vous pourrez retrouver plus tard ou partager avec quelqu\'un.',
+  'world.exportButton': 'Exporter en fichier',
+  'world.importButton': 'Importer depuis un fichier',
+  'world.importParseError': 'Ce fichier n\'est pas un export de monde que cette application peut lire.',
+  'world.importSummaryTitle': 'Importer "{fileName}" ?',
+  'world.importObjectCount': '{count} objet(s) dans ce fichier.',
+  'world.importHasEnvironment': 'Il définit aussi l\'environnement du salon.',
+  'world.importUnavailable': '{count} sur {total} ressources de ce fichier ne sont pas encore sur cet appareil. Elles resteront vides jusqu\'à ce qu\'elles le soient, comme tout autre élément manquant.',
+  'world.importAllAvailable': 'Toutes les ressources dont ce fichier a besoin sont déjà sur cet appareil.',
+  'world.importConfirm': 'Importer',
+  'world.importing': 'Importation…',
 
   // Objects panel
   'objects.title': 'Objets',

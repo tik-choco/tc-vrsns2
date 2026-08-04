@@ -124,6 +124,18 @@ export const en = {
   'world.policyEveryoneHint': 'Anyone in the room may move, resize or delete anything that was placed.',
   'world.policyLockedHint': 'Nobody may change the environment or touch what has been placed.',
   'world.lockedNotice': 'This world is locked. Change that above to make edits.',
+  'world.transferLabel': 'Save this world to a file',
+  'world.transferHint': 'Export the environment and objects in this room as a file you can bring back later or share with someone else.',
+  'world.exportButton': 'Export as file',
+  'world.importButton': 'Import from file',
+  'world.importParseError': "That file isn't a world export this app can read.",
+  'world.importSummaryTitle': 'Import "{fileName}"?',
+  'world.importObjectCount': '{count} object(s) in this file.',
+  'world.importHasEnvironment': "It also sets the room's environment.",
+  'world.importUnavailable': '{count} of {total} assets in this file are not on this device yet. They will look empty until they are, the same as anything else missing.',
+  'world.importAllAvailable': 'Every asset this file needs is already on this device.',
+  'world.importConfirm': 'Import',
+  'world.importing': 'Importing…',
 
   // Objects panel
   'objects.title': 'Objects',

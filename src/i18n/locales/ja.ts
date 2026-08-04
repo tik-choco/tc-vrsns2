@@ -122,6 +122,18 @@ export const ja: Dict = {
   'world.policyEveryoneHint': 'ルームにいる誰でも、置かれたものを移動・サイズ変更・削除できます。',
   'world.policyLockedHint': '環境の変更も、置かれたものへの操作もできません。',
   'world.lockedNotice': 'このワールドはロックされています。編集するには上の設定を変更してください。',
+  'world.transferLabel': 'このワールドをファイルに保存',
+  'world.transferHint': 'この部屋の環境とオブジェクトを、あとで復元したり誰かと共有したりできるファイルとして書き出します。',
+  'world.exportButton': 'ファイルとして書き出す',
+  'world.importButton': 'ファイルから読み込む',
+  'world.importParseError': 'このファイルは、このアプリが読み取れるワールドの書き出しファイルではありません。',
+  'world.importSummaryTitle': '「{fileName}」を読み込みますか？',
+  'world.importObjectCount': 'このファイルには{count}個のオブジェクトが含まれています。',
+  'world.importHasEnvironment': '部屋の環境も設定されます。',
+  'world.importUnavailable': 'このファイルが参照する{total}個中{count}個のアセットが、まだこの端末にありません。用意されるまでは、ほかの欠けているものと同様に空のまま表示されます。',
+  'world.importAllAvailable': 'このファイルが必要とするアセットは、すべてこの端末にすでにあります。',
+  'world.importConfirm': '読み込む',
+  'world.importing': '読み込み中…',
 
   // Objects panel
   'objects.title': 'オブジェクト',

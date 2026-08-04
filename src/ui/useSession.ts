@@ -57,6 +57,7 @@ import { migrateLegacyForeignAvatars } from '../storage/foreignMigration'
 import { publishVrmBytes, vrmBytesFromCid } from '../storage/vrmSource'
 import { ObjectRegistry } from './objectRegistry'
 import { loadWorldSave, saveWorldSave } from '../storage/worldSave'
+import { sanitizeManifestFilename, serializeWorldManifest, type WorldManifest } from '../storage/worldManifest'
 import {
   clampUserName,
   loadLocalProfile,
@@ -186,6 +187,26 @@ export type SessionApi = {
   resetWorld: () => void
   /** Announces who may edit this room's world (advisory, last writer wins). */
   setWorldPolicy: (policy: WorldEditPolicy) => void
+  /**
+   * Snapshots the room as it currently renders — the shared environment plus
+   * every visible placement (ours, peers', and orphans — see the function's
+   * own doc for why this differs from worldSave.ts's own()-only autosave) —
+   * into the portable manifest format (storage/worldManifest.ts), for
+   * WorldPanel's Export button. Returns null before a World exists
+   * (defensive; the button is only reachable once joined). The actual
+   * Blob/anchor download is WorldPanel's job, not this hook's — see that
+   * file for why.
+   */
+  exportWorldManifest: () => { manifest: WorldManifest; filename: string } | null
+  /**
+   * Applies an already-parsed, already-user-confirmed manifest (WorldPanel
+   * reads the file, runs it through parseWorldManifest, and shows the
+   * unavailable-asset count before ever calling this). Gated on worldPolicy
+   * exactly like every other world-mutating action. See the implementation's
+   * own doc for exactly what "applies" means for the objects and the
+   * environment.
+   */
+  importWorldManifest: (manifest: WorldManifest) => Promise<void>
   // objects
   /** Resolves the new catalog item's cid (or null on failure) — see uploadWorld's doc for why. */
   uploadObject: (file: File) => Promise<string | null>
@@ -1636,6 +1657,95 @@ export function useSession(): SessionApi {
   }, [persistWorld, setWorldEnv])
 
   /**
+   * Snapshots the room as it currently renders into the portable manifest
+   * format (storage/worldManifest.ts) for WorldPanel's Export button.
+   *
+   * Deliberately uses `world.listPlacedObjects()` — everything currently on
+   * screen (ours, peers', and orphans) — rather than the own()-only slice
+   * worldSave.ts's autosave restricts itself to. worldSave's own()-only rule
+   * exists to avoid duplicate ownership the NEXT time the SAME room is
+   * rejoined (see that module's header): restoring a peer's placement as
+   * ours would fork it the moment its actual owner came back. A manifest
+   * export has no such rejoin — it is a one-off hand-off of what this room
+   * currently looks like, to a file the user brings back later or gives to
+   * someone else, and importWorldManifest below already re-publishes every
+   * object under fresh ids regardless of who placed it here, so there is no
+   * ownership to fork. Capturing only our own contribution would silently
+   * drop everyone else's part of the room from what's supposed to be a
+   * snapshot of it.
+   *
+   * Returns null before a World exists (attachCanvas not yet run) — the
+   * Export button is only reachable once joined, so this is defensive, not a
+   * real UI path.
+   */
+  const exportWorldManifest = useCallback((): { manifest: WorldManifest; filename: string } | null => {
+    const world = worldRef.current
+    if (!world) return null
+    const manifest = serializeWorldManifest({
+      env: currentWorldRef.current,
+      objects: world.listPlacedObjects(),
+      policy: worldPolicyRef.current,
+    })
+    const filename = sanitizeManifestFilename(currentWorldRef.current?.name || activeRoomIdRef.current)
+    return { manifest, filename }
+  }, [])
+
+  /**
+   * Applies an already-parsed, already-user-confirmed manifest (WorldPanel
+   * parses the picked file through parseWorldManifest and shows the
+   * unavailable-asset count before ever calling this — see that function's
+   * own doc for why ids are already fresh and never need reconciling here).
+   * Gated on worldPolicy exactly like every other world-mutating action
+   * (placeObject, applyWorld, clearObjects).
+   *
+   * Objects: every imported placement joins OUR published set — importing
+   * makes the local player the publisher of all of it, same as claiming a
+   * peer's object under the 'everyone' policy (ObjectRegistry.claim) — and
+   * flows through the same commitOwnObjects/reconcileObjects path every
+   * other object-set change does, so it is broadcast, autosaved and synced
+   * into the live scene with no second code path.
+   *
+   * Environment: applied through applyEnvironment — the same local-apply
+   * logic a peer's MSG_WORLD, or the room's own autosave restore, already
+   * uses (fetch by cid, load, remember, persist), which is exactly "applies
+   * if it is available": a cid this device cannot resolve fails silently
+   * inside applyEnvironment and simply leaves the room's environment as it
+   * was, the same tolerance a missing object cid already gets (see
+   * ObjectRegistry's header on orphans). What applyEnvironment deliberately
+   * does NOT do is broadcast — right for a peer-told or restore-time
+   * application, where re-announcing would be redundant or wrong — but a
+   * deliberate import is a fresh local decision exactly like applyWorld, so
+   * the room does need telling; that half is added here instead.
+   *
+   * Does NOT adopt the manifest's `policy` — importing a world/object set is
+   * "bring this into my room", not "also let the exported room's edit policy
+   * override mine".
+   */
+  const importWorldManifest = useCallback(
+    async (manifest: WorldManifest) => {
+      if (!worldRef.current || worldPolicyRef.current === 'locked') return
+      setWorldBusy(true)
+      try {
+        if (manifest.objects.length > 0) {
+          commitOwnObjects([...objects.current.own(), ...manifest.objects])
+          reconcileObjects()
+        }
+        if (manifest.env) {
+          const env = manifest.env
+          await applyEnvironment(env)
+          if (currentWorldRef.current?.cid === env.cid) {
+            sessionRef.current?.setWorld(env)
+            updateResumeState({ worldCid: env.cid })
+          }
+        }
+      } finally {
+        setWorldBusy(false)
+      }
+    },
+    [applyEnvironment, commitOwnObjects, reconcileObjects],
+  )
+
+  /**
    * Announces an edit policy for the whole room and adopts it locally.
    * Advisory by nature: a P2P room has no authority, so this is an intent
    * every client honours in its own UI (see RoomSession.setWorldPolicy).
@@ -2357,6 +2467,8 @@ export function useSession(): SessionApi {
     applyWorld,
     resetWorld,
     setWorldPolicy,
+    exportWorldManifest,
+    importWorldManifest,
     uploadObject,
     placeObject,
     placeTownCharacter,
