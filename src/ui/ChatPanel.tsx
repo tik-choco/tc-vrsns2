@@ -108,12 +108,6 @@ type Toast = { message: ChatMessage; leaving: boolean }
 export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId, logOpen, onLogOpenChange }: Props) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
-  // Drives the composer's slide-in-from-the-edge animation (see .chat-form /
-  // .chat-form--open in style.css) — true exactly while the input is
-  // focused. No separate signal needed for the Enter-to-open shortcut or the
-  // mobile chat button: both already work by calling inputRef.focus() below
-  // (via focusSignal), which fires the native focus event this reads.
-  const [composerOpen, setComposerOpen] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const panelBodyRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -212,19 +206,20 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId
     }
   }
 
-  // Real DOM focus is the single source of truth for both the composer's
-  // slide-in state and the history panel's open state — covers direct clicks
-  // into the input as well as the Enter/mobile-button paths (both just call
-  // inputRef.current?.focus() above).
+  // Real DOM focus is the single source of truth for the history panel's
+  // open state — covers direct clicks into the input as well as the
+  // Enter/mobile-button paths (both just call inputRef.current?.focus()
+  // above).
   const handleFocus = () => {
-    setComposerOpen(true)
     onFocusChange(true)
     onLogOpenChange(true)
   }
   const handleBlur = () => {
-    setComposerOpen(false)
     onFocusChange(false)
     // Deliberately does NOT close the panel — see closeLog's own comment.
+    // The composer stays visible too: it lives inside .chat-panel now (see
+    // the render below), so as long as the panel itself is open the input
+    // row stays put whether or not it currently has real focus.
   }
 
   return (
@@ -247,65 +242,77 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId
         </div>
       )}
 
-      {/* The persistent history panel (R7): every message since joining,
-          tc-chat's own row anatomy (see ChatBubbleRow), staying open through
-          chatting or moving around — only Esc or an empty Enter closes it
-          (see closeLog and GameOverlay's keydown handler). .chat-msg /
-          .chat-name / .chat-text are read directly by several e2e harnesses
-          (scripts/e2e-npc.mjs, e2e-bubble.mjs, e2e-npc-edit.mjs,
-          e2e-sync.mjs) — those three selectors must keep existing here. */}
-      {logOpen && (
-        <div class="chat-panel">
-          <div class="chat-panel-header">
-            <button type="button" class="icon-btn chat-panel-close" aria-label={t('chat.close')} onClick={closeLog}>
-              <X size={16} aria-hidden="true" />
-            </button>
-          </div>
-          <div class="chat-panel-body" ref={panelBodyRef}>
-            {messages.map((m, i) => {
-              const prev = messages[i - 1]
-              const grouped = !!prev && prev.fromId === m.fromId && m.at - prev.at <= CHAT_GROUP_WINDOW_MS
-              return (
-                <ChatBubbleRow
-                  key={msgKey(m)}
-                  message={m}
-                  isOwn={!!selfId && m.fromId === selfId}
-                  base="chat-msg"
-                  grouped={grouped}
-                />
-              )
-            })}
-          </div>
-        </div>
-      )}
+      {/* The persistent history panel (R7) AND the composer now live in one
+          card (see the header comment in style.css): history scrolls above,
+          the input row is docked below it, so the two never again read as
+          unrelated floating pieces. This wrapper is ALWAYS mounted — even
+          while closed — purely so inputRef stays attached to a real <input>
+          for focusSignal to call .focus() on (Enter in GameOverlay, the
+          mobile chat button) before the panel has ever been opened; opening
+          is driven entirely by the .chat-panel--open modifier below
+          (opacity/pointer-events), never by mount/unmount, so that ref is
+          never lost. Only the history half (header + body) mounts/unmounts
+          with `logOpen` — that's what lets the modal-in pop animation replay
+          on every open, and keeps a closed panel from doing pointless scroll
+          bookkeeping. .chat-msg / .chat-name / .chat-text are read directly
+          by several e2e harnesses (scripts/e2e-npc.mjs, e2e-bubble.mjs,
+          e2e-npc-edit.mjs, e2e-sync.mjs) — those three selectors must keep
+          existing here. */}
+      <div class={logOpen ? 'chat-panel chat-panel--open' : 'chat-panel'}>
+        {logOpen && (
+          <>
+            <div class="chat-panel-header">
+              <button type="button" class="icon-btn chat-panel-close" aria-label={t('chat.close')} onClick={closeLog}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+            <div class="chat-panel-body" ref={panelBodyRef}>
+              {messages.map((m, i) => {
+                const prev = messages[i - 1]
+                const grouped = !!prev && prev.fromId === m.fromId && m.at - prev.at <= CHAT_GROUP_WINDOW_MS
+                return (
+                  <ChatBubbleRow
+                    key={msgKey(m)}
+                    message={m}
+                    isOwn={!!selfId && m.fromId === selfId}
+                    base="chat-msg"
+                    grouped={grouped}
+                  />
+                )
+              })}
+            </div>
+          </>
+        )}
 
-      <form class={composerOpen ? 'chat-form chat-form--open' : 'chat-form'} onSubmit={onSubmit}>
-        <input
-          ref={inputRef}
-          class="chat-input"
-          value={draft}
-          maxLength={CHAT_INPUT_MAX_CHARS}
-          placeholder={t('chat.placeholder')}
-          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
-          onKeyDown={onKeyDown}
-          onFocus={handleFocus}
-          onBlur={handleBlur}
-        />
-        {/* Numbers only, so this needs no locale strings — it reads the same
-            in every language. Stays quiet until the player nears the cap. */}
-        <span
-          class={
-            draft.length >= CHAT_INPUT_MAX_CHARS * CHAT_COUNTER_WARN_THRESHOLD
-              ? 'chat-counter chat-counter-warn'
-              : 'chat-counter'
-          }
-        >
-          {draft.length}/{CHAT_INPUT_MAX_CHARS}
-        </span>
-        <button type="submit" class="chat-send" aria-label={t('chat.send')} disabled={!draft.trim()}>
-          <Send size={16} aria-hidden="true" />
-        </button>
-      </form>
+        <form class="chat-form" onSubmit={onSubmit}>
+          <input
+            ref={inputRef}
+            class="chat-input"
+            value={draft}
+            maxLength={CHAT_INPUT_MAX_CHARS}
+            placeholder={t('chat.placeholder')}
+            onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+            onKeyDown={onKeyDown}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
+          />
+          {/* Numbers only, so this needs no locale strings — it reads the
+              same in every language. Stays quiet until the player nears the
+              cap. */}
+          <span
+            class={
+              draft.length >= CHAT_INPUT_MAX_CHARS * CHAT_COUNTER_WARN_THRESHOLD
+                ? 'chat-counter chat-counter-warn'
+                : 'chat-counter'
+            }
+          >
+            {draft.length}/{CHAT_INPUT_MAX_CHARS}
+          </span>
+          <button type="submit" class="chat-send" aria-label={t('chat.send')} disabled={!draft.trim()}>
+            <Send size={16} aria-hidden="true" />
+          </button>
+        </form>
+      </div>
     </>
   )
 }
