@@ -8,6 +8,7 @@ import { OBJECTS_MAX } from '../net/protocol'
 import {
   listManifestCids,
   parseWorldManifest,
+  sanitizeManifestFilename,
   serializeWorldManifest,
   WORLD_MANIFEST_VERSION,
   type WorldManifest,
@@ -231,5 +232,41 @@ describe('listManifestCids', () => {
       policy: 'owner',
     }
     expect(listManifestCids(manifest)).toEqual([])
+  })
+})
+
+describe('sanitizeManifestFilename', () => {
+  it('passes an already-safe name through unchanged', () => {
+    expect(sanitizeManifestFilename('Studio')).toBe('Studio')
+  })
+
+  it('collapses whitespace runs to a single hyphen', () => {
+    expect(sanitizeManifestFilename('My   Cozy   Room')).toBe('My-Cozy-Room')
+  })
+
+  it('strips characters invalid across common filesystems', () => {
+    expect(sanitizeManifestFilename('a/b\\c:d*e?f"g<h>i|j')).toBe('a-b-c-d-e-f-g-h-i-j')
+  })
+
+  it('drops a leading run of dots so the result can never read as a hidden file or directory reference', () => {
+    expect(sanitizeManifestFilename('..hidden')).toBe('hidden')
+    expect(sanitizeManifestFilename('.')).toBe('world')
+    expect(sanitizeManifestFilename('..')).toBe('world')
+  })
+
+  it('caps length at 64 characters', () => {
+    const long = 'x'.repeat(200)
+    expect(sanitizeManifestFilename(long)).toHaveLength(64)
+  })
+
+  it('falls back to "world" (or a supplied fallback) for an empty or entirely-unsafe name', () => {
+    expect(sanitizeManifestFilename('')).toBe('world')
+    expect(sanitizeManifestFilename('   ')).toBe('world')
+    expect(sanitizeManifestFilename('///')).toBe('world')
+    expect(sanitizeManifestFilename('', 'room')).toBe('room')
+  })
+
+  it('preserves non-ASCII world names rather than transliterating them', () => {
+    expect(sanitizeManifestFilename('スタジオ')).toBe('スタジオ')
   })
 })

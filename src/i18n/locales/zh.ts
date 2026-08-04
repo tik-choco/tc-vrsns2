@@ -122,6 +122,18 @@ export const zh: Dict = {
   'world.policyEveryoneHint': '房间里的任何人都能移动、缩放或删除已放置的物体。',
   'world.policyLockedHint': '不能更改环境，也不能操作已放置的物体。',
   'world.lockedNotice': '该世界已锁定。要编辑请先修改上面的设置。',
+  'world.transferLabel': '将此世界保存为文件',
+  'world.transferHint': '将此房间的环境和物体导出为文件，方便以后恢复或分享给他人。',
+  'world.exportButton': '导出为文件',
+  'world.importButton': '从文件导入',
+  'world.importParseError': '该文件不是本应用能读取的世界导出文件。',
+  'world.importSummaryTitle': '导入"{fileName}"？',
+  'world.importObjectCount': '此文件中有 {count} 个物体。',
+  'world.importHasEnvironment': '它还会设置房间的环境。',
+  'world.importUnavailable': '此文件引用的 {total} 个资源中有 {count} 个尚未在此设备上。在获取之前会显示为空，与其他缺失项一样。',
+  'world.importAllAvailable': '此文件所需的全部资源已在此设备上。',
+  'world.importConfirm': '导入',
+  'world.importing': '正在导入…',
 
   // Objects panel
   'objects.title': '物体',

@@ -122,6 +122,18 @@ export const pt: Dict = {
   'world.policyEveryoneHint': 'Qualquer pessoa na sala pode mover, redimensionar ou apagar o que foi colocado.',
   'world.policyLockedHint': 'Ninguém pode mudar o ambiente nem mexer no que foi colocado.',
   'world.lockedNotice': 'Este mundo está bloqueado. Mude o ajuste acima para editar.',
+  'world.transferLabel': 'Salvar este mundo em um arquivo',
+  'world.transferHint': 'Exporte o ambiente e os objetos desta sala como um arquivo que você pode recuperar depois ou compartilhar com alguém.',
+  'world.exportButton': 'Exportar como arquivo',
+  'world.importButton': 'Importar de arquivo',
+  'world.importParseError': 'Esse arquivo não é uma exportação de mundo que este app consiga ler.',
+  'world.importSummaryTitle': 'Importar "{fileName}"?',
+  'world.importObjectCount': '{count} objeto(s) neste arquivo.',
+  'world.importHasEnvironment': 'Também define o ambiente da sala.',
+  'world.importUnavailable': '{count} de {total} recursos deste arquivo ainda não estão neste dispositivo. Eles aparecerão vazios até estarem disponíveis, assim como qualquer outro item ausente.',
+  'world.importAllAvailable': 'Todos os recursos que este arquivo precisa já estão neste dispositivo.',
+  'world.importConfirm': 'Importar',
+  'world.importing': 'Importando…',
 
   // Objects panel
   'objects.title': 'Objetos',

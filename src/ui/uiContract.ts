@@ -16,6 +16,7 @@ import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, SCALE_MAX, SCALE_MIN, VOLUME_MAX,
 import type { EditTool } from '../world/ObjectEditor'
 import { NPC_LIMITS } from '../npc/limits'
 import type { GenerateOutcome, GenerateProgress, GenerateRequest } from '../script/generate'
+import type { WorldManifest } from '../storage/worldManifest'
 import type { ScriptError, ScriptGraph, ScriptWindow, TriggerVolume, UiAnchor } from '../script/ir'
 import type { ScriptPresetId } from '../script/presets'
 import type { ScreenProjection } from './ScriptWindow'
@@ -106,6 +107,24 @@ export type GameOverlayProps = {
   /** Room-wide advisory rule for who may edit; 'locked' hides every world edit. */
   worldPolicy: WorldEditPolicy
   onSetWorldPolicy: (policy: WorldEditPolicy) => void
+  /**
+   * Snapshots the room as it currently renders into the portable manifest
+   * format (storage/worldManifest.ts) for WorldPanel's Export button. Null
+   * if there is nothing to export yet (defensive — the button only shows
+   * once joined). The Blob/anchor download itself is a thin, untested
+   * wrapper inside WorldPanel.tsx, not here — this only hands back the data.
+   */
+  onExportWorldManifest: () => { manifest: WorldManifest; filename: string } | null
+  /**
+   * Applies an already-parsed, already-user-confirmed manifest — WorldPanel
+   * reads the picked file, runs it through worldManifest.ts's
+   * parseWorldManifest, cross-checks its referenced assets, and shows that
+   * summary before ever calling this. Every imported placement becomes ours
+   * to publish; the environment applies the same way onApplyWorld's target
+   * does, if the manifest carries one and it resolves. No-ops under a
+   * 'locked' worldPolicy, same as every other world-mutating callback here.
+   */
+  onImportWorldManifest: (manifest: WorldManifest) => Promise<void>
   // placeable objects (glTF props + image / video / audio media)
   objectModels: CatalogItem[]
   placedCount: number

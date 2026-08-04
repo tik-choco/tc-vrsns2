@@ -122,6 +122,18 @@ export const ko: Dict = {
   'world.policyEveryoneHint': '방에 있는 누구나 놓인 것을 옮기고 크기를 바꾸고 지울 수 있어요.',
   'world.policyLockedHint': '환경도 바꿀 수 없고 놓인 것도 건드릴 수 없어요.',
   'world.lockedNotice': '이 월드는 잠겨 있어요. 편집하려면 위 설정을 바꾸세요.',
+  'world.transferLabel': '이 월드를 파일로 저장',
+  'world.transferHint': '이 방의 환경과 오브젝트를 나중에 다시 가져오거나 다른 사람과 공유할 수 있는 파일로 내보내요.',
+  'world.exportButton': '파일로 내보내기',
+  'world.importButton': '파일에서 가져오기',
+  'world.importParseError': '이 파일은 이 앱이 읽을 수 있는 월드 내보내기 파일이 아니에요.',
+  'world.importSummaryTitle': '"{fileName}" 가져올까요?',
+  'world.importObjectCount': '이 파일에 오브젝트 {count}개가 있어요.',
+  'world.importHasEnvironment': '방의 환경도 함께 설정돼요.',
+  'world.importUnavailable': '이 파일이 참조하는 자산 {total}개 중 {count}개가 아직 이 기기에 없어요. 준비되기 전까지는 다른 누락된 항목처럼 비어 보여요.',
+  'world.importAllAvailable': '이 파일에 필요한 자산은 모두 이미 이 기기에 있어요.',
+  'world.importConfirm': '가져오기',
+  'world.importing': '가져오는 중…',
 
   // Objects panel
   'objects.title': '오브젝트',
