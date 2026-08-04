@@ -139,6 +139,7 @@ export function App() {
       {joined && (
         <GameOverlay
           profile={session.profile}
+          selfId={session.selfId}
           roomId={session.roomId}
           peerCount={session.peerCount}
           messages={session.messages}

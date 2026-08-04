@@ -60,6 +60,17 @@ export function GameOverlay(props: GameOverlayProps) {
   const [panel, setPanel] = useState<PanelId | null>(null)
   const [chatFocus, setChatFocus] = useState(0)
   const [chatFocused, setChatFocused] = useState(false)
+  // The persistent tc-chat-style history panel (R7). Lifted up here — rather
+  // than living entirely inside ChatPanel — because GameOverlay's own Escape
+  // handler below must be able to close it with the same precedence it
+  // already gives every other overlay it arbitrates. ChatPanel still drives
+  // this to true itself the instant the chat input gains focus by any means
+  // (see its own header comment); GameOverlay only ever sets it back to
+  // false, on an outer Escape. Deliberately NOT part of the gateInputRef
+  // effect below: the panel may sit open while the player keeps moving —
+  // only literal input focus (chatFocused) may freeze them, or they'd be
+  // stuck with no visible reason why.
+  const [chatLogOpen, setChatLogOpen] = useState(false)
   // The "Describe it…" dialog (R3), opened from EditToolbar's Behavior
   // picker. Owned here (not by EditToolbar) because, like a panel, it must
   // gate world input and take over Escape/Delete/V while it's up — see the
@@ -91,6 +102,8 @@ export function GameOverlay(props: GameOverlayProps) {
   const suppressAutoMenuUntil = useRef(0)
   const chatFocusedRef = useRef(chatFocused)
   chatFocusedRef.current = chatFocused
+  const chatLogOpenRef = useRef(chatLogOpen)
+  chatLogOpenRef.current = chatLogOpen
   // Edit-mode shortcuts (E / Delete / Escape) read through refs for the same
   // reason the mic toggle does: the keydown listener is registered once.
   const editModeRef = useRef(props.editMode)
@@ -163,6 +176,19 @@ export function GameOverlay(props: GameOverlayProps) {
       if (e.key === 'Escape') {
         if (panelStateRef.current) {
           setPanel(null)
+          return
+        }
+        // The chat history panel (R7): reaching this line already means the
+        // input itself isn't focused (isEditableFocused() above returned
+        // early otherwise, and ChatPanel's own Escape handler closes it —
+        // and stops the event — from inside the input), so this is purely
+        // "the panel is open but the player clicked/moved away from typing,
+        // and now pressed Escape to dismiss it outright." Takes the same
+        // priority over leaving edit mode that an open panel already does
+        // above, on the same "close the thing you most recently opened
+        // first" logic.
+        if (chatLogOpenRef.current) {
+          setChatLogOpen(false)
           return
         }
         if (editModeRef.current) {
@@ -318,12 +344,20 @@ export function GameOverlay(props: GameOverlayProps) {
         {canEdit && <span class="hint"><kbd class="kbd">E</kbd>{t('hud.hintEdit')}</span>}
       </div>
 
-      {/* Chat */}
+      {/* Chat (R7): a persistent tc-chat-style history panel, opened by
+          focusing the input (Enter above, the mobile chat button, or a
+          direct click all end up here — see ChatPanel's own header), plus a
+          transient top-right notification stack for messages arriving while
+          the panel is closed. See chatLogOpen's own comment above for why
+          its state lives here rather than inside ChatPanel. */}
       <ChatPanel
         messages={props.messages}
         onSend={props.onSendChat}
         onFocusChange={setChatFocused}
         focusSignal={chatFocus}
+        selfId={props.selfId}
+        logOpen={chatLogOpen}
+        onLogOpenChange={setChatLogOpen}
       />
 
       {/* In-world object editing (gizmo lives on the canvas) */}
