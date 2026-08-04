@@ -8,6 +8,7 @@
 
 import type {
   AnimState,
+  BoxAppearance,
   NpcBinding,
   ObjectState,
   PlacedKind,
@@ -197,6 +198,16 @@ export const VOLUME_MAX = 2
  */
 export const AUDIBLE_RANGE_MIN = 0.5
 export const AUDIBLE_RANGE_MAX = 100
+/**
+ * Bounds, in metres, for a box primitive's own edge lengths (BoxAppearance.
+ * sx/sy/sz) — separate from SCALE_MIN/MAX because those multiply these, not
+ * replace them (see BoxAppearance's doc comment).
+ */
+export const BOX_SIZE_MIN = 0.05
+export const BOX_SIZE_MAX = 100
+/** Bounds, in metres of face per texture repeat, for BoxAppearance.textureTile. */
+export const BOX_TILE_MIN = 0.05
+export const BOX_TILE_MAX = 20
 /** Cap on a placed object's MIME string (RFC 6838 names are far shorter). */
 export const MIME_MAX_LEN = 100
 /** Largest frame we bother decoding — bigger than a full object set could need. */
@@ -222,7 +233,14 @@ const WORLD_FORMATS: ReadonlySet<string> = new Set<WorldFormat>([
   'ksplat',
 ])
 
-const PLACED_KINDS: ReadonlySet<string> = new Set<PlacedKind>(['model', 'image', 'video', 'audio', 'npc'])
+const PLACED_KINDS: ReadonlySet<string> = new Set<PlacedKind>([
+  'model',
+  'image',
+  'video',
+  'audio',
+  'npc',
+  'box',
+])
 
 const EDIT_POLICIES: ReadonlySet<string> = new Set<WorldEditPolicy>(['owner', 'everyone', 'locked'])
 
@@ -352,6 +370,11 @@ export function parseWorldEnv(raw: unknown): WorldEnvironment | null {
  * to parse arbitrary bytes as glTF. A malformed `mime`, `volume`, or
  * `audibleRange` only drops that one field.
  *
+ * `cid` is required non-empty bytes-in-the-shared-store for every kind except
+ * 'box': a box primitive is authored entirely from `box` (BoxAppearance) and
+ * has no model/media bytes at all, so an empty cid is legal for it alone —
+ * that is why `kind` is read before the cid check below, rather than after.
+ *
  * Exported for the same reason as parseWorldEnv: the world autosave validates
  * restored placements through it.
  */
@@ -359,7 +382,10 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
   if (typeof o.id !== 'string' || o.id.length === 0 || o.id.length > CID_MAX_LEN) return null
-  if (typeof o.cid !== 'string' || o.cid.length === 0 || o.cid.length > CID_MAX_LEN) return null
+  if (o.kind !== undefined && (typeof o.kind !== 'string' || !PLACED_KINDS.has(o.kind))) return null
+  const kind: PlacedKind = o.kind !== undefined ? (o.kind as PlacedKind) : 'model'
+  if (typeof o.cid !== 'string' || o.cid.length > CID_MAX_LEN) return null
+  if (kind !== 'box' && o.cid.length === 0) return null
   const x = clampPos(o.x)
   const y = clampPos(o.y)
   const z = clampPos(o.z)
@@ -368,10 +394,7 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
   if (x === null || y === null || z === null || rotationY === null || scale === null) return null
   const name = typeof o.name === 'string' ? o.name.trim().slice(0, OBJECT_NAME_MAX_LEN) : ''
   const object: PlacedObject = { id: o.id, cid: o.cid, name, x, y, z, rotationY, scale }
-  if (o.kind !== undefined) {
-    if (typeof o.kind !== 'string' || !PLACED_KINDS.has(o.kind)) return null
-    if (o.kind !== 'model') object.kind = o.kind as PlacedKind
-  }
+  if (kind !== 'model') object.kind = kind
   if (typeof o.mime === 'string' && o.mime.length <= MIME_MAX_LEN && MIME_RE.test(o.mime)) {
     object.mime = o.mime
   }
@@ -410,7 +433,52 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
     const audibleRange = clampNumber(o.audibleRange, AUDIBLE_RANGE_MIN, AUDIBLE_RANGE_MAX)
     if (audibleRange !== null) object.audibleRange = audibleRange
   }
+  // Only ever set for kind 'box' — see PlacedObject.box's doc ("present iff
+  // kind === 'box'"). A missing or unparseable `box` on a box placement
+  // synthesizes the default appearance rather than leaving the placement
+  // appearance-less, same "inert but visible" spirit as npc's fallback above.
+  if (kind === 'box') {
+    object.box = parseBoxAppearance(o.box) ?? { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' }
+  }
   return object
+}
+
+/**
+ * Validates a peer-supplied BoxAppearance (kind 'box' placements only).
+ * Field-level tolerance throughout, matching parsePlacedObject's own
+ * mime/volume/audibleRange fields (see its doc comment) rather than the
+ * all-or-nothing script/trigger contract: a box with one bad dimension is
+ * still a perfectly renderable box, so nothing here ever discards the whole
+ * appearance — sx/sy/sz each clamp to BOX_SIZE_MIN..MAX (default 1 when
+ * missing/mistyped), `color` falls back to a neutral grey, and
+ * textureCid/textureTile are each dropped individually when malformed.
+ * `textureCid` is validated exactly like every other cid on the wire
+ * (non-empty, <= CID_MAX_LEN) — it names bytes in the same shared store.
+ *
+ * Returns null only when `raw` itself isn't an object at all; the caller
+ * (parsePlacedObject) then substitutes the same default appearance it uses
+ * for a box placement that omits `box` entirely.
+ */
+function parseBoxAppearance(raw: unknown): BoxAppearance | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  const sx = clampNumber(o.sx, BOX_SIZE_MIN, BOX_SIZE_MAX) ?? 1
+  const sy = clampNumber(o.sy, BOX_SIZE_MIN, BOX_SIZE_MAX) ?? 1
+  const sz = clampNumber(o.sz, BOX_SIZE_MIN, BOX_SIZE_MAX) ?? 1
+  // Reuses COLOR_RE (case-insensitive #rrggbb) rather than a second copy of
+  // the same pattern.
+  const color = typeof o.color === 'string' && COLOR_RE.test(o.color) ? o.color : '#9e9e9e'
+  const box: BoxAppearance = { sx, sy, sz, color }
+  if (
+    typeof o.textureCid === 'string' &&
+    o.textureCid.length > 0 &&
+    o.textureCid.length <= CID_MAX_LEN
+  ) {
+    box.textureCid = o.textureCid
+  }
+  const textureTile = clampNumber(o.textureTile, BOX_TILE_MIN, BOX_TILE_MAX)
+  if (textureTile !== null) box.textureTile = textureTile
+  return box
 }
 
 /**
@@ -429,6 +497,12 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
  * trimmed and capped, and dropped INDIVIDUALLY when malformed — a bad voice
  * name must never cost the peer their NPC placement, only its voice (it falls
  * back to the local peer's default TTS voice).
+ *
+ * `approachRange` gets the opposite fallback from `radius`: an absent or
+ * non-numeric value leaves the field ABSENT (feature off) rather than
+ * defaulting to some distance, since unlike hearing radius there is no
+ * sensible "every NPC always approaches this far" default — approach is an
+ * opt-in behaviour, not something every placement has always done.
  */
 function parseNpcBinding(raw: unknown): NpcBinding | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -445,6 +519,14 @@ function parseNpcBinding(raw: unknown): NpcBinding | null {
   if (typeof o.voiceName === 'string') {
     const voiceName = o.voiceName.trim().slice(0, CID_MAX_LEN)
     if (voiceName) binding.voiceName = voiceName
+  }
+  if (o.approachRange !== undefined) {
+    const approachRange = clampNumber(
+      o.approachRange,
+      NPC_LIMITS.minApproachRange,
+      NPC_LIMITS.maxApproachRange,
+    )
+    if (approachRange !== null) binding.approachRange = approachRange
   }
   return binding
 }

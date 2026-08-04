@@ -77,9 +77,32 @@ export type WorldFormat = 'glb' | 'gltf' | 'splat' | 'ply' | 'ksplat'
  * What a placeable catalog item actually is. 'model' is a glTF/GLB prop;
  * the media kinds are rendered as a flat panel ('image'/'video') or a small
  * emitter marker with positional audio ('audio'); 'npc' is a VRM character
- * that stands in the world and answers nearby chat (see NpcBinding).
+ * that stands in the world and answers nearby chat (see NpcBinding); 'box' is
+ * a primitive cuboid authored entirely from PlacedObject.box, with no model
+ * bytes at all (see PlacedObject.cid — a box is the one kind that legally
+ * ships an empty one).
  */
-export type PlacedKind = 'model' | 'image' | 'video' | 'audio' | 'npc'
+export type PlacedKind = 'model' | 'image' | 'video' | 'audio' | 'npc' | 'box'
+
+/**
+ * Appearance of a 'box' primitive placement — build-mode's answer to a real
+ * model, authored entirely on the wire instead of pointing at bytes in the
+ * shared store. Like scale/volume/audibleRange this is SYNCED authoring
+ * information, not a per-viewer local setting: the person composing the
+ * scene sets it, and the room's WorldEditPolicy governs who may change it.
+ */
+export type BoxAppearance = {
+  /** Edge lengths in metres, before the placement's uniform `scale` multiplies them. */
+  sx: number
+  sy: number
+  sz: number
+  /** '#rrggbb' fill colour; also the fallback while a texture loads. */
+  color: string
+  /** Image bytes in the shared store to wrap the box in. Absent = flat colour. */
+  textureCid?: string
+  /** Metres of face per texture repeat (world-locked tiling). Absent = 1. */
+  textureTile?: number
+}
 
 /**
  * Binds a placement to a character created in the sibling app tc-town
@@ -107,6 +130,14 @@ export type NpcBinding = {
    */
   voiceModel?: string
   voiceName?: string
+  /**
+   * Approach trigger radius in metres. A player entering it makes the peer
+   * currently publishing this placement (see the class doc above for why
+   * only that peer acts) walk the NPC toward them. Absent means the NPC
+   * stays put — this feature is off, so a placement from before this field
+   * existed behaves exactly as it always has.
+   */
+  approachRange?: number
 }
 
 /**
@@ -201,4 +232,14 @@ export type PlacedObject = {
    * before this field existed. Meaningless for any other kind.
    */
   audibleRange?: number
+  /**
+   * Appearance of this placement's box primitive. Present iff `kind` is
+   * 'box'; a placement claiming that kind without one still renders, using
+   * the default appearance (see net/protocol.ts's parsePlacedObject) — same
+   * "inert but visible" fallback `npc` gets from a missing/broken binding.
+   * Like scale or rotation this is SYNCED authoring information: the person
+   * composing the scene sets it, and the room's existing WorldEditPolicy
+   * governs who may change it.
+   */
+  box?: BoxAppearance
 }
