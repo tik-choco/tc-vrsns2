@@ -49,6 +49,14 @@ describe('encode/decode round trip', () => {
     expect(msg).toEqual({ kind: MSG_STATE, state })
   })
 
+  it('round-trips the crouch and crouchWalk anim states', () => {
+    for (const anim of ['crouch', 'crouchWalk'] as const) {
+      const state: PlayerState = { x: 0, y: 0, z: 0, ry: 0, anim }
+      const msg = decode(encode({ kind: MSG_STATE, state }))
+      expect(msg).toEqual({ kind: MSG_STATE, state })
+    }
+  })
+
   it('round-trips a chat message', () => {
     const msg = decode(encode({ kind: MSG_CHAT, text: 'hello "world" ✨' }))
     expect(msg).toEqual({ kind: MSG_CHAT, text: 'hello "world" ✨' })
@@ -942,6 +950,20 @@ describe('clamping and capping', () => {
     })
   })
 
+  it('falls back to idle for an out-of-vocabulary anim, keeping position intact', () => {
+    // An anim we don't recognise (e.g. a peer on a newer build than us) must
+    // not sink the whole MSG_STATE the way a bad x/y/z does — that would
+    // freeze the sender in place for us and then snap them to a new position
+    // once their anim changes again. x/y/z/ry stay honoured; only anim falls
+    // back, to 'idle' specifically since every build has always had it.
+    const dance = decode(frame(MSG_STATE, { x: 1, y: 2, z: 3, ry: 0.5, anim: 'dance' }))
+    expect(dance).toEqual({ kind: MSG_STATE, state: { x: 1, y: 2, z: 3, ry: 0.5, anim: 'idle' } })
+
+    // Wrong-typed anim is just another shape of "unrecognised" — same fallback.
+    const wrongType = decode(frame(MSG_STATE, { x: 1, y: 2, z: 3, ry: 0.5, anim: 7 }))
+    expect(wrongType).toEqual({ kind: MSG_STATE, state: { x: 1, y: 2, z: 3, ry: 0.5, anim: 'idle' } })
+  })
+
   it('caps chat text at 1000 chars and trims whitespace', () => {
     const msg = decode(frame(MSG_CHAT, { text: '  ' + 'a'.repeat(2000) }))
     expect(msg?.kind).toBe(MSG_CHAT)
@@ -978,11 +1000,6 @@ describe('malformed input rejection', () => {
     expect(decode(frame(MSG_STATE, { x: '1', y: 2, z: 3, ry: 0, anim: 'idle' }))).toBeNull()
     // JSON has no NaN/Infinity literal; null is what a naive encoder emits.
     expect(decode(frame(MSG_STATE, { x: null, y: 2, z: 3, ry: 0, anim: 'idle' }))).toBeNull()
-  })
-
-  it('rejects state with an out-of-vocabulary anim', () => {
-    expect(decode(frame(MSG_STATE, { x: 0, y: 0, z: 0, ry: 0, anim: 'dance' }))).toBeNull()
-    expect(decode(frame(MSG_STATE, { x: 0, y: 0, z: 0, ry: 0, anim: 7 }))).toBeNull()
   })
 
   it('rejects chat with missing, mistyped, or blank text', () => {

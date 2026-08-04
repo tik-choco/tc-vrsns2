@@ -43,6 +43,7 @@ export const de: Dict = {
   'hud.hintEdit': 'Bearbeiten',
   'hud.hintJump': 'Springen',
   'hud.hintSprint': 'Rennen',
+  'hud.hintCrouch': 'Ducken',
   'hud.hintMenu': 'Menü',
   'hud.locked': 'Welt gesperrt',
   'hud.openEditing': 'Alle dürfen bearbeiten',
@@ -148,6 +149,20 @@ export const de: Dict = {
   'objects.scale': 'Skalieren',
   'objects.placedBy': 'platziert von {name}',
   'objects.orphans': '{count} stammen von Leuten, die gegangen sind. Sie bleiben, bis du den Raum verlässt, und niemand kann sie bearbeiten.',
+
+  // Drop-Import-Overlay — eine Datei irgendwo in der App fallenlassen
+  'dropImport.title': 'Das zu deiner Welt hinzufügen?',
+  'dropImport.descAvatar': 'Das wird als dein Avatar getragen.',
+  'dropImport.descModel': 'Das wird als 3D-Modell in der Welt platziert.',
+  'dropImport.descImage': 'Das wird als Bild in der Welt platziert.',
+  'dropImport.descVideo': 'Das wird als Videobildschirm in der Welt platziert.',
+  'dropImport.descAudio': 'Das wird als Klang in der Welt platziert.',
+  'dropImport.descWorld': 'Das wird zur Umgebung, die alle im Raum sehen.',
+  'dropImport.addToWorld': 'Zur Welt hinzufügen',
+  'dropImport.setAsWorldEnvironment': 'Oder stattdessen als Weltumgebung festlegen',
+  'dropImport.saveOnly': 'Nur im Inventar speichern',
+  'dropImport.unsupportedTitle': 'Diese Datei kann nicht hinzugefügt werden',
+  'dropImport.unsupportedBody': '„{fileName}“ ist keine Avatar-, Welt- oder Objektdatei, die diese App verwenden kann.',
 
   // Room panel
   'room.title': 'Raum',

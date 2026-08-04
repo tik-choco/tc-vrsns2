@@ -66,17 +66,41 @@ class AnimClipState extends State {
 }
 
 /**
+ * Crossfade seconds into each state. Deliberately a TOTAL
+ * `Record<AnimState, number>` rather than a hand-written list of addState
+ * calls, because every safeguard around this registration is otherwise blind:
+ * `addState` takes a plain `string`, `setState` silently returns on a name it
+ * does not know, and `setAnimState` accepts the whole `AnimState` union — so
+ * an unregistered state type-checks, runs, and quietly animates nothing.
+ * That is not hypothetical: 'crouch'/'crouchWalk' were added to the union,
+ * to CLIP_SPECS and to PRIMITIVE_MOTION, compiled clean, passed every unit
+ * test, and still never played, because this constructor listed five names by
+ * hand. Only an e2e harness reading the live anim state caught it. Driving the
+ * registrations off this table makes the compiler reject the next AnimState
+ * that has no state behind it.
+ */
+const FADE_SECONDS: Record<AnimState, number> = {
+  idle: 0.25,
+  walk: 0.2,
+  run: 0.2,
+  jump: 0.12,
+  fall: 0.3,
+  // Posture changes read better a touch softer than a gait change; matching
+  // walk/run's 0.2 keeps the squat from snapping in.
+  crouch: 0.2,
+  crouchWalk: 0.2,
+}
+
+/**
  * State machine with one state per {@link AnimState}, driving an avatar rig.
  * The current state name is always a valid AnimState.
  */
 export class CharacterStateMachine extends StateMachine {
   constructor(rig: AvatarRig) {
     super()
-    this.addState('idle', new AnimClipState(this, rig, 'idle', 0.25))
-    this.addState('walk', new AnimClipState(this, rig, 'walk', 0.2))
-    this.addState('run', new AnimClipState(this, rig, 'run', 0.2))
-    this.addState('jump', new AnimClipState(this, rig, 'jump', 0.12))
-    this.addState('fall', new AnimClipState(this, rig, 'fall', 0.3))
+    for (const [name, fade] of Object.entries(FADE_SECONDS) as Array<[AnimState, number]>) {
+      this.addState(name, new AnimClipState(this, rig, name, fade))
+    }
     this.setState('idle')
   }
 

@@ -43,6 +43,7 @@ export const ru: Dict = {
   'hud.hintEdit': 'Правка',
   'hud.hintJump': 'Прыжок',
   'hud.hintSprint': 'Бег',
+  'hud.hintCrouch': 'Присед',
   'hud.hintMenu': 'Меню',
   'hud.locked': 'Мир заблокирован',
   'hud.openEditing': 'Редактировать могут все',
@@ -148,6 +149,20 @@ export const ru: Dict = {
   'objects.scale': 'Размер',
   'objects.placedBy': 'поставил(а) {name}',
   'objects.orphans': '{count} осталось от ушедших. Они видны, пока вы не выйдете из комнаты, и никто не может их изменить.',
+
+  // Оверлей импорта при перетаскивании файла в любое место приложения
+  'dropImport.title': 'Добавить это в ваш мир?',
+  'dropImport.descAvatar': 'Это будет надето как ваш аватар.',
+  'dropImport.descModel': 'Это будет размещено в мире как 3D-модель.',
+  'dropImport.descImage': 'Это будет размещено в мире как изображение.',
+  'dropImport.descVideo': 'Это будет размещено в мире как видеоэкран.',
+  'dropImport.descAudio': 'Это будет размещено в мире как звук.',
+  'dropImport.descWorld': 'Это станет окружением, которое видят все в комнате.',
+  'dropImport.addToWorld': 'Добавить в мир',
+  'dropImport.setAsWorldEnvironment': 'Или задать как окружение мира',
+  'dropImport.saveOnly': 'Сохранить только в инвентарь',
+  'dropImport.unsupportedTitle': 'Этот файл нельзя добавить',
+  'dropImport.unsupportedBody': '«{fileName}» не является файлом аватара, мира или объекта, который поддерживает это приложение.',
 
   // Room panel
   'room.title': 'Комната',

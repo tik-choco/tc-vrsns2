@@ -43,6 +43,7 @@ export const hi: Dict = {
   'hud.hintEdit': 'एडिट',
   'hud.hintJump': 'कूदें',
   'hud.hintSprint': 'दौड़ें',
+  'hud.hintCrouch': 'बैठें',
   'hud.hintMenu': 'मेन्यू',
   'hud.locked': 'दुनिया लॉक है',
   'hud.openEditing': 'सभी संपादित कर सकते हैं',
@@ -147,6 +148,20 @@ export const hi: Dict = {
   'objects.scale': 'आकार',
   'objects.placedBy': '{name} ने रखा',
   'objects.orphans': '{count} चीज़ें जा चुके लोगों की हैं। रूम छोड़ने तक दिखती रहेंगी, पर इन्हें कोई संपादित नहीं कर सकता।',
+
+  // ड्रॉप-इम्पोर्ट ओवरले — ऐप में कहीं भी फ़ाइल ड्रॉप करने पर
+  'dropImport.title': 'क्या इसे अपनी दुनिया में जोड़ें?',
+  'dropImport.descAvatar': 'यह आपके अवतार के रूप में पहना जाएगा।',
+  'dropImport.descModel': 'यह दुनिया में 3D मॉडल के रूप में रखा जाएगा।',
+  'dropImport.descImage': 'यह दुनिया में एक तस्वीर के रूप में रखा जाएगा।',
+  'dropImport.descVideo': 'यह दुनिया में एक वीडियो स्क्रीन के रूप में रखा जाएगा।',
+  'dropImport.descAudio': 'यह दुनिया में एक ध्वनि के रूप में रखा जाएगा।',
+  'dropImport.descWorld': 'यह वह माहौल बन जाएगा जो रूम में मौजूद सभी को दिखेगा।',
+  'dropImport.addToWorld': 'दुनिया में जोड़ें',
+  'dropImport.setAsWorldEnvironment': 'या इसके बजाय दुनिया के माहौल के रूप में सेट करें',
+  'dropImport.saveOnly': 'केवल इन्वेंट्री में सहेजें',
+  'dropImport.unsupportedTitle': 'यह फ़ाइल नहीं जोड़ी जा सकती',
+  'dropImport.unsupportedBody': '"{fileName}" न तो अवतार है, न दुनिया, न ही कोई ऑब्जेक्ट फ़ाइल जिसे यह ऐप इस्तेमाल कर सके।',
 
   // Room panel
   'room.title': 'रूम',

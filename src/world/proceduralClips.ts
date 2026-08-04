@@ -70,13 +70,32 @@ type ClipSpec = {
 
 const TWO_PI = Math.PI * 2
 
-function walkCycle(legAmp: number, kneeAmp: number, armAmp: number, elbow: number, lean: number, bob: number, duration: number): ClipSpec {
-  const knee = (p: number) => kneeAmp * Math.max(0, Math.sin(TWO_PI * (p + 0.08)))
+/**
+ * `crouch` is optional and defaults to a no-op, so the existing `walk`/`run`
+ * calls are unaffected. When given, it layers a constant knee/thigh bend and
+ * a hips drop on top of the same swinging gait — `crouchWalk` below is this
+ * function called with a shorter, slower stride (smaller legAmp/armAmp,
+ * longer duration) plus that bend, rather than a hand-written cycle.
+ */
+function walkCycle(
+  legAmp: number,
+  kneeAmp: number,
+  armAmp: number,
+  elbow: number,
+  lean: number,
+  bob: number,
+  duration: number,
+  crouch?: { hipsDrop: number; kneeBend: number; thighBend: number },
+): ClipSpec {
+  const kneeBend = crouch?.kneeBend ?? 0
+  const thighBend = crouch?.thighBend ?? 0
+  const hipsDrop = crouch?.hipsDrop ?? 0
+  const knee = (p: number) => kneeAmp * Math.max(0, Math.sin(TWO_PI * (p + 0.08))) + kneeBend
   return {
     duration,
     bones: {
-      leftUpperLeg: (p) => [-legAmp * Math.sin(TWO_PI * p), 0, 0],
-      rightUpperLeg: (p) => [legAmp * Math.sin(TWO_PI * p), 0, 0],
+      leftUpperLeg: (p) => [-legAmp * Math.sin(TWO_PI * p) + thighBend, 0, 0],
+      rightUpperLeg: (p) => [legAmp * Math.sin(TWO_PI * p) + thighBend, 0, 0],
       leftLowerLeg: (p) => [knee(p), 0, 0],
       rightLowerLeg: (p) => [knee(p + 0.5), 0, 0],
       leftUpperArm: (p) => [armAmp * Math.sin(TWO_PI * p), 0, -ARM_DOWN],
@@ -87,9 +106,18 @@ function walkCycle(legAmp: number, kneeAmp: number, armAmp: number, elbow: numbe
       spine: (p) => [lean + 0.04 * Math.sin(2 * TWO_PI * p), -0.06 * Math.sin(TWO_PI * p), 0],
       head: (p) => [0.03 * Math.sin(2 * TWO_PI * p), 0.04 * Math.sin(TWO_PI * p), 0],
     },
-    hipsOffset: (p) => [0, -bob + bob * Math.cos(2 * TWO_PI * p), 0],
+    hipsOffset: (p) => [0, hipsDrop - bob + bob * Math.cos(2 * TWO_PI * p), 0],
   }
 }
+
+// Shared by the static `crouch` pose and `crouchWalk`'s gait so both read as
+// the same stance. A moderate partial squat, not jump's full mid-air tuck
+// (compare jump's -0.75 thigh / +1.15 knee below) — enough to read clearly
+// as crouching without asking a VRM's leg proportions for angles verging on
+// a full sit.
+const CROUCH_HIPS_DROP = -0.22 // meters, hips lowered from standing rest
+const CROUCH_KNEE_BEND = 0.75 // radians, constant lower-leg (knee) flexion
+const CROUCH_THIGH_BEND = -0.3 // radians, thighs rotate forward to keep hips over the feet as knees bend
 
 const CLIP_SPECS: Record<AnimState, ClipSpec> = {
   idle: {
@@ -139,6 +167,35 @@ const CLIP_SPECS: Record<AnimState, ClipSpec> = {
       head: () => [0.08, 0, 0],
     },
   },
+  crouch: {
+    duration: 2.6,
+    bones: {
+      spine: (p) => [0.1 + 0.012 * Math.sin(TWO_PI * p), 0, 0],
+      chest: (p) => [0.01 * Math.sin(TWO_PI * p), 0, 0],
+      head: (p) => [0.012 * Math.sin(TWO_PI * p + 0.6), 0.012 * Math.sin(TWO_PI * p * 0.5), 0],
+      // Arms rest slightly forward of the T-pose-down BASE_POSE, hands near
+      // the raised knees rather than hanging straight — reads as a crouch
+      // silhouette rather than "standing person whose legs got shorter."
+      leftUpperArm: (p) => [0.12, 0, -ARM_DOWN + 0.35 + 0.02 * Math.sin(TWO_PI * p)],
+      rightUpperArm: (p) => [0.12, 0, ARM_DOWN - 0.35 - 0.02 * Math.sin(TWO_PI * p)],
+      leftLowerArm: () => [0, -0.3, 0],
+      rightLowerArm: () => [0, 0.3, 0],
+      leftUpperLeg: () => [CROUCH_THIGH_BEND, 0, 0],
+      rightUpperLeg: () => [CROUCH_THIGH_BEND, 0, 0],
+      leftLowerLeg: () => [CROUCH_KNEE_BEND, 0, 0],
+      rightLowerLeg: () => [CROUCH_KNEE_BEND, 0, 0],
+    },
+    // Lowered rest height plus the same breath-sag shape `idle` uses above,
+    // so a still crouch reads as "idle, but crouched" instead of a statue.
+    hipsOffset: (p) => [0, CROUCH_HIPS_DROP + 0.006 * (Math.sin(TWO_PI * p) - 1), 0],
+  },
+  // Shortened, slower stride (smaller legAmp/kneeAmp/armAmp, longer duration
+  // than `walk`) plus the crouch bend/drop above — see walkCycle's doc.
+  crouchWalk: walkCycle(0.32, 0.45, 0.18, 0.2, 0.1, 0.012, 1.3, {
+    hipsDrop: CROUCH_HIPS_DROP,
+    kneeBend: CROUCH_KNEE_BEND,
+    thighBend: CROUCH_THIGH_BEND,
+  }),
 }
 
 const SAMPLE_FPS = 30
@@ -202,5 +259,7 @@ export function buildProceduralClips(vrm: VRM): Record<AnimState, THREE.Animatio
     run: makeClip(vrm, 'run', CLIP_SPECS.run, flipVrm0),
     jump: makeClip(vrm, 'jump', CLIP_SPECS.jump, flipVrm0),
     fall: makeClip(vrm, 'fall', CLIP_SPECS.fall, flipVrm0),
+    crouch: makeClip(vrm, 'crouch', CLIP_SPECS.crouch, flipVrm0),
+    crouchWalk: makeClip(vrm, 'crouchWalk', CLIP_SPECS.crouchWalk, flipVrm0),
   }
 }

@@ -43,6 +43,7 @@ export const ar: Dict = {
   'hud.hintEdit': 'تحرير',
   'hud.hintJump': 'القفز',
   'hud.hintSprint': 'الركض',
+  'hud.hintCrouch': 'الانحناء',
   'hud.hintMenu': 'القائمة',
   'hud.locked': 'العالم مقفل',
   'hud.openEditing': 'يمكن للجميع التعديل',
@@ -147,6 +148,20 @@ export const ar: Dict = {
   'objects.scale': 'تحجيم',
   'objects.placedBy': 'وضعه {name}',
   'objects.orphans': '{count} تركها أشخاص غادروا. تبقى حتى تخرج من الغرفة ولا يمكن لأحد تعديلها.',
+
+  // نافذة استيراد السحب والإفلات — عند إسقاط ملف في أي مكان من التطبيق
+  'dropImport.title': 'هل تريد إضافة هذا إلى عالمك؟',
+  'dropImport.descAvatar': 'سيتم ارتداؤه كأفاتار لك.',
+  'dropImport.descModel': 'سيتم وضعه في العالم كنموذج ثلاثي الأبعاد.',
+  'dropImport.descImage': 'سيتم وضعه في العالم كصورة.',
+  'dropImport.descVideo': 'سيتم وضعه في العالم كشاشة فيديو.',
+  'dropImport.descAudio': 'سيتم وضعه في العالم كصوت.',
+  'dropImport.descWorld': 'سيصبح البيئة التي يراها الجميع في الغرفة.',
+  'dropImport.addToWorld': 'إضافة إلى العالم',
+  'dropImport.setAsWorldEnvironment': 'أو تعيينه كبيئة العالم بدلاً من ذلك',
+  'dropImport.saveOnly': 'الحفظ في المخزون فقط',
+  'dropImport.unsupportedTitle': 'تعذّرت إضافة هذا الملف',
+  'dropImport.unsupportedBody': '"{fileName}" ليس ملف أفاتار أو عالم أو عنصر يمكن لهذا التطبيق استخدامه.',
 
   // Room panel
   'room.title': 'الغرفة',
