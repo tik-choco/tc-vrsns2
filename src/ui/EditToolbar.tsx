@@ -6,10 +6,11 @@
 // edited and gate world input, and the behaviour picker below is a native
 // <select> for the same reason: no backdrop, no extra input-gating wiring,
 // and it never steals the global keys GameOverlay listens for.
-import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, Ear, Mic, Volume2, Waves, AlertTriangle } from 'lucide-preact'
+import { useEffect, useState } from 'preact/hooks'
+import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, Ear, Mic, Volume2, Waves, Ruler, AlertTriangle } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
 import { useTtsVoices } from '../lib/ttsVoices'
-import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
+import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, SCALE_MAX, SCALE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
 import { NPC_LIMITS } from '../npc/limits'
 import { presetIdOf, SCRIPT_PRESETS, type ScriptPresetId } from '../script/presets'
 import { AUDIBLE_RANGE_DEFAULT, VOLUME_DEFAULT, type EditTool, type GameOverlayProps } from './uiContract'
@@ -26,6 +27,7 @@ type Props = Pick<
   | 'onSetNpcVoice'
   | 'onSetObjectVolume'
   | 'onSetObjectAudibleRange'
+  | 'onSetObjectScale'
   | 'scriptProblems'
 > & {
   /**
@@ -96,6 +98,17 @@ const RANGE_STEPS = [1, 2, AUDIBLE_RANGE_DEFAULT, 6, 10, 20, 40, 100].filter(
   (r) => r >= AUDIBLE_RANGE_MIN && r <= AUDIBLE_RANGE_MAX,
 )
 
+/**
+ * Display rounding for the scale field: a value set by dragging the Resize
+ * gizmo carries full floating-point precision (three.js's raw drag delta),
+ * which is not worth showing digit-for-digit in a text box nobody typed.
+ * Purely cosmetic — the stored/broadcast value is untouched by this, it only
+ * affects what the field shows when the user isn't actively editing it.
+ */
+function formatScale(scale: number): string {
+  return String(Math.round(scale * 100) / 100)
+}
+
 export function EditToolbar(props: Props) {
   const { t } = useTranslation()
   const selected = props.selectedObject
@@ -103,6 +116,68 @@ export function EditToolbar(props: Props) {
   const presetId = selected?.script ? presetIdOf(selected.script.name) : null
   const pickerValue: PickerValue = !selected?.script ? '' : (presetId ?? 'custom')
   const problems = selected ? props.scriptProblems.get(selected.id) : undefined
+
+  /**
+   * The size field's local draft. The Resize gizmo and this field describe
+   * the same value (selected.scale) and must agree, but they can't share a
+   * single source of truth naively: binding the input straight to
+   * selected.scale would re-format every keystroke against the last
+   * COMMITTED number, so typing "1.5" would get clobbered back to "1" the
+   * instant the first keystroke landed (Number("1")/formatScale round trip),
+   * making a decimal impossible to ever type. So while the user is
+   * mid-edit, the field shows this string instead of the prop — null means
+   * "not currently typing", i.e. mirror selected.scale directly (which is
+   * also how the gizmo's own live drag is reflected here: dragging doesn't
+   * touch this field, but the commit that lands when the drag ends flows
+   * back through selected.scale exactly like any other external update).
+   */
+  const [scaleDraft, setScaleDraft] = useState<string | null>(null)
+
+  // A newly selected object must never inherit stale typed text left over
+  // from whatever was selected before (e.g. the user typed into the field,
+  // then clicked a different placement without blurring first).
+  useEffect(() => {
+    setScaleDraft(null)
+  }, [selected?.id])
+
+  const onScaleInput = (e: Event) => {
+    setScaleDraft((e.target as HTMLInputElement).value)
+  }
+
+  /**
+   * Commits the draft on blur (also reached from Enter, via onScaleKeyDown
+   * blurring the field). A draft that isn't a real number yet — empty, a
+   * bare "-", anything Number() can't parse — is discarded rather than
+   * committed: Number('') is 0, not NaN, so the empty case is checked
+   * explicitly rather than trusting Number.isFinite alone, otherwise
+   * clearing the field would silently commit a scale of zero. Whatever
+   * happens, the draft is cleared afterwards so the field reverts to
+   * mirroring selected.scale — the just-committed (and clamped, see
+   * useSession.setObjectScale) value, or the last valid one if the draft
+   * was garbage.
+   */
+  const onScaleBlur = () => {
+    if (selected && scaleDraft !== null) {
+      const trimmed = scaleDraft.trim()
+      const parsed = Number(trimmed)
+      if (trimmed !== '' && Number.isFinite(parsed)) {
+        props.onSetObjectScale(selected.id, parsed)
+      }
+    }
+    setScaleDraft(null)
+  }
+
+  const onScaleKeyDown = (e: KeyboardEvent) => {
+    const input = e.target as HTMLInputElement
+    if (e.key === 'Enter') {
+      input.blur() // commits via onScaleBlur above
+    } else if (e.key === 'Escape') {
+      setScaleDraft(null) // discard first, so the blur below is a no-op commit
+      input.blur()
+    }
+  }
+
+  const scaleValue = scaleDraft ?? (selected ? formatScale(selected.scale) : '')
 
   const onPick = (e: Event) => {
     if (!selected) return
@@ -210,6 +285,28 @@ export function EditToolbar(props: Props) {
           </button>
         ))}
       </div>
+      {/* Numeric alternative to dragging the Resize gizmo above: a drag can't
+          land on an exact value or make two objects match. Shown for any
+          selection (unlike the volume/range/npc fields below, which are
+          gated on kind/npc) since every placement has a scale — see
+          onSetObjectScale's doc comment in uiContract.ts. */}
+      <label class="edit-bar-script">
+        <Ruler size={15} aria-hidden="true" />
+        <span class="btn-text-collapse">{t('objects.size')}</span>
+        <input
+          class="edit-bar-script-select"
+          type="number"
+          inputmode="decimal"
+          step="0.1"
+          min={SCALE_MIN}
+          max={SCALE_MAX}
+          disabled={!selected}
+          value={scaleValue}
+          onInput={onScaleInput}
+          onBlur={onScaleBlur}
+          onKeyDown={onScaleKeyDown}
+        />
+      </label>
       <label class="edit-bar-script">
         <Wand2 size={15} aria-hidden="true" />
         <span class="btn-text-collapse">{t('objects.script.label')}</span>

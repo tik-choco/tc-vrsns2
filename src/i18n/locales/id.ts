@@ -147,6 +147,7 @@ export const id: Dict = {
   'objects.move': 'Pindah',
   'objects.rotate': 'Putar',
   'objects.scale': 'Ubah ukuran',
+  'objects.size': 'Ukuran',
   'objects.placedBy': 'ditempatkan oleh {name}',
   'objects.orphans': '{count} ditinggalkan orang yang sudah pergi. Tetap ada sampai kamu keluar dari ruang, dan tidak ada yang bisa mengeditnya.',
 

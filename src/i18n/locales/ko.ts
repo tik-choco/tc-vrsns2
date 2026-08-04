@@ -146,6 +146,7 @@ export const ko: Dict = {
   'objects.move': '이동',
   'objects.rotate': '회전',
   'objects.scale': '크기',
+  'objects.size': '배율',
   'objects.placedBy': '{name} 님이 배치',
   'objects.orphans': '떠난 사람이 남긴 것이 {count}개 있어요. 방을 나갈 때까지 남지만 아무도 편집할 수 없어요.',
 

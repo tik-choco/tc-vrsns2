@@ -146,6 +146,7 @@ export const pt: Dict = {
   'objects.move': 'Mover',
   'objects.rotate': 'Girar',
   'objects.scale': 'Redimensionar',
+  'objects.size': 'Tamanho',
   'objects.placedBy': 'colocado por {name}',
   'objects.orphans': '{count} ficaram de pessoas que saíram. Elas permanecem até você sair da sala e ninguém pode editá-las.',
 

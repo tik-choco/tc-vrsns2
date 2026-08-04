@@ -489,6 +489,7 @@ export function GameOverlay(props: GameOverlayProps) {
           onSetNpcVoice={props.onSetNpcVoice}
           onSetObjectVolume={props.onSetObjectVolume}
           onSetObjectAudibleRange={props.onSetObjectAudibleRange}
+          onSetObjectScale={props.onSetObjectScale}
           scriptProblems={props.scriptProblems}
           onDescribeBehaviour={() => setDescribeOpen(true)}
           onEditGraph={() => setGraphEditorOpen(true)}

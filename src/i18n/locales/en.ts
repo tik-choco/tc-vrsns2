@@ -148,6 +148,7 @@ export const en = {
   'objects.move': 'Move',
   'objects.rotate': 'Turn',
   'objects.scale': 'Resize',
+  'objects.size': 'Size',
   'objects.placedBy': 'placed by {name}',
   'objects.orphans': '{count} left behind by people who have gone. They stay until you leave the room, and nobody can edit them.',
 

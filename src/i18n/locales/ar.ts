@@ -146,6 +146,7 @@ export const ar: Dict = {
   'objects.move': 'تحريك',
   'objects.rotate': 'تدوير',
   'objects.scale': 'تحجيم',
+  'objects.size': 'الحجم',
   'objects.placedBy': 'وضعه {name}',
   'objects.orphans': '{count} تركها أشخاص غادروا. تبقى حتى تخرج من الغرفة ولا يمكن لأحد تعديلها.',
 
