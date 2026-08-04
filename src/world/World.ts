@@ -24,7 +24,7 @@ import { CharacterController } from './CharacterController'
 import { CharacterStateMachine } from './stateMachine'
 import type { SpeakingLevelReading, Vec3 } from './npcPresence'
 import { eyePosition } from './npcPresence'
-import { ChatBubble, NameTag } from './overheadSprites'
+import { BUBBLE_GAP_ABOVE_TAG, ChatBubble, NameTag } from './overheadSprites'
 import { RemotePlayerView } from './RemotePlayerView'
 import { WorldScriptBridge } from './scriptBridge'
 import { disposeVrm, loadVrmFromBytes, vrmMetaSummary, type VrmMeta } from './vrmLoader'
@@ -973,7 +973,14 @@ export class World {
     const localTagY = this.localRig.getHeight() + 0.25
     this.localNameTag.sprite.visible = !firstPerson
     this.localNameTag.sprite.position.set(0, localTagY, 0)
-    this.localChatBubble.sprite.position.set(0, localTagY + 0.45, 0)
+    // Anchor by the bubble's BOTTOM edge, not its centre, so it grows
+    // upward as lines stack instead of sinking into the name tag below it
+    // (see BUBBLE_GAP_ABOVE_TAG's comment for the derivation).
+    this.localChatBubble.sprite.position.set(
+      0,
+      localTagY + BUBBLE_GAP_ABOVE_TAG + this.localChatBubble.worldHeight / 2,
+      0,
+    )
 
     for (const view of this.remotes.values()) view.update(delta)
 

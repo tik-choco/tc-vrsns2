@@ -7,7 +7,7 @@ import type { PlayerProfile, PlayerState } from '../shared/types'
 import { AvatarRig } from './AvatarRig'
 import { normalizeAngle, shortestAngleDelta } from './CharacterController'
 import { CharacterStateMachine } from './stateMachine'
-import { ChatBubble, NameTag } from './overheadSprites'
+import { BUBBLE_GAP_ABOVE_TAG, ChatBubble, NameTag } from './overheadSprites'
 
 const POSITION_FOLLOW = 12
 const ROTATION_FOLLOW = 10
@@ -90,7 +90,10 @@ export class RemotePlayerView {
 
     const tagY = this.rig.getHeight() + 0.25
     this.nameTag.sprite.position.set(0, tagY, 0)
-    this.chatBubble.sprite.position.set(0, tagY + 0.45, 0)
+    // Anchor by the bubble's BOTTOM edge, not its centre, so it grows
+    // upward as lines stack instead of sinking into the name tag below it
+    // (see BUBBLE_GAP_ABOVE_TAG's comment for the derivation).
+    this.chatBubble.sprite.position.set(0, tagY + BUBBLE_GAP_ABOVE_TAG + this.chatBubble.worldHeight / 2, 0)
   }
 
   dispose(): void {
