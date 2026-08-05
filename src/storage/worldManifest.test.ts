@@ -280,6 +280,36 @@ describe('listManifestCids', () => {
     expect(cids).toContainEqual({ cid: 'sky-cid', name: 'Sunset', kind: 'skybox' })
   })
 
+  it('lists a box texture but never the box\'s empty cid', () => {
+    const manifest: WorldManifest = {
+      version: WORLD_MANIFEST_VERSION,
+      exportedAt: new Date().toISOString(),
+      env: null,
+      skybox: null,
+      objects: [
+        lamp({
+          id: 'wall-1',
+          cid: '',
+          kind: 'box',
+          name: 'Wall',
+          box: { sx: 4, sy: 2, sz: 0.2, color: '#9e9e9e', textureCid: 'brick-cid' },
+        }),
+        lamp({
+          id: 'plain-1',
+          cid: '',
+          kind: 'box',
+          name: 'Plain',
+          box: { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' },
+        }),
+      ],
+      policy: 'owner',
+    }
+    const cids = listManifestCids(manifest)
+    expect(cids).toContainEqual({ cid: 'brick-cid', name: 'Wall', kind: 'box' })
+    // Neither box's empty cid may pollute the availability count.
+    expect(cids).toHaveLength(1)
+  })
+
   it('is empty for an empty world', () => {
     const manifest: WorldManifest = {
       version: WORLD_MANIFEST_VERSION,
