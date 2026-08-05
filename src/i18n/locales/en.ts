@@ -139,6 +139,12 @@ export const en = {
   'world.importAllAvailable': 'Every asset this file needs is already on this device.',
   'world.importConfirm': 'Import',
   'world.importing': 'Importing…',
+  'world.skyLabel': 'Sky',
+  'world.skySet': 'Set sky',
+  'world.skyRemove': 'Remove sky',
+  'world.skyNone': 'None',
+  'world.skyTooLarge': 'That image is too large. The limit is {size} MB.',
+  'world.skyInvalid': 'Unsupported sky image. Use JPEG, PNG or WebP.',
 
   // Objects panel
   'objects.title': 'Objects',

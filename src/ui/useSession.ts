@@ -8,6 +8,7 @@ import type {
   ChatMessage,
   PlacedObject,
   PlayerProfile,
+  Skybox,
   WorldEditPolicy,
   WorldEnvironment,
 } from '../shared/types'
@@ -38,10 +39,11 @@ import {
   type ObjectScriptInput,
 } from './uiContract'
 import type { ScreenProjection } from './ScriptWindow'
-import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat'
+import { detectPlacedAsset, MAX_PLACEABLE_BYTES, MAX_SKYBOX_BYTES, SKYBOX_MIME_TYPES } from '../world/mediaFormat'
 import { shrinkImageForPlacement } from '../storage/imageResize'
 import { captureMediaThumbnail } from '../world/mediaThumbnail'
 import { RoomSession } from '../net/RoomSession'
+import { OBJECT_NAME_MAX_LEN } from '../net/protocol'
 import { DiscoverySession, type DiscoveredRoom } from '../net/DiscoverySession'
 import { RemoteAudioSink } from './remoteAudio'
 import { vrsnsDebug } from '../lib/debugHook'
@@ -98,6 +100,8 @@ export type MicState = 'off' | 'on' | 'pending' | 'error'
 export type RoomVisibility = 'public' | 'private'
 /** Why an attempted placeable upload was rejected (the panel localizes it). */
 export type ObjectUploadError = 'tooLarge' | 'invalid'
+/** Why an attempted skybox upload was rejected (WorldPanel localizes it). Same shape as ObjectUploadError, kept distinct since the two gate unrelated uploads. */
+export type SkyboxUploadError = 'tooLarge' | 'invalid'
 /**
  * Machine-readable reason a join landed in phase 'error', for the cases we
  * can give the user a real explanation for instead of a raw exception
@@ -137,6 +141,8 @@ export type SessionApi = {
   townCharacters: CharacterIndexEntry[]
   currentAvatarCid: string | null
   currentWorld: WorldEnvironment | null
+  /** Shared skybox image, independent of currentWorld (see Skybox's doc) — null means no sky is set. */
+  currentSkybox: Skybox | null
   placedCount: number
   /** How many of the placed objects are ours — the only ones we may edit. */
   ownPlacedCount: number
@@ -193,6 +199,20 @@ export type SessionApi = {
   uploadWorld: (file: File) => Promise<string | null>
   applyWorld: (cid: string) => Promise<void>
   resetWorld: () => void
+  /**
+   * Uploads an image and sets it as the room's shared skybox — independent of
+   * the world environment (see Skybox's doc), so this works the same whether
+   * the default grid or a loaded environment is currently active. Follows
+   * applyWorld's pattern (worldPolicy 'locked' gate, worldBusy, broadcast,
+   * autosave) but does NOT catalog the upload — see the implementation's own
+   * doc for why. Rejects (setting skyboxError instead of throwing) a file
+   * that is not image/jpeg|png|webp or exceeds MAX_SKYBOX_BYTES.
+   */
+  setSkybox: (file: File) => Promise<void>
+  /** Clears the room's shared skybox, restoring the default background. Same gating as setSkybox. */
+  removeSkybox: () => void
+  /** Last skybox upload rejection, cleared when the next attempt starts. */
+  skyboxError: SkyboxUploadError | null
   /** Announces who may edit this room's world (advisory, last writer wins). */
   setWorldPolicy: (policy: WorldEditPolicy) => void
   /**
@@ -525,6 +545,7 @@ export function useSession(): SessionApi {
     profileRef.current.avatarCid ?? null,
   )
   const [currentWorld, setCurrentWorld] = useState<WorldEnvironment | null>(null)
+  const [currentSkybox, setCurrentSkybox] = useState<Skybox | null>(null)
   const [placedCount, setPlacedCount] = useState(0)
   const [ownPlacedCount, setOwnPlacedCount] = useState(0)
   const [worldPolicy, setWorldPolicyState] = useState<WorldEditPolicy>('owner')
@@ -537,6 +558,7 @@ export function useSession(): SessionApi {
   const [objectBusy, setObjectBusy] = useState(false)
   const [objectError, setObjectError] = useState<ObjectUploadError | null>(null)
   const [avatarError, setAvatarError] = useState<AvatarLoadError | null>(null)
+  const [skyboxError, setSkyboxError] = useState<SkyboxUploadError | null>(null)
   const [scriptProblems, setScriptProblems] = useState<Map<string, ScriptError[]>>(new Map())
 
   // cid -> blob URL cache for script ui/image nodes, through the same
@@ -628,6 +650,7 @@ export function useSession(): SessionApi {
   // a value captured at render time is already stale — these refs are updated in
   // the same statement as their useState counterpart so both always agree.
   const currentWorldRef = useRef<WorldEnvironment | null>(null)
+  const currentSkyboxRef = useRef<Skybox | null>(null)
   const worldPolicyRef = useRef<WorldEditPolicy>('owner')
   /** Room actually joined right now; unlike roomId this is set before the re-render. */
   const activeRoomIdRef = useRef('')
@@ -808,6 +831,12 @@ export function useSession(): SessionApi {
     setCurrentWorld(env)
   }, [])
 
+  /** Same ref+state mirror as setWorldEnv above, for the independent skybox. */
+  const setSkyboxState = useCallback((sky: Skybox | null) => {
+    currentSkyboxRef.current = sky
+    setCurrentSkybox(sky)
+  }, [])
+
   /**
    * Writes the room's world snapshot to the local autosave. Called after every
    * change that alters it, so leaving (or crashing, or closing the tab) never
@@ -815,13 +844,19 @@ export function useSession(): SessionApi {
    * been set but whose state has not re-rendered yet.
    */
   const persistWorld = useCallback(
-    (patch?: { env?: WorldEnvironment | null; objects?: PlacedObject[]; policy?: WorldEditPolicy }) => {
+    (patch?: {
+      env?: WorldEnvironment | null
+      skybox?: Skybox | null
+      objects?: PlacedObject[]
+      policy?: WorldEditPolicy
+    }) => {
       const roomId = activeRoomIdRef.current
       if (!roomId) return
       // Only what we publish is ours to save: orphaned placements have no
       // owner to restore them, and a peer's are that peer's to bring back.
       saveWorldSave(roomId, {
         env: patch?.env !== undefined ? patch.env : currentWorldRef.current,
+        skybox: patch?.skybox !== undefined ? patch.skybox : currentSkyboxRef.current,
         objects: patch?.objects ?? objects.current.own(),
         policy: patch?.policy ?? worldPolicyRef.current,
       })
@@ -1168,8 +1203,9 @@ export function useSession(): SessionApi {
         if (pos) npcRuntimeRef.current.heard({ id: m.fromId, name: m.name, x: pos.x, y: pos.y, z: pos.z }, m.text)
       }
       session.onRemoteAudio = (id, media) => audio.set(id, media)
-      session.onWorldChange = (_fromId, env) => {
+      session.onWorldChange = (_fromId, env, skybox) => {
         void applyEnvironment(env)
+        void applySkybox(skybox)
       }
       session.onObjectsChange = (fromId, published) => {
         // A peer publishing an id claims it; if it took one of ours, republish
@@ -1209,9 +1245,10 @@ export function useSession(): SessionApi {
         world.applyRemoteObjectStates(states)
       }
     },
-    // applyEnvironment/applyPolicy are declared just below and only ever
-    // called from these handlers — listing them here would read them in their
-    // temporal dead zone. Both are stable, so the closure stays correct.
+    // applyEnvironment/applySkybox/applyPolicy are declared just below and
+    // only ever called from these handlers — listing them here would read
+    // them in their temporal dead zone. All three are stable, so the closure
+    // stays correct.
     [pushMessage, reconcileObjects, commitOwnObjects, refreshEditable],
   )
 
@@ -1254,6 +1291,41 @@ export function useSession(): SessionApi {
       console.debug('environment load failed', env.cid, e)
     }
   }, [persistWorld, setWorldEnv])
+
+  /**
+   * Apply (or clear) the shared skybox locally, and remember it — the
+   * skybox counterpart to applyEnvironment above, with the same "peer told
+   * us, or the autosave restore is catching us up" scope (no broadcast; see
+   * setSkybox/removeSkybox below for the user-initiated, broadcasting path).
+   * A skybox is never catalogued (see setSkybox's own doc), so bytes are
+   * fetched straight by cid rather than through catalogBytes.
+   *
+   * Resolves whether it actually applied (false on a missing World or a
+   * failed fetch/decode) so restoreSavedWorld/importWorldManifest know
+   * whether to broadcast, without re-reading currentSkyboxRef.current
+   * afterward — TypeScript's narrowing of that ref across an intervening
+   * await/guard is not reliable enough to lean on here.
+   */
+  const applySkybox = useCallback(async (sky: Skybox | null): Promise<boolean> => {
+    const world = worldRef.current
+    if (!world) return false
+    if (!sky) {
+      world.clearSkybox()
+      setSkyboxState(null)
+      persistWorld({ skybox: null })
+      return true
+    }
+    try {
+      const bytes = await vrmBytesFromCid(sky.cid)
+      await world.loadSkybox(bytes)
+      setSkyboxState(sky)
+      persistWorld({ skybox: sky })
+      return true
+    } catch (e) {
+      console.debug('skybox load failed', sky.cid, e)
+      return false
+    }
+  }, [persistWorld, setSkyboxState])
 
   const join = useCallback(
     async (nextRoomId: string, nextProfile: PlayerProfile, visibility?: RoomVisibility) => {
@@ -1372,7 +1444,9 @@ export function useSession(): SessionApi {
     worldRef.current?.setEditableObjects([])
     worldRef.current?.clearObjects()
     worldRef.current?.clearEnvironment()
+    worldRef.current?.clearSkybox()
     setWorldEnv(null)
+    setSkyboxState(null)
     worldPolicyRef.current = 'owner'
     setWorldPolicyState('owner')
     setEditModeState(false)
@@ -1747,6 +1821,72 @@ export function useSession(): SessionApi {
   }, [persistWorld, setWorldEnv])
 
   /**
+   * Uploads an image and sets it as the room's shared skybox — orthogonal to
+   * applyWorld/resetWorld above (a sky and an environment are independent;
+   * see Skybox's doc), so this follows the same shape (worldPolicy 'locked'
+   * gate, worldBusy, local apply, session broadcast, autosave) but is its own
+   * function rather than a parameter on applyWorld, since it also uploads
+   * bytes instead of pointing at an already-catalogued cid.
+   *
+   * Deliberately does NOT go through addToCatalog: a sky is neither
+   * placeable nor equippable, so cataloguing it would just clutter the World
+   * browser with an entry nothing ever lists it from — bytes are published
+   * straight via publishVrmBytes (same shared store every other upload
+   * lands in) and the resulting {cid, name} lives only in the room's world
+   * state (currentSkybox / WorldSave.skybox / WorldManifest.skybox).
+   *
+   * Deliberately does NOT run shrinkImageForPlacement (see uploadObject):
+   * its 2048px edge cap is tuned for a placed panel/prop, and would visibly
+   * degrade an equirectangular panorama meant to wrap the whole horizon.
+   * MAX_SKYBOX_BYTES exists precisely because nothing here shrinks the
+   * upload before publishing it.
+   */
+  const setSkybox = useCallback(async (file: File) => {
+    const world = worldRef.current
+    if (!world || worldPolicyRef.current === 'locked') return
+    setSkyboxError(null)
+    if (file.size > MAX_SKYBOX_BYTES) {
+      setSkyboxError('tooLarge')
+      return
+    }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      if (bytes.byteLength > MAX_SKYBOX_BYTES) {
+        setSkyboxError('tooLarge')
+        return
+      }
+      const asset = detectPlacedAsset(file.name, bytes, file.type)
+      if (asset.kind !== 'image' || !asset.mime || !SKYBOX_MIME_TYPES.has(asset.mime)) {
+        setSkyboxError('invalid')
+        return
+      }
+      setWorldBusy(true)
+      try {
+        const cid = await publishVrmBytes(file.name, bytes)
+        const sky: Skybox = { cid, name: file.name.trim().slice(0, OBJECT_NAME_MAX_LEN) || 'Sky' }
+        await world.loadSkybox(bytes)
+        setSkyboxState(sky)
+        sessionRef.current?.setSkybox(sky)
+        persistWorld({ skybox: sky })
+      } finally {
+        setWorldBusy(false)
+      }
+    } catch (e) {
+      console.debug('skybox upload failed', e)
+      setSkyboxError('invalid')
+    }
+  }, [persistWorld, setSkyboxState])
+
+  /** Clears the room's shared skybox, restoring the default background. Same gating as setSkybox/resetWorld. */
+  const removeSkybox = useCallback(() => {
+    if (worldPolicyRef.current === 'locked') return
+    worldRef.current?.clearSkybox()
+    setSkyboxState(null)
+    sessionRef.current?.setSkybox(null)
+    persistWorld({ skybox: null })
+  }, [persistWorld, setSkyboxState])
+
+  /**
    * Snapshots the room as it currently renders into the portable manifest
    * format (storage/worldManifest.ts) for WorldPanel's Export button.
    *
@@ -1773,6 +1913,7 @@ export function useSession(): SessionApi {
     if (!world) return null
     const manifest = serializeWorldManifest({
       env: currentWorldRef.current,
+      skybox: currentSkyboxRef.current,
       objects: world.listPlacedObjects(),
       policy: worldPolicyRef.current,
     })
@@ -1810,6 +1951,11 @@ export function useSession(): SessionApi {
    * Does NOT adopt the manifest's `policy` — importing a world/object set is
    * "bring this into my room", not "also let the exported room's edit policy
    * override mine".
+   *
+   * Skybox: same shape as environment above, through applySkybox (the
+   * peer-told/restore-time local-apply function) plus an explicit broadcast
+   * here — see the environment paragraph for why applySkybox itself doesn't
+   * broadcast.
    */
   const importWorldManifest = useCallback(
     async (manifest: WorldManifest) => {
@@ -1828,11 +1974,18 @@ export function useSession(): SessionApi {
             updateResumeState({ worldCid: env.cid })
           }
         }
+        if (manifest.skybox) {
+          const sky = manifest.skybox
+          const applied = await applySkybox(sky)
+          if (applied) {
+            sessionRef.current?.setSkybox(sky)
+          }
+        }
       } finally {
         setWorldBusy(false)
       }
     },
-    [applyEnvironment, commitOwnObjects, reconcileObjects],
+    [applyEnvironment, applySkybox, commitOwnObjects, reconcileObjects],
   )
 
   /**
@@ -1853,10 +2006,11 @@ export function useSession(): SessionApi {
    * Restores this room's autosaved world after joining it.
    *
    * Our own placements come back immediately — they are ours to republish, and
-   * their ids are ours alone, so nothing can conflict. The environment and the
-   * lock are room-wide, so they wait out the newcomer-replay window first and
-   * are only applied if nobody already in the room has said otherwise: whoever
-   * is there now knows better than our snapshot from last time.
+   * their ids are ours alone, so nothing can conflict. The environment, the
+   * skybox, and the lock are room-wide, so they wait out the newcomer-replay
+   * window first and are only applied if nobody already in the room has said
+   * otherwise: whoever is there now knows better than our snapshot from last
+   * time.
    */
   const restoreSavedWorld = useCallback(
     async (targetRoomId: string, session: RoomSession) => {
@@ -1867,15 +2021,16 @@ export function useSession(): SessionApi {
       const legacyCid =
         !save?.env && resume?.roomId === targetRoomId ? resume.worldCid ?? null : null
       const envCid = save?.env?.cid ?? legacyCid
+      const skybox = save?.skybox ?? null
       const saved = save?.objects ?? []
       const policy = save?.policy ?? 'owner'
-      if (saved.length === 0 && !envCid && policy === 'owner') return
+      if (saved.length === 0 && !envCid && !skybox && policy === 'owner') return
 
       if (saved.length > 0) {
         commitOwnObjects(saved)
         reconcileObjects()
       }
-      if (!envCid && policy === 'owner') return
+      if (!envCid && !skybox && policy === 'owner') return
 
       await new Promise<void>((resolve) => setTimeout(resolve, RESUME_WORLD_WAIT_MS))
       // Still the same room, same session? Otherwise this restore is stale.
@@ -1885,9 +2040,21 @@ export function useSession(): SessionApi {
         await applyWorld(envCid)
         if (sessionRef.current !== session || activeRoomIdRef.current !== targetRoomId) return
       }
+      // A skybox is never catalogued (see setSkybox's own doc), so there is no
+      // local-availability gate to check the way applyWorld's listCatalog
+      // check above does — applySkybox's own try/catch already tolerates an
+      // unresolvable cid by simply leaving no skybox applied. applySkybox
+      // itself only applies+persists locally (it's also the peer-told path),
+      // so the broadcast that makes this the room's now-current skybox is
+      // added here explicitly, same as applyWorld does for the environment.
+      if (!currentSkyboxRef.current && skybox) {
+        const applied = await applySkybox(skybox)
+        if (sessionRef.current !== session || activeRoomIdRef.current !== targetRoomId) return
+        if (applied) session.setSkybox(skybox)
+      }
       if (policy !== 'owner' && !peerPolicySeenRef.current) setWorldPolicy(policy)
     },
-    [applyWorld, commitOwnObjects, reconcileObjects, setWorldPolicy],
+    [applySkybox, applyWorld, commitOwnObjects, reconcileObjects, setWorldPolicy],
   )
 
   /**
@@ -2723,6 +2890,7 @@ export function useSession(): SessionApi {
     townCharacters,
     currentAvatarCid,
     currentWorld,
+    currentSkybox,
     placedCount,
     ownPlacedCount,
     worldPolicy,
@@ -2753,6 +2921,9 @@ export function useSession(): SessionApi {
     uploadWorld,
     applyWorld,
     resetWorld,
+    setSkybox,
+    removeSkybox,
+    skyboxError,
     setWorldPolicy,
     exportWorldManifest,
     importWorldManifest,

@@ -137,6 +137,12 @@ export const pt: Dict = {
   'world.importAllAvailable': 'Todos os recursos que este arquivo precisa já estão neste dispositivo.',
   'world.importConfirm': 'Importar',
   'world.importing': 'Importando…',
+  'world.skyLabel': 'Céu',
+  'world.skySet': 'Definir céu',
+  'world.skyRemove': 'Remover céu',
+  'world.skyNone': 'Nenhum',
+  'world.skyTooLarge': 'Essa imagem é muito grande. O limite é {size} MB.',
+  'world.skyInvalid': 'Imagem de céu não suportada. Use JPEG, PNG ou WebP.',
 
   // Objects panel
   'objects.title': 'Objetos',

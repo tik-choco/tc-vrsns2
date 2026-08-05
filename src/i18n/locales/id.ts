@@ -138,6 +138,12 @@ export const id: Dict = {
   'world.importAllAvailable': 'Semua aset yang dibutuhkan file ini sudah ada di perangkat ini.',
   'world.importConfirm': 'Impor',
   'world.importing': 'Mengimpor…',
+  'world.skyLabel': 'Langit',
+  'world.skySet': 'Atur langit',
+  'world.skyRemove': 'Hapus langit',
+  'world.skyNone': 'Tidak ada',
+  'world.skyTooLarge': 'Gambar itu terlalu besar. Batasnya {size} MB.',
+  'world.skyInvalid': 'Gambar langit tidak didukung. Gunakan JPEG, PNG, atau WebP.',
 
   // Objects panel
   'objects.title': 'Objek',

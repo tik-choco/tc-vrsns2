@@ -138,6 +138,12 @@ export const fr: Dict = {
   'world.importAllAvailable': 'Toutes les ressources dont ce fichier a besoin sont déjà sur cet appareil.',
   'world.importConfirm': 'Importer',
   'world.importing': 'Importation…',
+  'world.skyLabel': 'Ciel',
+  'world.skySet': 'Définir le ciel',
+  'world.skyRemove': 'Retirer le ciel',
+  'world.skyNone': 'Aucun',
+  'world.skyTooLarge': 'Cette image est trop volumineuse. La limite est de {size} Mo.',
+  'world.skyInvalid': 'Image de ciel non prise en charge. Utilisez JPEG, PNG ou WebP.',
 
   // Objects panel
   'objects.title': 'Objets',

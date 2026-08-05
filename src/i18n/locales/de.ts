@@ -138,6 +138,12 @@ export const de: Dict = {
   'world.importAllAvailable': 'Alle Assets, die diese Datei benötigt, sind bereits auf diesem Gerät.',
   'world.importConfirm': 'Importieren',
   'world.importing': 'Wird importiert…',
+  'world.skyLabel': 'Himmel',
+  'world.skySet': 'Himmel festlegen',
+  'world.skyRemove': 'Himmel entfernen',
+  'world.skyNone': 'Keiner',
+  'world.skyTooLarge': 'Dieses Bild ist zu groß. Das Limit liegt bei {size} MB.',
+  'world.skyInvalid': 'Nicht unterstütztes Himmelsbild. Verwende JPEG, PNG oder WebP.',
 
   // Objects panel
   'objects.title': 'Objekte',

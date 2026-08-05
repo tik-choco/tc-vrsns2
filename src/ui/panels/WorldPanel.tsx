@@ -1,9 +1,10 @@
 import { useRef, useState } from 'preact/hooks'
-import { AlertTriangle, Download, Lock, Upload, User, Users } from 'lucide-preact'
+import { AlertTriangle, Download, Image, Lock, Trash2, Upload, User, Users } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../../i18n'
-import type { GameOverlayProps, WorldEditPolicy } from '../uiContract'
+import type { GameOverlayProps, SkyboxUploadError, WorldEditPolicy } from '../uiContract'
 import { listManifestCids, parseWorldManifest, type WorldManifest } from '../../storage/worldManifest'
 import { probeManifestAvailability } from '../../storage/worldManifestAvailability'
+import { MAX_SKYBOX_BYTES, SKYBOX_ACCEPT } from '../../world/mediaFormat'
 import { PanelShell } from './PanelShell'
 import { CatalogPanel } from './CatalogPanel'
 
@@ -16,10 +17,21 @@ type Props = Pick<
   | 'onUploadWorld'
   | 'onApplyWorld'
   | 'onResetWorld'
+  | 'currentSkybox'
+  | 'onSetSkybox'
+  | 'onRemoveSkybox'
+  | 'skyboxError'
   | 'onSetWorldPolicy'
   | 'onExportWorldManifest'
   | 'onImportWorldManifest'
 > & { onClose: () => void }
+
+const SKYBOX_ERROR_KEYS: Record<SkyboxUploadError, TranslationKey> = {
+  tooLarge: 'world.skyTooLarge',
+  invalid: 'world.skyInvalid',
+}
+
+const SKYBOX_MAX_MEGABYTES = Math.round(MAX_SKYBOX_BYTES / (1024 * 1024))
 
 // All lucide-preact icons share one component type; borrow it from any import.
 type IconComponent = typeof Lock
@@ -85,6 +97,7 @@ export function WorldPanel(props: Props) {
   const currentCid = props.currentWorld?.cid ?? null
   const locked = props.worldPolicy === 'locked'
   const fileRef = useRef<HTMLInputElement>(null)
+  const skyFileRef = useRef<HTMLInputElement>(null)
   // The two-step import flow: null until a file is picked, then holds the
   // parsed (but not yet applied) manifest plus the availability count for the
   // confirm screen below. Cleared on cancel, on confirm, and implicitly by
@@ -100,6 +113,15 @@ export function WorldPanel(props: Props) {
   }
 
   const pickImportFile = () => fileRef.current?.click()
+
+  const pickSkyFile = () => skyFileRef.current?.click()
+
+  const onSkyFileChosen = (e: Event) => {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (file) void props.onSetSkybox(file)
+  }
 
   const onFileChosen = async (e: Event) => {
     const input = e.target as HTMLInputElement
@@ -160,6 +182,46 @@ export function WorldPanel(props: Props) {
           ))}
         </div>
         <span class="field-hint">{t(POLICY_HINTS[props.worldPolicy])}</span>
+      </div>
+
+      {/* Sky is orthogonal to both the environment below and the import/export
+          flow — it stays visible regardless of the pending-import step, same
+          as the policy block above. */}
+      <div class="field">
+        <span class="field-label">{t('world.skyLabel')}</span>
+        {props.skyboxError && (
+          <p class="panel-error" role="alert">
+            {t(SKYBOX_ERROR_KEYS[props.skyboxError], { size: SKYBOX_MAX_MEGABYTES })}
+          </p>
+        )}
+        <div class="field-row">
+          <button
+            type="button"
+            class="btn btn-ghost btn-icon-text"
+            disabled={locked || props.worldBusy}
+            onClick={pickSkyFile}
+          >
+            <Image size={16} aria-hidden="true" />
+            <span class="btn-text-collapse">{t('world.skySet')}</span>
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-icon-text"
+            disabled={locked || props.worldBusy || !props.currentSkybox}
+            onClick={props.onRemoveSkybox}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+            <span class="btn-text-collapse">{t('world.skyRemove')}</span>
+          </button>
+          <input
+            ref={skyFileRef}
+            type="file"
+            accept={SKYBOX_ACCEPT}
+            hidden
+            onChange={onSkyFileChosen}
+          />
+        </div>
+        <span class="field-hint">{props.currentSkybox?.name || t('world.skyNone')}</span>
       </div>
 
       {pending ? (

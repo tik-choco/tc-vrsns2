@@ -8,6 +8,7 @@ import type {
   ChatMessage,
   PlacedObject,
   PlayerProfile,
+  Skybox,
   WorldEditPolicy,
   WorldEnvironment,
 } from '../shared/types'
@@ -32,12 +33,13 @@ import type { WorldManifest } from '../storage/worldManifest'
 import type { ScriptError, ScriptGraph, ScriptWindow, TriggerVolume, UiAnchor } from '../script/ir'
 import type { ScriptPresetId } from '../script/presets'
 import type { ScreenProjection } from './ScriptWindow'
-// AvatarLoadError is a type-only import, erased by verbatimModuleSyntax, so
-// this does not create a real runtime cycle even though useSession.ts in turn
-// imports value bindings (clampNpcRadius, ObjectScriptInput) from this file.
-import type { AvatarLoadError } from './useSession'
+// AvatarLoadError/SkyboxUploadError are type-only imports, erased by
+// verbatimModuleSyntax, so this does not create a real runtime cycle even
+// though useSession.ts in turn imports value bindings (clampNpcRadius,
+// ObjectScriptInput) from this file.
+import type { AvatarLoadError, SkyboxUploadError } from './useSession'
 
-export type { DiscoveredRoom, EditTool, WorldEditPolicy }
+export type { DiscoveredRoom, EditTool, SkyboxUploadError, WorldEditPolicy }
 
 /**
  * What onSetObjectScript may attach to a placement: a built-in preset id
@@ -116,6 +118,14 @@ export type GameOverlayProps = {
   onUploadWorld: (file: File) => Promise<string | null>
   onApplyWorld: (cid: string) => void
   onResetWorld: () => void
+  /** Shared skybox image, independent of currentWorld (see Skybox's doc) — null means no sky is set. */
+  currentSkybox: Skybox | null
+  /** Uploads an image and sets it as the room's shared skybox. See useSession's setSkybox for the upload/validation contract (image/jpeg|png|webp, MAX_SKYBOX_BYTES). */
+  onSetSkybox: (file: File) => Promise<void>
+  /** Clears the room's shared skybox, restoring the default background. */
+  onRemoveSkybox: () => void
+  /** Last skybox upload rejection, cleared when the next attempt starts. */
+  skyboxError: SkyboxUploadError | null
   /** Room-wide advisory rule for who may edit; 'locked' hides every world edit. */
   worldPolicy: WorldEditPolicy
   onSetWorldPolicy: (policy: WorldEditPolicy) => void

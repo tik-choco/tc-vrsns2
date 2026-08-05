@@ -35,6 +35,7 @@ import type {
   PlacedObject,
   PlayerProfile,
   PlayerState,
+  Skybox,
   WorldEditPolicy,
   WorldEnvironment,
 } from '../shared/types'
@@ -104,8 +105,12 @@ export class RoomSession {
   onPeerProfile: ((id: string, profile: PlayerProfile) => void) | null = null
   /** null media means the peer's audio track went away. */
   onRemoteAudio: ((id: string, media: MediaStreamTrack | MediaStream | null) => void) | null = null
-  /** A peer applied a shared world environment (or reset it with null). */
-  onWorldChange: ((fromId: string, env: WorldEnvironment | null) => void) | null = null
+  /**
+   * A peer applied a shared world environment and/or skybox (or reset either
+   * with null) — both ride the one MSG_WORLD frame (see its doc), so both
+   * are always reported together even when only one changed.
+   */
+  onWorldChange: ((fromId: string, env: WorldEnvironment | null, skybox: Skybox | null) => void) | null = null
   /** A peer's owned set of placed objects changed (full replace for that owner). */
   onObjectsChange: ((fromId: string, objects: PlacedObject[]) => void) | null = null
   /** A peer changed who may edit the room's world (advisory — see setWorldPolicy). */
@@ -136,6 +141,8 @@ export class RoomSession {
   private lastState: PlayerState | null = null
   /** Shared world environment we last applied — replayed to newcomers. */
   private lastWorld: WorldEnvironment | null = null
+  /** Shared skybox we last applied — replayed to newcomers. Independent of lastWorld; see MSG_WORLD's doc. */
+  private lastSkybox: Skybox | null = null
   /** Objects WE placed (our owned set) — rebroadcast on change, replayed to newcomers. */
   private ownedObjects: PlacedObject[] = []
   /** Room-wide edit policy as we last knew it — replayed to newcomers unless default. */
@@ -281,12 +288,27 @@ export class RoomSession {
   /**
    * Applies a shared world environment for the whole room (last-writer-wins),
    * or resets to the default with null. Broadcast reliably and replayed to
-   * newcomers so a late joiner sees the current world.
+   * newcomers so a late joiner sees the current world. Carries the
+   * last-known skybox alongside it (both ride one MSG_WORLD frame — see its
+   * doc), so calling this never clobbers a skybox set via setSkybox below.
    */
   setWorld(env: WorldEnvironment | null): void {
     this.lastWorld = env
     if (this.closed) return
-    this.broadcast(encode({ kind: MSG_WORLD, env }), DELIVERY_RELIABLE)
+    this.broadcast(encode({ kind: MSG_WORLD, env, skybox: this.lastSkybox }), DELIVERY_RELIABLE)
+  }
+
+  /**
+   * Applies a shared skybox for the whole room (last-writer-wins), or clears
+   * it with null — same broadcast/replay contract as setWorld, and the
+   * mirror image of it: carries the last-known env alongside so this never
+   * clobbers an environment set via setWorld. Independent of it: a skybox may
+   * be set with no environment (the default grid) or vice versa.
+   */
+  setSkybox(skybox: Skybox | null): void {
+    this.lastSkybox = skybox
+    if (this.closed) return
+    this.broadcast(encode({ kind: MSG_WORLD, env: this.lastWorld, skybox }), DELIVERY_RELIABLE)
   }
 
   /**
@@ -493,6 +515,7 @@ export class RoomSession {
     this.audioPeers.clear()
     this.lastGreetAt.clear()
     this.lastWorld = null
+    this.lastSkybox = null
     this.ownedObjects = []
     this.worldPolicy = 'owner'
     this.onPeerJoined = null
@@ -596,7 +619,7 @@ export class RoomSession {
       }
       case MSG_WORLD: {
         this.touchPeer(fromId)
-        this.onWorldChange?.(fromId, msg.env)
+        this.onWorldChange?.(fromId, msg.env, msg.skybox)
         break
       }
       case MSG_OBJECTS: {
@@ -634,11 +657,16 @@ export class RoomSession {
           this.send(fromId, encode({ kind: MSG_STATE, state: this.lastState }), DELIVERY_UNRELIABLE)
         }
         this.send(fromId, encode({ kind: MSG_PROFILE, profile: this.profile }), DELIVERY_UNRELIABLE)
-        // Also catch the newcomer up on the shared world we've applied and any
-        // objects we own, so they don't see an empty world until we next change
-        // something. Reliable: unlike state/profile these aren't re-requested.
-        if (this.lastWorld) {
-          this.send(fromId, encode({ kind: MSG_WORLD, env: this.lastWorld }), DELIVERY_RELIABLE)
+        // Also catch the newcomer up on the shared world/skybox we've applied
+        // and any objects we own, so they don't see an empty world until we
+        // next change something. Reliable: unlike state/profile these aren't
+        // re-requested. One frame covers both — see MSG_WORLD's doc.
+        if (this.lastWorld || this.lastSkybox) {
+          this.send(
+            fromId,
+            encode({ kind: MSG_WORLD, env: this.lastWorld, skybox: this.lastSkybox }),
+            DELIVERY_RELIABLE,
+          )
         }
         if (this.ownedObjects.length > 0) {
           this.send(fromId, encode({ kind: MSG_OBJECTS, objects: this.ownedObjects }), DELIVERY_RELIABLE)

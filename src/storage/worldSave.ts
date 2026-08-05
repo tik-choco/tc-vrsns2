@@ -18,8 +18,8 @@
 // applied only when nobody else in the room has already said otherwise (see
 // useSession's restore, which waits out the newcomer replay window first).
 
-import type { PlacedObject, WorldEditPolicy, WorldEnvironment } from '../shared/types'
-import { OBJECTS_MAX, parsePlacedObject, parseWorldEnv } from '../net/protocol'
+import type { PlacedObject, Skybox, WorldEditPolicy, WorldEnvironment } from '../shared/types'
+import { OBJECTS_MAX, parsePlacedObject, parseSkybox, parseWorldEnv } from '../net/protocol'
 
 const SAVE_KEY = 'tc-vrsns2:world-saves-v1'
 /** Rooms retained; the least recently saved is evicted past this. */
@@ -28,6 +28,13 @@ const MAX_ROOMS = 16
 export interface WorldSave {
   /** Shared environment last seen in the room, or null for the default grid. */
   env: WorldEnvironment | null
+  /**
+   * Shared skybox last seen in the room, or null for none. Independent of
+   * `env` (see Skybox's doc in shared/types.ts) — added after this interface
+   * shipped, so normalizeSave below treats a save written before this field
+   * existed exactly like an explicit null.
+   */
+  skybox: Skybox | null
   /** Objects WE placed. Capped at the wire limit — a bigger set could not be published anyway. */
   objects: PlacedObject[]
   /** Who the room last said may edit its world. */
@@ -49,6 +56,7 @@ function normalizeSave(raw: unknown): WorldSave | null {
   }
   return {
     env: o.env == null ? null : parseWorldEnv(o.env),
+    skybox: o.skybox == null ? null : parseSkybox(o.skybox),
     objects,
     policy: normalizePolicy(o),
     updatedAt: typeof o.updatedAt === 'number' && Number.isFinite(o.updatedAt) ? o.updatedAt : 0,
@@ -108,6 +116,7 @@ export function saveWorldSave(roomId: string, save: Omit<WorldSave, 'updatedAt'>
   const map = readAll()
   map[roomId] = {
     env: save.env,
+    skybox: save.skybox,
     objects: save.objects.slice(0, OBJECTS_MAX),
     policy: save.policy,
     updatedAt: Date.now(),

@@ -137,6 +137,12 @@ export const ja: Dict = {
   'world.importAllAvailable': 'このファイルが必要とするアセットは、すべてこの端末にすでにあります。',
   'world.importConfirm': '読み込む',
   'world.importing': '読み込み中…',
+  'world.skyLabel': '空',
+  'world.skySet': '空を設定',
+  'world.skyRemove': '空を削除',
+  'world.skyNone': 'なし',
+  'world.skyTooLarge': '画像が大きすぎます。上限は{size}MBです。',
+  'world.skyInvalid': 'この空の画像には対応していません。JPEG・PNG・WebPを使ってください。',
 
   // Objects panel
   'objects.title': 'オブジェクト',

@@ -165,6 +165,10 @@ export function App() {
           onUploadWorld={session.uploadWorld}
           onApplyWorld={(cid) => void session.applyWorld(cid)}
           onResetWorld={session.resetWorld}
+          currentSkybox={session.currentSkybox}
+          onSetSkybox={session.setSkybox}
+          onRemoveSkybox={session.removeSkybox}
+          skyboxError={session.skyboxError}
           worldPolicy={session.worldPolicy}
           onSetWorldPolicy={session.setWorldPolicy}
           onExportWorldManifest={session.exportWorldManifest}
