@@ -94,6 +94,9 @@ export const ko: Dict = {
   'npc.voice': '음성',
   'npc.voiceDefault': '기본값 (AI 설정)',
   'npc.voiceHelp': '지우면 AI 설정의 기본 음성이 사용되며, 이 캐릭터의 원래 tc-town 음성으로 복원되지 않습니다.',
+  'npc.approach': '접근 반경',
+  'npc.approachOff': '끄기',
+  'npc.approachValue': '{n}m',
 
   // AI panel
   'settings.ai.npcPreset': 'NPC 응답',
@@ -141,6 +144,8 @@ export const ko: Dict = {
   'objects.upload': '파일 업로드',
   'objects.uploading': '파일 불러오는 중…',
   'objects.place': '내 앞에 배치',
+  'objects.placeBox': '박스 배치',
+  'objects.boxName': '박스',
   'objects.placed': '배치됨',
   'objects.remove': '삭제',
   'objects.clear': '전체 삭제',
@@ -162,11 +167,29 @@ export const ko: Dict = {
   'objects.placedBy': '{name} 님이 배치',
   'objects.orphans': '떠난 사람이 남긴 것이 {count}개 있어요. 방을 나갈 때까지 남지만 아무도 편집할 수 없어요.',
 
+  // 위치·회전 수치 입력 — 모든 오브젝트에 적용, 편집 도구모음(EditToolbar.tsx)에서
+  // 설정. 이동·회전 기즈모를 드래그하는 대신 정확한 값을 입력할 수 있어요.
+  'objects.transform': '위치와 회전',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': '각도',
+
   // 음량 / 가청 거리 — 오디오·영상 오브젝트 전용, 편집 도구모음(EditToolbar.tsx)에서 설정
   'objects.volume': '음량',
   'objects.volumeValue': '{n}%',
   'objects.range': '가청 거리',
   'objects.rangeValue': '{n}m',
+
+  // 박스 외형 — '박스' 오브젝트 전용, 편집 도구모음(EditToolbar.tsx)에서 설정
+  'objects.box.badge': '박스',
+  'objects.box.width': '너비',
+  'objects.box.height': '높이',
+  'objects.box.depth': '깊이',
+  'objects.box.color': '색상',
+  'objects.box.uploadTexture': '텍스처 업로드',
+  'objects.box.removeTexture': '텍스처 제거',
+  'objects.box.tile': '타일 크기',
 
   // 드롭 임포트 오버레이 — 앱 어디에나 파일을 드롭했을 때
   'dropImport.title': '내 월드에 추가할까요?',
@@ -176,9 +199,11 @@ export const ko: Dict = {
   'dropImport.descVideo': '비디오 화면으로 월드에 배치됩니다.',
   'dropImport.descAudio': '사운드로 월드에 배치됩니다.',
   'dropImport.descWorld': '방에 있는 모든 사람에게 보이는 환경이 됩니다.',
+  'dropImport.descManifest': '파일에 있는 오브젝트(있다면 환경도 함께)가 방에 추가됩니다.',
   'dropImport.addToWorld': '월드에 추가',
   'dropImport.setAsWorldEnvironment': '또는 월드 환경으로 대신 설정',
   'dropImport.saveOnly': '인벤토리에만 저장',
+  'dropImport.lockedHint': '이 월드가 잠겨 있어서 지금은 추가할 수 없어요.',
   'dropImport.unsupportedTitle': '이 파일은 추가할 수 없어요',
   'dropImport.unsupportedBody': '"{fileName}"은(는) 이 앱에서 사용할 수 있는 아바타, 월드, 오브젝트 파일이 아니에요.',
 

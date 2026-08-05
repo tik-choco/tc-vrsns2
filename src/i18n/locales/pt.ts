@@ -94,6 +94,9 @@ export const pt: Dict = {
   'npc.voice': 'Voz',
   'npc.voiceDefault': 'Padrão (configurações de AI)',
   'npc.voiceHelp': 'Ao limpar, será usada a voz padrão das configurações de AI, não a voz original do personagem no tc-town.',
+  'npc.approach': 'Raio de aproximação',
+  'npc.approachOff': 'Desativado',
+  'npc.approachValue': '{n} m',
 
   // AI panel
   'settings.ai.npcPreset': 'Respostas de NPC',
@@ -141,6 +144,8 @@ export const pt: Dict = {
   'objects.upload': 'Enviar arquivo',
   'objects.uploading': 'Carregando arquivo…',
   'objects.place': 'Colocar à minha frente',
+  'objects.placeBox': 'Colocar uma caixa',
+  'objects.boxName': 'Caixa',
   'objects.placed': 'Colocado',
   'objects.remove': 'Remover',
   'objects.clear': 'Limpar tudo',
@@ -162,12 +167,32 @@ export const pt: Dict = {
   'objects.placedBy': 'colocado por {name}',
   'objects.orphans': '{count} ficaram de pessoas que saíram. Elas permanecem até você sair da sala e ninguém pode editá-las.',
 
+  // Posição/rotação numérica — qualquer objeto colocado, ajustado na barra
+  // de edição (EditToolbar.tsx); a alternativa de valor exato a arrastar os
+  // gizmos de Mover/Girar.
+  'objects.transform': 'Posição e rotação',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'Ângulo',
+
   // Volume / raio audível — somente objetos de áudio e vídeo, ajustado na
   // barra de edição (EditToolbar.tsx)
   'objects.volume': 'Volume',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Raio audível',
   'objects.rangeValue': '{n} m',
+
+  // Aparência da caixa — apenas objetos do tipo "caixa", ajustada na barra
+  // de edição (EditToolbar.tsx)
+  'objects.box.badge': 'Caixa',
+  'objects.box.width': 'Largura',
+  'objects.box.height': 'Altura',
+  'objects.box.depth': 'Profundidade',
+  'objects.box.color': 'Cor',
+  'objects.box.uploadTexture': 'Enviar textura',
+  'objects.box.removeTexture': 'Remover textura',
+  'objects.box.tile': 'Tamanho do ladrilho',
 
   // Overlay de importação ao soltar um arquivo em qualquer lugar do app
   'dropImport.title': 'Adicionar isso ao seu mundo?',
@@ -177,9 +202,11 @@ export const pt: Dict = {
   'dropImport.descVideo': 'Isso será colocado no mundo como uma tela de vídeo.',
   'dropImport.descAudio': 'Isso será colocado no mundo como um som.',
   'dropImport.descWorld': 'Isso se tornará o ambiente que todos na sala veem.',
+  'dropImport.descManifest': 'Isso adicionará os objetos dele (e o ambiente, se houver) à sala.',
   'dropImport.addToWorld': 'Adicionar ao mundo',
   'dropImport.setAsWorldEnvironment': 'Ou defini-lo como o ambiente do mundo',
   'dropImport.saveOnly': 'Salvar somente no inventário',
+  'dropImport.lockedHint': 'Não disponível enquanto este mundo estiver bloqueado.',
   'dropImport.unsupportedTitle': 'Não é possível adicionar este arquivo',
   'dropImport.unsupportedBody': '"{fileName}" não é um arquivo de avatar, mundo ou objeto que este app possa usar.',
 

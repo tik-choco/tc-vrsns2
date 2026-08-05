@@ -1,4 +1,4 @@
-import { Pencil, Trash2 } from 'lucide-preact'
+import { Box, Pencil, Trash2 } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../../i18n'
 import { MAX_PLACEABLE_BYTES, PLACEABLE_ACCEPT } from '../../world/mediaFormat'
 import { editableObjectCount, type GameOverlayProps, type ObjectUploadError } from '../uiContract'
@@ -17,6 +17,7 @@ type Props = Pick<
   | 'scriptProblems'
   | 'onUploadObject'
   | 'onPlaceObject'
+  | 'onPlaceBox'
   | 'onClearObjects'
   | 'onSetEditMode'
 > & { onClose: () => void }
@@ -49,6 +50,17 @@ export function ObjectsPanel(props: Props) {
   const place = (cid: string) => {
     props.onClose()
     props.onPlaceObject(cid)
+  }
+
+  /**
+   * A box needs no catalog item to pick first (see useSession.placeBox's own
+   * doc — it constructs the whole placement itself), so this is a direct
+   * counterpart to place() above rather than something CatalogPanel's item
+   * list drives.
+   */
+  const placeBox = () => {
+    props.onClose()
+    props.onPlaceBox()
   }
 
   return (
@@ -91,6 +103,14 @@ export function ObjectsPanel(props: Props) {
         footer={
           <div class="objects-footer">
             <span class="objects-count">{t('objects.count', { count: props.placedCount })}</span>
+            <button
+              class="btn btn-ghost btn-icon-text"
+              disabled={locked}
+              onClick={placeBox}
+            >
+              <Box size={16} aria-hidden="true" />
+              {t('objects.placeBox')}
+            </button>
             <button
               class="btn btn-ghost btn-icon-text"
               disabled={editableCount <= 0 || locked}

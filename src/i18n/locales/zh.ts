@@ -94,6 +94,9 @@ export const zh: Dict = {
   'npc.voice': '语音',
   'npc.voiceDefault': '默认（AI 设置）',
   'npc.voiceHelp': '清除后将使用 AI 设置中的默认语音，而不是恢复该角色在 tc-town 中的原始语音。',
+  'npc.approach': '接近范围',
+  'npc.approachOff': '关闭',
+  'npc.approachValue': '{n} 米',
 
   // AI panel
   'settings.ai.npcPreset': 'NPC 回复',
@@ -141,6 +144,8 @@ export const zh: Dict = {
   'objects.upload': '上传文件',
   'objects.uploading': '正在加载文件…',
   'objects.place': '放到我面前',
+  'objects.placeBox': '放置方块',
+  'objects.boxName': '方块',
   'objects.placed': '已放置',
   'objects.remove': '删除',
   'objects.clear': '全部清除',
@@ -162,11 +167,29 @@ export const zh: Dict = {
   'objects.placedBy': '由 {name} 放置',
   'objects.orphans': '有 {count} 个是已离开的人留下的。它们会保留到你离开房间，且无人能编辑。',
 
+  // 位置与旋转的数值输入 — 适用于所有放置物，通过编辑工具栏（EditToolbar.tsx）设置，
+  // 是拖动移动／旋转操纵器的精确数值替代方式
+  'objects.transform': '位置与旋转',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': '角度',
+
   // 音量／可听范围 — 仅音频和视频对象，通过编辑工具栏（EditToolbar.tsx）设置
   'objects.volume': '音量',
   'objects.volumeValue': '{n}%',
   'objects.range': '可听范围',
   'objects.rangeValue': '{n} 米',
+
+  // 方块外观 — 仅“方块”类型的放置物，通过编辑工具栏（EditToolbar.tsx）设置
+  'objects.box.badge': '方块',
+  'objects.box.width': '宽度',
+  'objects.box.height': '高度',
+  'objects.box.depth': '深度',
+  'objects.box.color': '颜色',
+  'objects.box.uploadTexture': '上传贴图',
+  'objects.box.removeTexture': '移除贴图',
+  'objects.box.tile': '贴图平铺尺寸',
 
   // 拖放导入浮层 — 把文件拖放到应用的任意位置时弹出
   'dropImport.title': '要将它添加到你的世界吗？',
@@ -176,9 +199,11 @@ export const zh: Dict = {
   'dropImport.descVideo': '它将作为视频屏幕放置到世界中。',
   'dropImport.descAudio': '它将作为声音放置到世界中。',
   'dropImport.descWorld': '它将成为房间里所有人看到的环境。',
+  'dropImport.descManifest': '它会将其中的物体（以及环境，如果有的话）添加到房间中。',
   'dropImport.addToWorld': '添加到世界',
   'dropImport.setAsWorldEnvironment': '或改为设置为世界环境',
   'dropImport.saveOnly': '仅保存到物品库',
+  'dropImport.lockedHint': '此世界已锁定，暂时无法添加。',
   'dropImport.unsupportedTitle': '无法添加此文件',
   'dropImport.unsupportedBody': '“{fileName}” 不是本应用可用的虚拟形象、世界或物体文件。',
 

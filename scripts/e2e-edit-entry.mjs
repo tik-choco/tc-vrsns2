@@ -103,8 +103,15 @@ function makeTestPng(size = 16, rgb = [0xe0, 0x60, 0x40]) {
 // --- UI helpers -------------------------------------------------------------
 
 const editBarVisible = (page) => page.locator('.edit-bar').isVisible().catch(() => false)
-/** The behaviour picker is only enabled with a selection — our "is something selected?" probe. */
-const hasSelection = (page) => page.locator('.edit-bar-script-select').isEnabled().catch(() => false)
+/**
+ * The behaviour picker is only enabled with a selection — our "is something
+ * selected?" probe. Tag-qualified as `select.edit-bar-script-select` (see
+ * e2e-graph.mjs's own header comment for the full incident this works
+ * around): EditToolbar.tsx has several controls sharing this class or a
+ * lookalike numeric one, so a bare class-only locator is not guaranteed to
+ * resolve to exactly the Behavior `<select>` this probe wants.
+ */
+const hasSelection = (page) => page.locator('select.edit-bar-script-select').isEnabled().catch(() => false)
 
 async function joinRoom(page, room, name) {
   page.on('pageerror', (err) => log('pageerror', String(err).slice(0, 300)))

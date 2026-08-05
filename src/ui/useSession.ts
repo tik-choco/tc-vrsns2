@@ -3,6 +3,7 @@
 // integration point — UI components talk only to this hook.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type {
+  BoxAppearance,
   CatalogItem,
   ChatMessage,
   PlacedObject,
@@ -23,8 +24,14 @@ import type { ScriptError, ScriptWindow, UiAnchor } from '../script/ir'
 import { scriptPreset } from '../script/presets'
 import {
   AUDIBLE_RANGE_DEFAULT,
+  BOX_TILE_DEFAULT,
   clampAudibleRange,
+  clampBoxSize,
+  clampBoxTile,
+  clampNpcApproachRange,
   clampNpcRadius,
+  clampPosition,
+  clampRotation,
   clampScale,
   clampVolume,
   VOLUME_DEFAULT,
@@ -84,6 +91,7 @@ import { NPC_LIMITS } from '../npc/limits'
 import { createNpcVoice } from '../npc/NpcVoice'
 import { createLoudnessSource } from '../lib/audioLoudness'
 import { runLlmTask } from '../lib/aiClient'
+import { t } from '../i18n'
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
 export type MicState = 'off' | 'on' | 'pending' | 'error'
@@ -211,6 +219,15 @@ export type SessionApi = {
   /** Resolves the new catalog item's cid (or null on failure) — see uploadWorld's doc for why. */
   uploadObject: (file: File) => Promise<string | null>
   placeObject: (cid: string) => Promise<void>
+  /**
+   * Places a default 1m box primitive in front of the local player (task
+   * #24). Unlike placeObject there is no catalog item or bytes to resolve —
+   * a box carries none (see PlacedObject.box's doc) — so this builds the
+   * whole PlacedObject itself and publishes it the same way every other
+   * placement is: claim + commitOwnObjects + reconcileObjects, then drops
+   * into edit mode with the new box selected.
+   */
+  placeBox: () => void
   /** Places a tc-town character into the world as an NPC (R5) — see CharactersPanel's "Place in world". */
   placeTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
   clearObjects: () => void
@@ -232,6 +249,13 @@ export type SessionApi = {
    * re-reads it. Gated the same as any other edit.
    */
   setNpcVoice: (id: string, voiceName: string) => void
+  /**
+   * Edits an NPC placement's approach-trigger radius (task #23 follow-up),
+   * clamped to NPC_LIMITS.min/maxApproachRange. `undefined` clears the field
+   * (the approach-walk feature goes off), matching NpcBinding.approachRange's
+   * own "absent means off" contract. Gated the same as any other edit.
+   */
+  setNpcApproachRange: (id: string, range: number | undefined) => void
   /** Edits an 'audio'/'video' placement's own playback volume multiplier, clamped to VOLUME_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
   setObjectVolume: (id: string, volume: number) => void
   /** Edits an 'audio'/'video' placement's audible range, clamped to AUDIBLE_RANGE_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
@@ -246,6 +270,42 @@ export type SessionApi = {
    * the same as any other edit.
    */
   setObjectScale: (id: string, scale: number) => void
+  /**
+   * Edits any placement's world position by exact number, clamped to
+   * ±EDIT_POS_LIMIT (uiContract.ts's clampPosition) — the numeric
+   * counterpart to dragging the Move gizmo (task #26). Gated the same as any
+   * other edit.
+   */
+  setObjectPosition: (id: string, position: { x: number; y: number; z: number }) => void
+  /**
+   * Edits any placement's Y rotation by exact number, in RADIANS — the
+   * numeric counterpart to dragging the Rotate gizmo (task #26). EditToolbar
+   * shows/accepts degrees and converts at its own boundary; this stays in
+   * the same unit PlacedObject.rotationY has always used. Gated the same as
+   * any other edit.
+   */
+  setObjectRotation: (id: string, radians: number) => void
+  /**
+   * Edits a 'box' placement's appearance (task #24): merges `patch` into the
+   * placement's current BoxAppearance, clamps sx/sy/sz to BOX_SIZE_MIN/MAX
+   * and textureTile to BOX_TILE_MIN/MAX (net/protocol.ts — the same bounds
+   * parseBoxAppearance clamps a peer's box to on the wire), and publishes
+   * the result. Gated the same as any other edit; a no-op for anything that
+   * isn't currently a 'box' placement.
+   */
+  setObjectBox: (id: string, patch: Partial<BoxAppearance>) => void
+  /**
+   * Publishes an image's bytes to the shared content store for use as a
+   * box's texture, resolving the published cid (or null on failure) —
+   * EditToolbar's texture-upload button feeds the result straight into
+   * setObjectBox. The same shrink-then-publish chain uploadObject uses
+   * (shrinkImageForPlacement, then the store publish), but deliberately
+   * WITHOUT a catalog entry: a box's texture is authored inline on the
+   * placement (BoxAppearance.textureCid), not a reusable item a person picks
+   * from a library later, so there is nothing here worth remembering in the
+   * objects catalog the way an uploaded prop or media file is.
+   */
+  uploadBoxTexture: (file: File) => Promise<string | null>
   /**
    * Runs the natural-language "describe it" generator against the configured
    * model. Exposed straight from src/script/generate.ts (no session state
@@ -309,6 +369,10 @@ const NPC_OBSERVE_INTERVAL_MS = 1000
 const NPC_SILENCE_LEVEL = 0.02
 /** How long an NPC's voice must stay silent before its utterance is considered over. Longer than the gap between words, so a pause mid-sentence never ends the line early. */
 const NPC_SILENCE_HOLD_MS = 1200
+/** Default appearance for a freshly authored box (placeBox) — mirrors net/protocol.ts's parsePlacedObject fallback exactly, so a box just placed and a wire-decoded box with no appearance render identically. */
+const DEFAULT_BOX_APPEARANCE: BoxAppearance = { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' }
+/** Drop distance in front of the player for placeBox — matches WorldObjects' own default drop distance for a non-media placement, so a box lands exactly where any other prop would. */
+const BOX_PLACE_DISTANCE = 1.5
 
 /** Schedules a thumbnail capture one rendered frame out (rAF, or a short timeout where unavailable). */
 function scheduleNextFrame(cb: () => void): void {
@@ -2014,6 +2078,44 @@ export function useSession(): SessionApi {
   )
 
   /**
+   * Places a default 1m box in front of the local player (task #24) — box-
+   * primitive authoring's entry point. Unlike placeObject/placeTownCharacter
+   * this never touches World.placeObject: a box carries no model/media bytes
+   * at all (see PlacedObject.box's doc — an empty cid is legal for this kind
+   * alone), so there is nothing for WorldObjects to load. The PlacedObject is
+   * built here directly and folded in through the exact same claim +
+   * commitOwnObjects + reconcileObjects path every other placement publish
+   * uses, so it is broadcast, autosaved and synced into the live scene with
+   * no second code path. Drops straight into edit mode with the new box
+   * selected — same "placing is the start of editing it" reasoning as
+   * placeObject.
+   */
+  const placeBox = useCallback(() => {
+    const world = worldRef.current
+    if (!world || worldPolicyRef.current === 'locked') return
+    const pose = world.getLocalPose()
+    const x = pose ? pose.x + Math.sin(pose.ry) * BOX_PLACE_DISTANCE : 0
+    const z = pose ? pose.z + Math.cos(pose.ry) * BOX_PLACE_DISTANCE : 0
+    const state: PlacedObject = {
+      id: crypto.randomUUID(),
+      cid: '',
+      name: t('objects.boxName'),
+      kind: 'box',
+      x,
+      y: 0,
+      z,
+      rotationY: pose?.ry ?? 0,
+      scale: 1,
+      placedBy: profileRef.current.name,
+      box: { ...DEFAULT_BOX_APPEARANCE },
+    }
+    commitOwnObjects([...objects.current.own(), state])
+    reconcileObjects()
+    setEditMode(true)
+    worldRef.current?.selectObject(state.id)
+  }, [commitOwnObjects, reconcileObjects, setEditMode])
+
+  /**
    * Places a tc-town character into the world as an NPC (R5 contract §6):
    * resolves its VRM the same way equipTownCharacter does
    * (resolveTownCharacterVrm), then drops it in front of the local player
@@ -2215,6 +2317,41 @@ export function useSession(): SessionApi {
   )
 
   /**
+   * Edits an NPC's approach-trigger radius from EditToolbar (task #23
+   * follow-up). Same shape as setNpcRadius above, but `range` of `undefined`
+   * DELETES the field rather than clamping it — NpcBinding.approachRange's
+   * own contract is "absent means the feature is off", the opposite
+   * fallback from `radius`, which always has a sensible default (see the
+   * field's own doc in shared/types.ts).
+   */
+  const setNpcApproachRange = useCallback(
+    (id: string, range: number | undefined) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current?.npc) return
+      if (range === undefined) {
+        if (current.npc.approachRange === undefined) return
+        const npc = { ...current.npc }
+        delete npc.approachRange
+        const next: PlacedObject = { ...current, npc }
+        commitOwnObjects(objects.current.claim(next))
+        reconcileObjects()
+        if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+        return
+      }
+      const fallback = current.npc.approachRange ?? NPC_LIMITS.minApproachRange
+      const clamped = clampNpcApproachRange(range, fallback)
+      if (clamped === current.npc.approachRange) return
+      const next: PlacedObject = { ...current, npc: { ...current.npc, approachRange: clamped } }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
    * Edits an 'audio'/'video' placement's own volume multiplier from
    * EditToolbar. Same shape as setNpcRadius above: gate on worldPolicy +
    * editableIds, read the live placement off worldRef (not the render-time
@@ -2290,6 +2427,125 @@ export function useSession(): SessionApi {
     },
     [commitOwnObjects, reconcileObjects],
   )
+
+  /**
+   * Edits any placement's world position from EditToolbar's X/Y/Z numeric
+   * fields (task #26) — the exact-value counterpart to dragging the Move
+   * gizmo. Same shape as setObjectScale above, clamped to ±EDIT_POS_LIMIT
+   * (uiContract.ts's clampPosition) per axis. All three axes are always
+   * supplied together — EditToolbar reads the other two off the live
+   * selection before calling this, so editing one axis never has to guess
+   * at the others.
+   */
+  const setObjectPosition = useCallback(
+    (id: string, position: { x: number; y: number; z: number }) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current) return
+      const x = clampPosition(position.x, current.x)
+      const y = clampPosition(position.y, current.y)
+      const z = clampPosition(position.z, current.z)
+      if (x === current.x && y === current.y && z === current.z) return
+      const next: PlacedObject = { ...current, x, y, z }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Edits any placement's Y rotation from EditToolbar's degree field (task
+   * #26) — the exact-value counterpart to dragging the Rotate gizmo. Same
+   * shape as setObjectScale above; `radians` normalizes to (-π, π] via
+   * clampRotation rather than clamping to a min/max, since a rotation wraps.
+   * EditToolbar itself works in degrees and converts at its own boundary, so
+   * this stays in the same radians unit PlacedObject.rotationY has always
+   * used.
+   */
+  const setObjectRotation = useCallback(
+    (id: string, radians: number) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current) return
+      const rotationY = clampRotation(radians, current.rotationY)
+      if (rotationY === current.rotationY) return
+      const next: PlacedObject = { ...current, rotationY }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Edits a 'box' placement's appearance from EditToolbar's box-authoring
+   * section (task #24). Same shape as setObjectScale above (gate on
+   * worldPolicy + editableIds, read the live placement off worldRef, claim +
+   * commitOwnObjects, then reconcile — reconcileObjects()'s world.syncObjects
+   * call is also what rebuilds the box's mesh/texture in place, same
+   * "reconcile does the live retune" reasoning setObjectVolume's doc gives),
+   * but merges `patch` into the CURRENT box appearance rather than replacing
+   * it outright, since EditToolbar's fields (width/height/depth/color/
+   * texture/tile) each publish just the one field that changed. sx/sy/sz
+   * clamp to BOX_SIZE_MIN/MAX and textureTile to BOX_TILE_MIN/MAX
+   * (net/protocol.ts) — the same bounds parseBoxAppearance clamps a peer's
+   * box to on the wire. `textureCid` is dropped (not merely emptied) when
+   * `patch` supplies a falsy value, which is exactly how EditToolbar's
+   * "remove texture" affordance clears it.
+   */
+  const setObjectBox = useCallback(
+    (id: string, patch: Partial<BoxAppearance>) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current || current.kind !== 'box' || !current.box) return
+      const merged = { ...current.box, ...patch }
+      const box: BoxAppearance = {
+        sx: clampBoxSize(merged.sx, current.box.sx),
+        sy: clampBoxSize(merged.sy, current.box.sy),
+        sz: clampBoxSize(merged.sz, current.box.sz),
+        color: merged.color,
+      }
+      if (merged.textureCid) box.textureCid = merged.textureCid
+      if (merged.textureTile !== undefined) {
+        box.textureTile = clampBoxTile(merged.textureTile, current.box.textureTile ?? BOX_TILE_DEFAULT)
+      }
+      const next: PlacedObject = { ...current, box }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Publishes an image's bytes to the shared content store for a box's
+   * texture (EditToolbar's box-authoring section), WITHOUT filing a catalog
+   * entry — see this function's own doc on SessionApi for why a box texture
+   * is authored inline rather than a reusable catalog item. Reuses exactly
+   * the shrink-then-publish steps uploadObject already runs (the size guard,
+   * shrinkImageForPlacement, then the store publish) so a box texture is
+   * bounded and bandwidth-conscious the same way any other placed image is;
+   * the only difference is skipping addToCatalog's localStorage/thumbnail
+   * bookkeeping. Resolves null on any failure — the caller (EditToolbar)
+   * only ever forwards a cid it can trust into setObjectBox.
+   */
+  const uploadBoxTexture = useCallback(async (file: File): Promise<string | null> => {
+    try {
+      if (file.size > MAX_PLACEABLE_BYTES) return null
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      if (bytes.byteLength > MAX_PLACEABLE_BYTES) return null
+      const shrunk = await shrinkImageForPlacement(bytes, 'image', file.type)
+      const published = shrunk?.bytes ?? bytes
+      return await publishVrmBytes(file.name, published)
+    } catch (e) {
+      console.debug('box texture upload failed', e)
+      return null
+    }
+  }, [])
 
   /** Every script window currently open. Called fresh every frame by ScriptWindowsHost — never memoize the result. */
   const getScriptWindows = useCallback((): ScriptWindow[] => worldRef.current?.scriptWindows() ?? [], [])
@@ -2502,6 +2758,7 @@ export function useSession(): SessionApi {
     importWorldManifest,
     uploadObject,
     placeObject,
+    placeBox,
     placeTownCharacter,
     clearObjects,
     setEditMode,
@@ -2510,9 +2767,14 @@ export function useSession(): SessionApi {
     setObjectScript,
     setNpcRadius,
     setNpcVoice,
+    setNpcApproachRange,
     setObjectVolume,
     setObjectAudibleRange,
     setObjectScale,
+    setObjectPosition,
+    setObjectRotation,
+    setObjectBox,
+    uploadBoxTexture,
     generateBehaviour: runGenerateBehaviour,
     scriptProblems,
     getScriptWindows,

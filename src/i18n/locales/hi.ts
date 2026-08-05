@@ -94,6 +94,9 @@ export const hi: Dict = {
   'npc.voice': 'आवाज़',
   'npc.voiceDefault': 'डिफ़ॉल्ट (AI सेटिंग्स)',
   'npc.voiceHelp': 'इसे खाली करने पर AI सेटिंग्स की डिफ़ॉल्ट आवाज़ इस्तेमाल होगी, न कि इस किरदार की मूल tc-town आवाज़।',
+  'npc.approach': 'पास आने की सीमा',
+  'npc.approachOff': 'बंद',
+  'npc.approachValue': '{n} मी',
 
   // AI panel
   'settings.ai.npcPreset': 'NPC के जवाब',
@@ -141,6 +144,8 @@ export const hi: Dict = {
   'objects.upload': 'फ़ाइल अपलोड करें',
   'objects.uploading': 'फ़ाइल लोड हो रही है…',
   'objects.place': 'मेरे सामने रखें',
+  'objects.placeBox': 'बॉक्स रखें',
+  'objects.boxName': 'बॉक्स',
   'objects.placed': 'रखा गया',
   'objects.remove': 'हटाएं',
   'objects.clear': 'सभी हटाएं',
@@ -162,12 +167,31 @@ export const hi: Dict = {
   'objects.placedBy': '{name} ने रखा',
   'objects.orphans': '{count} चीज़ें जा चुके लोगों की हैं। रूम छोड़ने तक दिखती रहेंगी, पर इन्हें कोई संपादित नहीं कर सकता।',
 
+  // संख्यात्मक स्थिति/घुमाव — हर रखी हुई चीज़ के लिए, संपादन टूलबार
+  // (EditToolbar.tsx) से सेट होता है — मूव/रोटेट गिज़्मो खींचने का सटीक विकल्प।
+  'objects.transform': 'स्थिति और घुमाव',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'कोण',
+
   // वॉल्यूम / सुनाई देने की सीमा — सिर्फ़ ऑडियो और वीडियो ऑब्जेक्ट के लिए,
   // संपादन टूलबार (EditToolbar.tsx) से सेट होता है
   'objects.volume': 'वॉल्यूम',
   'objects.volumeValue': '{n}%',
   'objects.range': 'सुनाई देने की सीमा',
   'objects.rangeValue': '{n} मी',
+
+  // बॉक्स का रूप — सिर्फ़ "बॉक्स" ऑब्जेक्ट के लिए, संपादन टूलबार
+  // (EditToolbar.tsx) से सेट होता है
+  'objects.box.badge': 'बॉक्स',
+  'objects.box.width': 'चौड़ाई',
+  'objects.box.height': 'ऊँचाई',
+  'objects.box.depth': 'गहराई',
+  'objects.box.color': 'रंग',
+  'objects.box.uploadTexture': 'टेक्सचर अपलोड करें',
+  'objects.box.removeTexture': 'टेक्सचर हटाएं',
+  'objects.box.tile': 'टाइल आकार',
 
   // ड्रॉप-इम्पोर्ट ओवरले — ऐप में कहीं भी फ़ाइल ड्रॉप करने पर
   'dropImport.title': 'क्या इसे अपनी दुनिया में जोड़ें?',
@@ -177,9 +201,11 @@ export const hi: Dict = {
   'dropImport.descVideo': 'यह दुनिया में एक वीडियो स्क्रीन के रूप में रखा जाएगा।',
   'dropImport.descAudio': 'यह दुनिया में एक ध्वनि के रूप में रखा जाएगा।',
   'dropImport.descWorld': 'यह वह माहौल बन जाएगा जो रूम में मौजूद सभी को दिखेगा।',
+  'dropImport.descManifest': 'इससे इसके ऑब्जेक्ट (और वातावरण, अगर हो) रूम में जुड़ जाएंगे।',
   'dropImport.addToWorld': 'दुनिया में जोड़ें',
   'dropImport.setAsWorldEnvironment': 'या इसके बजाय दुनिया के माहौल के रूप में सेट करें',
   'dropImport.saveOnly': 'केवल इन्वेंट्री में सहेजें',
+  'dropImport.lockedHint': 'यह दुनिया लॉक होने तक उपलब्ध नहीं है।',
   'dropImport.unsupportedTitle': 'यह फ़ाइल नहीं जोड़ी जा सकती',
   'dropImport.unsupportedBody': '"{fileName}" न तो अवतार है, न दुनिया, न ही कोई ऑब्जेक्ट फ़ाइल जिसे यह ऐप इस्तेमाल कर सके।',
 

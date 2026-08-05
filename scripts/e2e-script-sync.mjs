@@ -175,11 +175,15 @@ async function uploadAndPlace(page) {
  * Waits for edit mode (placing an object enters it, with that object already
  * selected) and falls back to clicking a small spiral of points around the
  * canvas centre — see e2e-script.mjs's enterEditModeAndSelect, which this
- * mirrors exactly.
+ * mirrors exactly, including the `select.` tag qualifier (see e2e-graph.mjs's
+ * own header comment for the full incident: EditToolbar.tsx has several
+ * controls sharing this class or a lookalike numeric one, so a bare
+ * class-only locator is not guaranteed to resolve to exactly the Behavior
+ * `<select>` this scenario wants).
  */
 async function enterEditModeAndSelect(page) {
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
-  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+  if (await page.locator('select.edit-bar-script-select').isEnabled().catch(() => false)) {
     log('[A] placing selected the object — no canvas click needed')
     return
   }
@@ -197,7 +201,7 @@ async function enterEditModeAndSelect(page) {
   for (const [dx, dy] of offsets) {
     await page.mouse.click(cx + dx, cy + dy)
     const selected = await page
-      .locator('.edit-bar-script-select')
+      .locator('select.edit-bar-script-select')
       .isEnabled()
       .catch(() => false)
     if (selected) {
@@ -349,7 +353,7 @@ async function main() {
 
     // --- 1. Streamed motion: rotate on A, observed advancing on B ----------
     log('[A] attaching the "rotate" behaviour…')
-    await pageA.locator('.edit-bar-script-select').selectOption('rotate')
+    await pageA.locator('select.edit-bar-script-select').selectOption('rotate')
     await new Promise((r) => setTimeout(r, 150))
 
     log('[B] waiting for the placed object to sync…')
@@ -385,7 +389,7 @@ async function main() {
 
     // --- 2. Full round trip: greeter trigger, B walks in, A runs it --------
     log('[A] switching the behaviour to "greeter"…')
-    await pageA.locator('.edit-bar-script-select').selectOption('greeter')
+    await pageA.locator('select.edit-bar-script-select').selectOption('greeter')
     await new Promise((r) => setTimeout(r, 150))
 
     log('[A] leaving edit mode…')

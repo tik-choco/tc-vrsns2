@@ -95,6 +95,9 @@ export const id: Dict = {
   'npc.voice': 'Suara',
   'npc.voiceDefault': 'Bawaan (pengaturan AI)',
   'npc.voiceHelp': 'Mengosongkannya akan menggunakan suara bawaan dari pengaturan AI, bukan suara asli karakter di tc-town.',
+  'npc.approach': 'Radius pendekatan',
+  'npc.approachOff': 'Nonaktif',
+  'npc.approachValue': '{n} m',
 
   // AI panel
   'settings.ai.npcPreset': 'Balasan NPC',
@@ -142,6 +145,8 @@ export const id: Dict = {
   'objects.upload': 'Unggah berkas',
   'objects.uploading': 'Memuat berkas…',
   'objects.place': 'Tempatkan di depanku',
+  'objects.placeBox': 'Tempatkan kotak',
+  'objects.boxName': 'Kotak',
   'objects.placed': 'Ditempatkan',
   'objects.remove': 'Hapus',
   'objects.clear': 'Hapus semua',
@@ -163,12 +168,32 @@ export const id: Dict = {
   'objects.placedBy': 'ditempatkan oleh {name}',
   'objects.orphans': '{count} ditinggalkan orang yang sudah pergi. Tetap ada sampai kamu keluar dari ruang, dan tidak ada yang bisa mengeditnya.',
 
+  // Posisi/rotasi numerik — untuk objek apa pun yang ditempatkan, diatur
+  // dari toolbar edit (EditToolbar.tsx) — alternatif nilai pasti selain
+  // menyeret gizmo Pindah/Putar.
+  'objects.transform': 'Posisi & rotasi',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'Sudut',
+
   // Volume / radius terdengar — khusus objek audio dan video, diatur dari
   // toolbar edit (EditToolbar.tsx)
   'objects.volume': 'Volume',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Radius terdengar',
   'objects.rangeValue': '{n} m',
+
+  // Tampilan kotak — khusus objek jenis "kotak", diatur dari toolbar edit
+  // (EditToolbar.tsx)
+  'objects.box.badge': 'Kotak',
+  'objects.box.width': 'Lebar',
+  'objects.box.height': 'Tinggi',
+  'objects.box.depth': 'Kedalaman',
+  'objects.box.color': 'Warna',
+  'objects.box.uploadTexture': 'Unggah tekstur',
+  'objects.box.removeTexture': 'Hapus tekstur',
+  'objects.box.tile': 'Ukuran ubin',
 
   // Overlay impor saat berkas dijatuhkan di mana pun pada aplikasi
   'dropImport.title': 'Tambahkan ini ke duniamu?',
@@ -178,9 +203,11 @@ export const id: Dict = {
   'dropImport.descVideo': 'Ini akan ditempatkan di dunia sebagai layar video.',
   'dropImport.descAudio': 'Ini akan ditempatkan di dunia sebagai suara.',
   'dropImport.descWorld': 'Ini akan menjadi lingkungan yang dilihat semua orang di ruang ini.',
+  'dropImport.descManifest': 'Ini akan menambahkan objeknya (dan lingkungannya, jika ada) ke ruang ini.',
   'dropImport.addToWorld': 'Tambahkan ke dunia',
   'dropImport.setAsWorldEnvironment': 'Atau jadikan sebagai lingkungan dunia',
   'dropImport.saveOnly': 'Hanya simpan ke inventaris',
+  'dropImport.lockedHint': 'Tidak tersedia selama dunia ini terkunci.',
   'dropImport.unsupportedTitle': 'Berkas ini tidak bisa ditambahkan',
   'dropImport.unsupportedBody': '"{fileName}" bukan berkas avatar, dunia, atau objek yang bisa digunakan aplikasi ini.',
 
