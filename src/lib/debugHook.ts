@@ -43,14 +43,29 @@ export type VrsnsDebug = {
   editable: (() => string[]) | null
   /**
    * The audio-range indicator's current focus — the id of whichever
-   * 'audio'/'video' placement is selected plus its effective audible range
-   * (World.getAudioRangeFocus / WorldObjects.getAudioRangeFocus), or null
-   * while nothing audio-carrying is selected. There is no other way for a
-   * test to confirm the indicator followed an audibleRange edit or a
-   * selection change — the sphere itself is a THREE scene object, not
-   * anything the DOM exposes.
+   * 'audio'/'video' placement is selected plus its effective audible range,
+   * effective falloff start, and emitter offset (World.getAudioRangeFocus /
+   * WorldObjects.getAudioRangeFocus), or null while nothing audio-carrying
+   * is selected. There is no other way for a test to confirm the indicator
+   * followed an audibleRange/falloffStart/audioOffset edit or a selection
+   * change — the sphere itself is a THREE scene object, not anything the DOM
+   * exposes.
+   *
+   * `id`/`range` are unchanged from before falloffStart/audioOffset existed
+   * (scripts/e2e-audio-range.mjs already reads them by name); `falloffStart`
+   * and `audioOffset` are additions, not renames — see
+   * WorldObjects.getAudioRangeFocus's doc for exactly what each reports
+   * (the EFFECTIVE falloff start, and the offset defaulted to the origin
+   * rather than the raw possibly-absent PlacedObject fields).
    */
-  audioRangeFocus: (() => { id: string; range: number } | null) | null
+  audioRangeFocus:
+    | (() => {
+        id: string
+        range: number
+        falloffStart: number
+        audioOffset: { x: number; y: number; z: number }
+      } | null)
+    | null
   /**
    * Our own NPC placements (R5), each carrying `lastReplyAt` — the
    * Date.now() of its most recent `say`, or null if it has never replied.

@@ -182,13 +182,21 @@ export const pt: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'Ângulo',
 
-  // Volume / raio audível — somente objetos de áudio e vídeo, ajustado na
-  // barra de edição (EditToolbar.tsx)
+  // Volume / raio audível / raio de volume máximo / deslocamento do som —
+  // somente objetos de áudio e vídeo, ajustado na barra de edição
+  // (EditToolbar.tsx)
   'objects.volume': 'Volume',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Raio audível',
   'objects.rangeValue': '{n} m',
   'objects.rangeExact': 'Raio audível (m)',
+  'objects.falloffStart': 'Raio de volume máximo (m)',
+
+  'objects.falloffStartShort': 'Volume máx.',
+  'objects.audioOffset': 'Deslocamento do som',
+  'objects.audioOffsetX': 'Deslocamento do som X (m)',
+  'objects.audioOffsetY': 'Deslocamento do som Y (m)',
+  'objects.audioOffsetZ': 'Deslocamento do som Z (m)',
 
   // Aparência da caixa — apenas objetos do tipo "caixa", ajustada na barra
   // de edição (EditToolbar.tsx)

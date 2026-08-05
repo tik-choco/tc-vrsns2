@@ -15,6 +15,7 @@ import type {
 import { World } from '../world/World'
 import type { EditTool } from '../world/ObjectEditor'
 import { detectWorldFormat } from '../world/worldFormat'
+import { effectiveFalloffStart } from '../shared/audioFalloff'
 import {
   generateBehaviour,
   type GenerateOutcome,
@@ -27,8 +28,10 @@ import {
   AUDIBLE_RANGE_DEFAULT,
   BOX_TILE_DEFAULT,
   clampAudibleRange,
+  clampAudioOffsetAxis,
   clampBoxSize,
   clampBoxTile,
+  clampFalloffStart,
   clampNpcApproachRange,
   clampNpcRadius,
   clampPosition,
@@ -280,6 +283,23 @@ export type SessionApi = {
   setObjectVolume: (id: string, volume: number) => void
   /** Edits an 'audio'/'video' placement's audible range, clamped to AUDIBLE_RANGE_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
   setObjectAudibleRange: (id: string, range: number) => void
+  /**
+   * Edits an 'audio'/'video' placement's full-volume radius (PlacedObject.
+   * falloffStart), clamped to FALLOFF_START_MIN/MAX (net/protocol.ts). Gated
+   * the same as any other edit. See shared/audioFalloff.ts's
+   * effectiveFalloffStart for why this is clamped to its own bounds here but
+   * NOT against the placement's current audibleRange — that relationship is
+   * enforced at read time instead, since the two fields are edited
+   * independently.
+   */
+  setObjectFalloffStart: (id: string, falloffStart: number) => void
+  /**
+   * Edits an 'audio'/'video' placement's sound-source offset (PlacedObject.
+   * audioOffset), each axis clamped to ±AUDIO_OFFSET_LIMIT (net/protocol.ts).
+   * Gated the same as any other edit; all three axes travel together, same
+   * reasoning as setObjectPosition below.
+   */
+  setObjectAudioOffset: (id: string, offset: { x: number; y: number; z: number }) => void
   /**
    * Edits any placement's uniform scale by exact number, clamped to
    * SCALE_MIN/SCALE_MAX (net/protocol.ts) — the same bounds
@@ -2601,6 +2621,68 @@ export function useSession(): SessionApi {
   )
 
   /**
+   * Edits an 'audio'/'video' placement's full-volume radius from
+   * EditToolbar. Same shape (and same live-retune path via reconcileObjects)
+   * as setObjectVolume/setObjectAudibleRange above, but `fallback` is
+   * effectiveFalloffStart(range, current.falloffStart) rather than a bare
+   * *_DEFAULT constant — an unset falloffStart's default depends on the
+   * placement's OWN audibleRange (AUDIO_FULL_FRACTION of it), so there is no
+   * fixed number to fall back to the way VOLUME_DEFAULT/AUDIBLE_RANGE_DEFAULT
+   * give the other two setters (see clampFalloffStart's doc in uiContract.ts
+   * for the full reasoning). clampFalloffStart itself only enforces
+   * FALLOFF_START_MIN/MAX — the range-relative ceiling is effectiveFalloffStart's
+   * job, applied wherever falloffStart is actually read, not baked into what
+   * gets stored here.
+   */
+  const setObjectFalloffStart = useCallback(
+    (id: string, falloffStart: number) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current || (current.kind !== 'audio' && current.kind !== 'video')) return
+      const range = current.audibleRange ?? AUDIBLE_RANGE_DEFAULT
+      const fallback = effectiveFalloffStart(range, current.falloffStart)
+      const clamped = clampFalloffStart(falloffStart, fallback)
+      if (clamped === fallback) return
+      const next: PlacedObject = { ...current, falloffStart: clamped }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Edits an 'audio'/'video' placement's sound-source offset from
+   * EditToolbar's X/Y/Z fields. Same shape as setObjectPosition below (all
+   * three axes always supplied together, each clamped independently), but
+   * gated on kind like setObjectVolume/setObjectAudibleRange above, and
+   * clamped to ±AUDIO_OFFSET_LIMIT (clampAudioOffsetAxis) rather than
+   * ±EDIT_POS_LIMIT — this is metres from the placement's own origin, not a
+   * world coordinate. `fallback` is the placement's current offset, or
+   * {0,0,0} (sound emitted from the placement's own origin) for a placement
+   * that never set one — PlacedObject.audioOffset's own "absent means" default.
+   */
+  const setObjectAudioOffset = useCallback(
+    (id: string, offset: { x: number; y: number; z: number }) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current || (current.kind !== 'audio' && current.kind !== 'video')) return
+      const fallback = current.audioOffset ?? { x: 0, y: 0, z: 0 }
+      const x = clampAudioOffsetAxis(offset.x, fallback.x)
+      const y = clampAudioOffsetAxis(offset.y, fallback.y)
+      const z = clampAudioOffsetAxis(offset.z, fallback.z)
+      if (x === fallback.x && y === fallback.y && z === fallback.z) return
+      const next: PlacedObject = { ...current, audioOffset: { x, y, z } }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
    * Edits any placement's uniform scale from EditToolbar's numeric field —
    * the exact-value counterpart to dragging the Resize gizmo (a drag can't
    * land on an exact number or make two objects match). Same shape as
@@ -2973,6 +3055,8 @@ export function useSession(): SessionApi {
     setNpcApproachRange,
     setObjectVolume,
     setObjectAudibleRange,
+    setObjectFalloffStart,
+    setObjectAudioOffset,
     setObjectScale,
     setObjectPosition,
     setObjectRotation,

@@ -755,12 +755,18 @@ export class World {
   }
 
   /**
-   * The audio-range indicator's current focus (id + effective range), or
-   * null while nothing 'audio'/'video' is selected — see WorldObjects.
-   * getAudioRangeFocus's doc. Exposed here purely for e2e observability
-   * (src/lib/debugHook.ts); nothing in this class itself reads it.
+   * The audio-range indicator's current focus (id + effective range/falloff
+   * start + emitter offset), or null while nothing 'audio'/'video' is
+   * selected — see WorldObjects.getAudioRangeFocus's doc. Exposed here
+   * purely for e2e observability (src/lib/debugHook.ts); nothing in this
+   * class itself reads it.
    */
-  getAudioRangeFocus(): { id: string; range: number } | null {
+  getAudioRangeFocus(): {
+    id: string
+    range: number
+    falloffStart: number
+    audioOffset: { x: number; y: number; z: number }
+  } | null {
     return this.worldObjects.getAudioRangeFocus()
   }
 

@@ -181,12 +181,19 @@ export const ja: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': '角度',
 
-  // 音量／聞こえる距離 — 音声・動画オブジェクト専用。編集ツールバー（EditToolbar.tsx）で設定
+  // 音量／聞こえる距離／最大音量の半径／音のオフセット — 音声・動画オブジェクト専用。編集ツールバー（EditToolbar.tsx）で設定
   'objects.volume': '音量',
   'objects.volumeValue': '{n}%',
   'objects.range': '聞こえる距離',
   'objects.rangeValue': '{n} m',
   'objects.rangeExact': '聞こえる範囲 (m)',
+  'objects.falloffStart': '最大音量の半径 (m)',
+
+  'objects.falloffStartShort': 'フル音量',
+  'objects.audioOffset': '音のオフセット',
+  'objects.audioOffsetX': '音のオフセット X (m)',
+  'objects.audioOffsetY': '音のオフセット Y (m)',
+  'objects.audioOffsetZ': '音のオフセット Z (m)',
 
   // ボックスの外観 — 「ボックス」種類の配置物専用。編集ツールバー（EditToolbar.tsx）で設定
   'objects.box.badge': 'ボックス',

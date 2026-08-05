@@ -17,10 +17,13 @@ import type { DiscoveredRoom } from '../net/DiscoverySession'
 import {
   AUDIBLE_RANGE_MAX,
   AUDIBLE_RANGE_MIN,
+  AUDIO_OFFSET_LIMIT,
   BOX_SIZE_MAX,
   BOX_SIZE_MIN,
   BOX_TILE_MAX,
   BOX_TILE_MIN,
+  FALLOFF_START_MAX,
+  FALLOFF_START_MIN,
   SCALE_MAX,
   SCALE_MIN,
   VOLUME_MAX,
@@ -227,6 +230,24 @@ export type GameOverlayProps = {
    */
   onSetObjectAudibleRange: (id: string, range: number) => void
   /**
+   * Edits an 'audio'/'video' placement's full-volume radius (PlacedObject.
+   * falloffStart), same gating as onSetObjectVolume/onSetObjectAudibleRange
+   * above. Splits what used to be a fixed AUDIO_FULL_FRACTION of the audible
+   * range into its own independently-settable distance — see falloffStart's
+   * doc in shared/types.ts for what the two distances mean together.
+   */
+  onSetObjectFalloffStart: (id: string, falloffStart: number) => void
+  /**
+   * Edits an 'audio'/'video' placement's sound-source offset (PlacedObject.
+   * audioOffset) — where its sound is emitted FROM, as metres relative to the
+   * placement's own origin, rather than always the placement's centre. Same
+   * gating as onSetObjectVolume above; all three axes travel together for the
+   * same reason onSetObjectPosition's do (EditToolbar reads the other two off
+   * `selectedObject` before calling this, so one edited axis never clobbers
+   * the other two mid-flight).
+   */
+  onSetObjectAudioOffset: (id: string, offset: { x: number; y: number; z: number }) => void
+  /**
    * Edits any placement's uniform scale, typed as an exact number — the
    * alternative to dragging the Resize gizmo, which can't land on an exact
    * value or make two objects match. Unlike onSetObjectVolume/
@@ -386,6 +407,48 @@ export function clampVolume(volume: number, fallback: number): number {
 export function clampAudibleRange(range: number, fallback: number): number {
   if (!Number.isFinite(range)) return fallback
   return Math.min(AUDIBLE_RANGE_MAX, Math.max(AUDIBLE_RANGE_MIN, range))
+}
+
+/**
+ * Clamps a full-volume-radius edit to FALLOFF_START_MIN/MAX (net/protocol.ts)
+ * — the field's OWN bounds in isolation, same "correct rather than
+ * propagate" shape as clampVolume/clampAudibleRange above.
+ *
+ * Deliberately does NOT also clamp against the placement's audible range:
+ * that relationship (falloffStart must stay below FALLOFF_MAX_FRACTION of
+ * audibleRange) is a fact about two INDEPENDENTLY-edited fields, so
+ * shared/audioFalloff.ts's effectiveFalloffStart() enforces it by reading
+ * both together, at the point falloffStart is actually used (audio tuning,
+ * the range-sphere visual, this file's own EditToolbar display) — see that
+ * module's doc for why baking today's range into the stored falloffStart
+ * would be wrong (lowering the range would silently rewrite it, and raising
+ * the range back would then not restore what the author typed).
+ *
+ * There is deliberately no FALLOFF_START_DEFAULT constant to go with this,
+ * unlike VOLUME_DEFAULT/AUDIBLE_RANGE_DEFAULT above: an unset falloffStart's
+ * default is not a fixed number, it's AUDIO_FULL_FRACTION of whatever the
+ * placement's range currently is, which only effectiveFalloffStart can
+ * compute (it needs the range as an input). Callers that need "the default"
+ * — useSession.setObjectFalloffStart's fallback, EditToolbar's displayed
+ * value — call effectiveFalloffStart directly instead of a bare constant.
+ */
+export function clampFalloffStart(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(FALLOFF_START_MAX, Math.max(FALLOFF_START_MIN, value))
+}
+
+/**
+ * Clamps one axis of an 'audio'/'video' placement's sound-offset edit to
+ * ±AUDIO_OFFSET_LIMIT (net/protocol.ts), same "correct rather than
+ * propagate" shape as clampPosition below — but a far tighter bound, since
+ * PlacedObject.audioOffset is metres from the PLACEMENT's own origin, not a
+ * world coordinate: it never needs anywhere near clampPosition's ±500.
+ * EditToolbar calls this once per axis (X/Y/Z each independently typed),
+ * mirroring how clampPosition is applied per axis for the position row.
+ */
+export function clampAudioOffsetAxis(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(AUDIO_OFFSET_LIMIT, Math.max(-AUDIO_OFFSET_LIMIT, value))
 }
 
 /**

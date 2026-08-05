@@ -40,6 +40,9 @@ import {
   unwrapEnvelope,
   VOLUME_MAX,
   VOLUME_MIN,
+  AUDIO_OFFSET_LIMIT,
+  FALLOFF_START_MAX,
+  FALLOFF_START_MIN,
 } from './protocol'
 
 function frame(kind: number, body?: unknown): Uint8Array {
@@ -892,6 +895,140 @@ describe('placement volume / audibleRange validation', () => {
     if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
     expect(msg.objects[0].volume).toBeUndefined()
     expect(msg.objects[0].audibleRange).toBeUndefined()
+  })
+})
+
+describe('placement falloffStart validation', () => {
+  const base = {
+    id: 'a',
+    cid: 'c',
+    name: 'Speaker',
+    x: 0,
+    y: 0,
+    z: 0,
+    rotationY: 0,
+    scale: 1,
+    kind: 'audio' as const,
+  }
+
+  it('round-trips falloffStart', () => {
+    const objects: PlacedObject[] = [{ ...base, falloffStart: 5 }]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('clamps falloffStart a peer set beyond the upper bound', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, falloffStart: 999 }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].falloffStart).toBe(FALLOFF_START_MAX)
+  })
+
+  it('clamps falloffStart a peer set below the lower bound', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, falloffStart: -5 }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].falloffStart).toBe(FALLOFF_START_MIN)
+  })
+
+  it('drops only a malformed falloffStart, keeping the rest of the placement', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, falloffStart: 'near' }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(1)
+    expect(msg.objects[0].falloffStart).toBeUndefined()
+    expect(msg.objects[0].name).toBe('Speaker')
+  })
+
+  it('drops falloffStart when it is NaN, keeping the rest of the placement', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, falloffStart: NaN }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].falloffStart).toBeUndefined()
+    expect(msg.objects[0].name).toBe('Speaker')
+  })
+
+  it('omits falloffStart entirely when absent, rather than defaulting it', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [base] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].falloffStart).toBeUndefined()
+  })
+})
+
+describe('placement audioOffset validation', () => {
+  const base = {
+    id: 'a',
+    cid: 'c',
+    name: 'Speaker',
+    x: 0,
+    y: 0,
+    z: 0,
+    rotationY: 0,
+    scale: 1,
+    kind: 'audio' as const,
+  }
+
+  it('round-trips a valid audioOffset', () => {
+    const objects: PlacedObject[] = [{ ...base, audioOffset: { x: 1, y: -2, z: 3 } }]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  // Zero is a legal offset (it means "emit from the placement's own
+  // origin") and must not be normalized away into an absent field.
+  it('round-trips a zero audioOffset', () => {
+    const objects: PlacedObject[] = [{ ...base, audioOffset: { x: 0, y: 0, z: 0 } }]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('clamps each axis of audioOffset to ±AUDIO_OFFSET_LIMIT independently', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [{ ...base, audioOffset: { x: 999, y: -999, z: AUDIO_OFFSET_LIMIT } }],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].audioOffset).toEqual({
+      x: AUDIO_OFFSET_LIMIT,
+      y: -AUDIO_OFFSET_LIMIT,
+      z: AUDIO_OFFSET_LIMIT,
+    })
+  })
+
+  it('drops the WHOLE audioOffset when one axis is missing, keeping the rest of the placement', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, audioOffset: { x: 1, y: 2 } }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects).toHaveLength(1)
+    expect(msg.objects[0].audioOffset).toBeUndefined()
+    expect(msg.objects[0].name).toBe('Speaker')
+  })
+
+  it('drops the WHOLE audioOffset when an axis is a string', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, { objects: [{ ...base, audioOffset: { x: 'left', y: 0, z: 0 } }] }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].audioOffset).toBeUndefined()
+  })
+
+  it('drops the WHOLE audioOffset when an axis is NaN', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, { objects: [{ ...base, audioOffset: { x: NaN, y: 0, z: 0 } }] }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].audioOffset).toBeUndefined()
+  })
+
+  it('drops the WHOLE audioOffset when it is an array instead of an object', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, audioOffset: [1, 2, 3] }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].audioOffset).toBeUndefined()
+  })
+
+  it('drops the WHOLE audioOffset when it is null', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [{ ...base, audioOffset: null }] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].audioOffset).toBeUndefined()
+  })
+
+  it('omits audioOffset entirely when absent, rather than defaulting it', () => {
+    const msg = decode(frame(MSG_OBJECTS, { objects: [base] }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].audioOffset).toBeUndefined()
   })
 })
 

@@ -213,6 +213,26 @@ export const VOLUME_MAX = 2
 export const AUDIBLE_RANGE_MIN = 0.5
 export const AUDIBLE_RANGE_MAX = 100
 /**
+ * Bounds, in world units, for where a placement stops being full volume and
+ * starts fading (PlacedObject.falloffStart, kind 'audio'/'video' only). These
+ * bound the FIELD in isolation; what actually keeps it below the audible
+ * boundary is effectiveFalloffStart() in shared/audioFalloff.ts, since that
+ * is a relationship between two independently-edited fields and no per-field
+ * clamp can express it. The floor is a small positive number rather than 0
+ * so "full volume" always names a real, if tiny, region.
+ */
+export const FALLOFF_START_MIN = 0.1
+export const FALLOFF_START_MAX = AUDIBLE_RANGE_MAX
+/**
+ * Bound, per axis in world units, on how far a placement's sound may be
+ * offset from the placement itself (PlacedObject.audioOffset). Generous
+ * enough to put a screen's sound across a large room, far tighter than
+ * POS_LIMIT: an offset this large already means the sound has nothing to do
+ * with the object it belongs to, and a hostile peer must not be able to
+ * scatter emitters across the world from placements you can see.
+ */
+export const AUDIO_OFFSET_LIMIT = 50
+/**
  * Bounds, in metres, for a box primitive's own edge lengths (BoxAppearance.
  * sx/sy/sz) — separate from SCALE_MIN/MAX because those multiply these, not
  * replace them (see BoxAppearance's doc comment).
@@ -464,6 +484,14 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
     const audibleRange = clampNumber(o.audibleRange, AUDIBLE_RANGE_MIN, AUDIBLE_RANGE_MAX)
     if (audibleRange !== null) object.audibleRange = audibleRange
   }
+  if (o.falloffStart !== undefined) {
+    const falloffStart = clampNumber(o.falloffStart, FALLOFF_START_MIN, FALLOFF_START_MAX)
+    if (falloffStart !== null) object.falloffStart = falloffStart
+  }
+  if (o.audioOffset !== undefined) {
+    const audioOffset = parseAudioOffset(o.audioOffset)
+    if (audioOffset) object.audioOffset = audioOffset
+  }
   // Only ever set for kind 'box' — see PlacedObject.box's doc ("present iff
   // kind === 'box'"). A missing or unparseable `box` on a box placement
   // synthesizes the default appearance rather than leaving the placement
@@ -472,6 +500,25 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
     object.box = parseBoxAppearance(o.box) ?? { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' }
   }
   return object
+}
+
+/**
+ * Validates a peer-supplied PlacedObject.audioOffset. All-or-nothing, unlike
+ * the individually-tolerant fields around it: an offset is one displacement,
+ * and silently keeping two of its three axes would put the sound somewhere
+ * the author never placed it — quieter and more confusing than simply
+ * emitting from the placement's own origin, which is what dropping the field
+ * falls back to. A zero offset is legal and means exactly that origin, so it
+ * survives a round trip rather than being normalized away.
+ */
+function parseAudioOffset(raw: unknown): { x: number; y: number; z: number } | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  const x = clampNumber(o.x, -AUDIO_OFFSET_LIMIT, AUDIO_OFFSET_LIMIT)
+  const y = clampNumber(o.y, -AUDIO_OFFSET_LIMIT, AUDIO_OFFSET_LIMIT)
+  const z = clampNumber(o.z, -AUDIO_OFFSET_LIMIT, AUDIO_OFFSET_LIMIT)
+  if (x === null || y === null || z === null) return null
+  return { x, y, z }
 }
 
 /**

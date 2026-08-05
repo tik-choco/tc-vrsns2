@@ -184,13 +184,20 @@ export const en = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'Angle',
 
-  // Volume / audible range — audio and video objects only, edited from the
-  // edit toolbar (EditToolbar.tsx)
+  // Volume / audible range / full-volume radius / sound offset — audio and
+  // video objects only, edited from the edit toolbar (EditToolbar.tsx)
   'objects.volume': 'Volume',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Audible range',
   'objects.rangeValue': '{n} m',
   'objects.rangeExact': 'Audible range (m)',
+  'objects.falloffStart': 'Full-volume radius (m)',
+
+  'objects.falloffStartShort': 'Full volume',
+  'objects.audioOffset': 'Sound offset',
+  'objects.audioOffsetX': 'Sound offset X (m)',
+  'objects.audioOffsetY': 'Sound offset Y (m)',
+  'objects.audioOffsetZ': 'Sound offset Z (m)',
 
   // Box appearance — 'box' kind placements only, edited from the edit
   // toolbar (EditToolbar.tsx)

@@ -195,6 +195,8 @@ export function App() {
           onSetNpcApproachRange={session.setNpcApproachRange}
           onSetObjectVolume={session.setObjectVolume}
           onSetObjectAudibleRange={session.setObjectAudibleRange}
+          onSetObjectFalloffStart={session.setObjectFalloffStart}
+          onSetObjectAudioOffset={session.setObjectAudioOffset}
           onSetObjectScale={session.setObjectScale}
           onSetObjectPosition={session.setObjectPosition}
           onSetObjectRotation={session.setObjectRotation}

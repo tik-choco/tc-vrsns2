@@ -182,13 +182,21 @@ export const es: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'Ángulo',
 
-  // Volumen / alcance audible — solo objetos de audio y vídeo, se editan
-  // desde la barra de edición (EditToolbar.tsx)
+  // Volumen / alcance audible / radio de volumen máximo / desplazamiento del
+  // sonido — solo objetos de audio y vídeo, se editan desde la barra de
+  // edición (EditToolbar.tsx)
   'objects.volume': 'Volumen',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Radio audible',
   'objects.rangeValue': '{n} m',
   'objects.rangeExact': 'Radio audible (m)',
+  'objects.falloffStart': 'Radio de volumen máximo (m)',
+
+  'objects.falloffStartShort': 'Vol. máximo',
+  'objects.audioOffset': 'Desplazamiento del sonido',
+  'objects.audioOffsetX': 'Desplazamiento del sonido X (m)',
+  'objects.audioOffsetY': 'Desplazamiento del sonido Y (m)',
+  'objects.audioOffsetZ': 'Desplazamiento del sonido Z (m)',
 
   // Apariencia de la caja — solo objetos de tipo "caja", se edita desde la
   // barra de edición (EditToolbar.tsx)

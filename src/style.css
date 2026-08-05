@@ -844,11 +844,16 @@ body {
   font-weight: 600;
   color: var(--text-faint);
 }
-/* Position/rotation (task #26) and box appearance (task #24) group wrappers
-   — plain flex rows, same gap/font/color rhythm as .edit-bar-script, just
-   holding several fields instead of one label+control pair. */
+/* Position/rotation (task #26), box appearance (task #24) and sound-source
+   offset group wrappers — plain flex rows, same gap/font/color rhythm as
+   .edit-bar-script, just holding several fields instead of one label+control
+   pair. .edit-bar-audio-offset reuses this rule rather than defining its own:
+   an offset IS a position (see EditToolbar.tsx's own comment on that row),
+   just relative to the placement's origin instead of the world's, so it gets
+   the exact same layout, not a lookalike copy of it. */
 .edit-bar-transform,
-.edit-bar-box {
+.edit-bar-box,
+.edit-bar-audio-offset {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -857,6 +862,14 @@ body {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-dim);
+}
+/* The sound-offset row keeps a line to itself. It is the last group before the
+   Delete button, and at its natural width the bar's flex-wrap pulled Delete up
+   alongside it — which reads as "delete this offset" rather than "delete this
+   placement", on the one control in the panel that cannot be undone. Claiming
+   the whole line is what stops that adjacency happening at any bar width. */
+.edit-bar-audio-offset {
+  flex-basis: 100%;
 }
 /* The box's fill-colour picker: a native <input type="color"> sized to sit
    inline with the rest of .edit-bar-box's compact fields, unlike
