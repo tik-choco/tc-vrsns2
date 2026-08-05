@@ -23,7 +23,7 @@
 // correct behind a file picker already filtered to PLACEABLE_ACCEPT; a drop
 // can be literally any file on the user's disk, so an unrecognized
 // extension/type here must resolve to `recognized: false`, never a guess.
-import type { PlacedKind, WorldFormat } from '../shared/types'
+import type { PlacedKind, WorldEditPolicy, WorldFormat } from '../shared/types'
 import { detectFormatFromName, getExtension, isSplatFormat } from '../world/worldFormat'
 import { kindFromMime } from '../world/mediaFormat'
 
@@ -61,6 +61,15 @@ export type DropImportRoute =
        */
       alsoValidAsWorld?: boolean
     }
+  /**
+   * A dropped .json world-manifest export (storage/worldManifest.ts). Kept
+   * as its own variant rather than folded into the shape above — a manifest
+   * has no catalogKind (it is never filed in a local catalog, see
+   * routeWorldManifest's own doc) and no worldVerb (its "add to world" is a
+   * one-shot import, not equip/setEnvironment/place) — so a `manifest: true`
+   * marker distinguishes it structurally. Narrow with `'manifest' in route`.
+   */
+  | { recognized: true; manifest: true }
   | { recognized: false }
 
 /**
@@ -109,6 +118,19 @@ function routeMedia(assetKind: Exclude<PlacedKind, 'npc' | 'model'>): DropImport
 }
 
 /**
+ * A dropped .json file — routed as a world manifest (job #27), never as a
+ * catalog item: unlike every other recognized drop, a manifest is not bytes
+ * to remember for later, it is a one-shot description of objects (and maybe
+ * an environment) to fold into the room right now, the same act
+ * WorldPanel's own Import button performs. See DropImportRoute's `manifest`
+ * variant for why this needs its own shape rather than reusing catalogKind/
+ * worldVerb.
+ */
+function routeWorldManifest(): DropImportRoute {
+  return { recognized: true, manifest: true }
+}
+
+/**
  * Routes a dropped file to what it could become, using only its name and
  * `File.type` (never its bytes — see the module header for why). Extension
  * wins when present, the same "filename is the strongest signal" ordering
@@ -119,6 +141,11 @@ function routeMedia(assetKind: Exclude<PlacedKind, 'npc' | 'model'>): DropImport
  */
 export function routeDroppedFile(name: string, type: string): DropImportRoute {
   const ext = getExtension(name)
+  // .json = manifest, checked first (task #27's route priority): nothing
+  // else in this function ever matches a .json extension, so this can never
+  // shadow another route — it just means a manifest import doesn't have to
+  // wait behind the rest of the ladder below.
+  if (ext === 'json') return routeWorldManifest()
   if (ext === 'vrm') return { recognized: true, catalogKind: 'avatar', worldVerb: 'equip' }
   if (ext === 'glb' || ext === 'gltf') return routeModel()
   if (ext === 'splat' || ext === 'ksplat' || ext === 'ply') {
@@ -137,4 +164,40 @@ export function routeDroppedFile(name: string, type: string): DropImportRoute {
   const mimeKind = type ? kindFromMime(type) : null
   if (mimeKind === 'image' || mimeKind === 'video' || mimeKind === 'audio') return routeMedia(mimeKind)
   return { recognized: false }
+}
+
+/** Which of DropImportOverlay's actions a given route currently offers, under the room's current WorldEditPolicy. Every boolean the overlay actually renders a button for is present so a route this has no opinion on (unrecognized) simply comes back all-false. */
+export type DropActionAvailability = {
+  addToWorld: boolean
+  setAsWorldEnvironment: boolean
+  saveToCatalogOnly: boolean
+}
+
+/**
+ * Decides which of DropImportOverlay's actions this route may actually
+ * perform under the room's current edit policy (task #27) — the pure
+ * decision behind GameOverlay's drag/drop listener no longer refusing the
+ * whole gesture outright under 'locked' (see that file's own header for
+ * what changed and why: the overlay now always appears, and blocked
+ * buttons render disabled with a hint instead of the drop being silently
+ * swallowed at the window level).
+ *
+ * Equipping an avatar and cataloging-only never touch anything shared — no
+ * other peer in the room ever sees either happen — so both are ALWAYS
+ * allowed regardless of policy. Everything else (placing an object as a
+ * scene object, applying a world environment, or importing a manifest's
+ * objects/environment into the room) mutates what every peer sees, so each
+ * follows the exact same 'locked' gate every other world-mutating session
+ * call already enforces (placeObject/applyWorld/importWorldManifest's own
+ * worldPolicyRef checks in useSession.ts) — this is simply that same rule,
+ * read here as data instead of re-derived per call site.
+ */
+export function allowedDropActions(route: DropImportRoute, policy: WorldEditPolicy): DropActionAvailability {
+  if (!route.recognized) return { addToWorld: false, setAsWorldEnvironment: false, saveToCatalogOnly: false }
+  const locked = policy === 'locked'
+  if ('manifest' in route) {
+    return { addToWorld: !locked, setAsWorldEnvironment: false, saveToCatalogOnly: false }
+  }
+  const addToWorld = route.worldVerb === 'equip' ? true : !locked
+  return { addToWorld, setAsWorldEnvironment: !locked, saveToCatalogOnly: true }
 }
