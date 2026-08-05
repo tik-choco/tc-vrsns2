@@ -170,6 +170,8 @@ export const zh: Dict = {
   'objects.rotate': '旋转',
   'objects.scale': '缩放',
   'objects.size': '大小',
+  'objects.scaleLock': '等比缩放',
+  'objects.scaleUnlock': '自由缩放',
   'objects.placedBy': '由 {name} 放置',
   'objects.orphans': '有 {count} 个是已离开的人留下的。它们会保留到你离开房间，且无人能编辑。',
 

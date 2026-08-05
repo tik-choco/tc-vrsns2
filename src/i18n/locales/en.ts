@@ -172,6 +172,13 @@ export const en = {
   'objects.rotate': 'Turn',
   'objects.scale': 'Resize',
   'objects.size': 'Size',
+  // The scale lock toggle (EditToolbar.tsx): locked = every resize scales all
+  // three axes together (the default); unlocked = each axis scales freely.
+  'objects.scaleLock': 'Scale evenly',
+  'objects.scaleUnlock': 'Scale freely',
+  'objects.scaleX': 'X',
+  'objects.scaleY': 'Y',
+  'objects.scaleZ': 'Z',
   'objects.placedBy': 'placed by {name}',
   'objects.orphans': '{count} left behind by people who have gone. They stay until you leave the room, and nobody can edit them.',
 

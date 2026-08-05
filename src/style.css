@@ -863,6 +863,54 @@ body {
   font-weight: 600;
   color: var(--text-dim);
 }
+/* The scale field group (size input + lock toggle): same flex row as the
+   groups above, so the lock button sits inline with the Ruler icon and the
+   number field it governs. */
+.edit-bar-scale {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding-inline: 0.3rem;
+  color: var(--text-dim);
+}
+/* The uniform↔per-axis lock toggle: a small square icon button, ghosted like
+   .btn-ghost but sized to its 14px icon (the bar's icon buttons are all
+   icon-only squares). Unlocked state takes the accent teal so the mode
+   is legible at a glance, since the shape change (one field → three) can be
+   subtle when the bar is crowded. */
+.edit-bar-scale-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  padding: 0;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.edit-bar-scale-lock:hover {
+  background: var(--fill-2);
+  color: var(--text);
+}
+.edit-bar-scale-lock:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.edit-bar-scale-lock.is-unlocked {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+/* The unlocked mode's X/Y/Z field row — reuses .edit-bar-num-input for the
+   fields and .edit-bar-axis-label for the letters, same rhythm as the box
+   dims row. */
+.edit-bar-scale-axes {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
 /* The sound-offset row keeps a line to itself. It is the last group before the
    Delete button, and at its natural width the bar's flex-wrap pulled Delete up
    alongside it — which reads as "delete this offset" rather than "delete this

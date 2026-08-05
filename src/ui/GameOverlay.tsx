@@ -520,6 +520,9 @@ export function GameOverlay(props: GameOverlayProps) {
       {props.editMode && (
         <EditToolbar
           editTool={props.editTool}
+          scaleLocked={props.scaleLocked}
+          onSetScaleLocked={props.onSetScaleLocked}
+          onSetObjectScaleAxis={props.onSetObjectScaleAxis}
           selectedObject={props.selectedObject}
           onSetEditTool={props.onSetEditTool}
           onDeleteSelectedObject={props.onDeleteSelectedObject}

@@ -4,7 +4,7 @@
 // state machine.
 import * as THREE from 'three'
 import type { AnimState } from '../shared/types'
-import { groundHeightFor } from './boxGround'
+import { groundHeightFor, resolveAxis, PLAYER_RADIUS, type WalkableBox } from './boxGround'
 import type { CameraController } from './CameraController'
 import type { CharacterStateMachine } from './stateMachine'
 
@@ -72,6 +72,14 @@ export class CharacterController {
    * that never calls setGroundTopsProvider keeps its old meaning.
    */
   private groundTopsAt: GroundTopsProvider = () => []
+  /**
+   * The placed boxes' live colliders, fed whole to resolveAxis (not filtered
+   * to "under a column" like groundTopsAt — side collision needs every box's
+   * full footprint). Same default-of-"no boxes anywhere" late-binding pattern
+   * as groundTopsAt: a caller or test that never wires this keeps the exact
+   * pre-side-collision behaviour.
+   */
+  private boxCollidersAt: () => WalkableBox[] = () => []
 
   // Auto-repeat keydown events fire every frame-ish while a key is held.
   // Harmless for held flags (re-setting true is a no-op) but would re-toggle
@@ -114,6 +122,16 @@ export class CharacterController {
    */
   setGroundTopsProvider(provider: GroundTopsProvider): void {
     this.groundTopsAt = provider
+  }
+
+  /**
+   * Installs the box list update()'s horizontal step resolves against (see
+   * resolveAxis in boxGround.ts — the side collision that stops a player
+   * walking through a box). Wired by World next to setGroundTopsProvider,
+   * same late-binding pattern and doc.
+   */
+  setBoxCollidersProvider(provider: () => WalkableBox[]): void {
+    this.boxCollidersAt = provider
   }
 
   /** Virtual-joystick vector from the mobile UI: x = strafe, y = +forward, each -1..1. */
@@ -227,7 +245,40 @@ export class CharacterController {
     // the instant the player passes it, tunnelling straight through to
     // whatever is lower.
     const feetBeforeMove = this.root.position.y
-    this.root.position.addScaledVector(this.velocity, delta)
+    // Horizontal movement is applied and resolved one world axis at a time
+    // against the placed boxes' sides (see boxGround.ts's resolveAxis), so a
+    // hit on one axis slides the player along the face instead of eating the
+    // other axis's step; the vertical move stays a separate third step below,
+    // applied before grounding so the query below sees the same post-move
+    // position it always did. `groundY`/`grounded` are passed from THIS
+    // frame's state (not whatever the vertical pass lands us on at the end),
+    // because resolveAxis's step exemption — a box within STEP_UP is a stair,
+    // not a wall — must judge against the surface the player stood on when
+    // the frame began.
+    const colliders = this.boxCollidersAt()
+    this.root.position.x += this.velocity.x * delta
+    this.root.position.x = resolveAxis(
+      colliders,
+      this.root.position.x,
+      this.root.position.z,
+      feetBeforeMove,
+      this.groundY,
+      this.grounded,
+      PLAYER_RADIUS,
+      'x',
+    )
+    this.root.position.z += this.velocity.z * delta
+    this.root.position.z = resolveAxis(
+      colliders,
+      this.root.position.x,
+      this.root.position.z,
+      feetBeforeMove,
+      this.groundY,
+      this.grounded,
+      PLAYER_RADIUS,
+      'z',
+    )
+    this.root.position.y += this.velocity.y * delta
 
     // y = 0 is the floor everywhere (see boxGround.ts's header) — folded in
     // here, unconditionally, rather than inside groundHeightFor itself, so

@@ -6,38 +6,20 @@
 // the browser. Right-to-left locales flip <html dir>.
 //
 // Locale files live in ./locales; en.ts is the canonical key catalog and every
-// other file is a Partial of it. Only en + ja are wired here initially; more are
-// registered as their translation files land (see register() at the bottom).
+// other file is a Partial of it. The offered set is English, Japanese and
+// Chinese — the three the owner asked for (2026-08-05); see the Locale union
+// below. A language can return by deleting nothing but the LOCALES/DICTS
+// entries and the import (the dir-flip machinery is locale-driven and will
+// pick up an rtl: true entry automatically).
 
 import { useEffect, useState } from 'preact/hooks'
 import en, { type Dict, type TranslationKey } from './locales/en'
 import ja from './locales/ja'
 import zh from './locales/zh'
-import ko from './locales/ko'
-import es from './locales/es'
-import fr from './locales/fr'
-import de from './locales/de'
-import pt from './locales/pt'
-import ru from './locales/ru'
-import ar from './locales/ar'
-import hi from './locales/hi'
-import id from './locales/id'
 
 export type { TranslationKey } from './locales/en'
 
-export type Locale =
-  | 'en'
-  | 'ja'
-  | 'zh'
-  | 'ko'
-  | 'es'
-  | 'fr'
-  | 'de'
-  | 'pt'
-  | 'ru'
-  | 'ar'
-  | 'hi'
-  | 'id'
+export type Locale = 'en' | 'ja' | 'zh'
 
 export type LocaleInfo = {
   code: Locale
@@ -51,15 +33,6 @@ export const LOCALES: readonly LocaleInfo[] = [
   { code: 'en', label: 'English' },
   { code: 'ja', label: '日本語' },
   { code: 'zh', label: '中文' },
-  { code: 'ko', label: '한국어' },
-  { code: 'es', label: 'Español' },
-  { code: 'fr', label: 'Français' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'pt', label: 'Português' },
-  { code: 'ru', label: 'Русский' },
-  { code: 'ar', label: 'العربية', rtl: true },
-  { code: 'hi', label: 'हिन्दी' },
-  { code: 'id', label: 'Bahasa Indonesia' },
 ]
 
 const RTL_LOCALES = new Set<Locale>(
@@ -75,15 +48,6 @@ const DICTS: Partial<Record<Locale, Dict>> = {
   en,
   ja,
   zh,
-  ko,
-  es,
-  fr,
-  de,
-  pt,
-  ru,
-  ar,
-  hi,
-  id,
 }
 
 function isLocale(value: string): value is Locale {

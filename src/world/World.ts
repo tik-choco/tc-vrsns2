@@ -239,16 +239,18 @@ export class World {
     this.camera.add(this.audioListener)
     this.worldObjects = new WorldObjects(this.scene, this.audioListener)
     // Lets the character controller stand on / step up onto placed 'box'
-    // primitives (see boxGround.ts) instead of only the flat y=0 floor.
-    // Wired here (a setter, not a constructor arg) because worldObjects does
-    // not exist yet when characterController is constructed above — same
-    // late-binding reason WorldObjects.setDragGuard/setOwnershipGuard are
-    // setters rather than constructor args. NO side collision in this pass:
-    // a player still walks straight through a box's sides — see
-    // boxGround.ts's header for that known follow-up.
+    // primitives (see boxGround.ts) instead of only the flat y=0 floor, and
+    // stop it at their sides instead of walking straight through (resolveAxis
+    // in the same module). Both are wired here (setters, not constructor
+    // args) because worldObjects does not exist yet when characterController
+    // is constructed above — same late-binding reason
+    // WorldObjects.setDragGuard/setOwnershipGuard are setters rather than
+    // constructor args. The tops provider filters to a column; the collider
+    // provider hands resolveAxis the whole live list.
     this.characterController.setGroundTopsProvider((x, z) =>
       boxTopsAt(x, z, this.worldObjects.walkableBoxes()),
     )
+    this.characterController.setBoxCollidersProvider(() => this.worldObjects.walkableBoxes())
     this.objectEditor = new ObjectEditor(this.scene, this.camera, canvas, this.worldObjects)
     // An NPC's runtime-driven turn (see faceObject) must yield to a user
     // actively dragging that same placement's gizmo — see WorldObjects'
@@ -738,6 +740,25 @@ export class World {
 
   setEditTool(tool: EditTool): void {
     this.objectEditor.setTool(tool)
+  }
+
+  /**
+   * Flips the scale gizmo between uniform (locked, the default) and free
+   * per-axis scaling — see ObjectEditor.setScaleLocked and
+   * WorldObjects.commitTransform's `uniform` param for the semantics.
+   */
+  setScaleLocked(locked: boolean): void {
+    this.objectEditor.setScaleLocked(locked)
+  }
+
+  /**
+   * Normalizes a placement's scale back to uniform — the lock-on transition
+   * for a per-axis placement (the dominant-axis collapse commitTransform's
+   * locked mode applies to any drag). Returns the new state for the caller to
+   * broadcast, or null when the id is gone.
+   */
+  normalizeScale(id: string): PlacedObject | null {
+    return this.worldObjects.commitTransform(id, true)
   }
 
   selectObject(id: string | null): void {
@@ -1310,6 +1331,10 @@ export class World {
         z: state.z,
         rotationY: state.rotationY,
         scale: state.scale,
+        // A per-axis placement streams its scaleXYZ with every snapshot, so a
+        // peer applying this script-driven transform never flattens it back
+        // to uniform (see applyRemoteState's scale branch).
+        scaleXYZ: state.scaleXYZ,
       }
       const prev = this.lastSentObjectState.get(id)
       const forceKeepalive =
@@ -1334,9 +1359,29 @@ export class World {
   }
 }
 
-/** Exact-equality check for emitObjectStates()'s "did this actually move" test — cheap and correct: these are the same five numbers a script wrote via setTransform, not independently-measured floats that need a tolerance. */
-function sameObjectTransform(a: ObjectState, b: ObjectState): boolean {
-  return a.x === b.x && a.y === b.y && a.z === b.z && a.rotationY === b.rotationY && a.scale === b.scale
+/**
+ * Exact-equality check for emitObjectStates()'s "did this actually move" test
+ * — cheap and correct: these are the same five (or six) numbers a script
+ * wrote via setTransform, not independently-measured floats that need a
+ * tolerance. A per-axis scale compares all three components, matching how the
+ * sender builds the snapshot. Exported for the same reason needsNpcKeepalive
+ * and roomHasActiveObjects are (see World.test.ts's header): it is one of the
+ * two small pure decisions pulled out of the emit path so they can be tested
+ * without constructing a World.
+ */
+export function sameObjectTransform(a: ObjectState, b: ObjectState): boolean {
+  const ax = a.scaleXYZ
+  const bx = b.scaleXYZ
+  const sameXYZ =
+    ax === bx || (ax !== undefined && bx !== undefined && ax.x === bx.x && ax.y === bx.y && ax.z === bx.z)
+  return (
+    sameXYZ &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.z === b.z &&
+    a.rotationY === b.rotationY &&
+    a.scale === b.scale
+  )
 }
 
 /**

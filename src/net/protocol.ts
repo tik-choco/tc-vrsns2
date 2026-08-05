@@ -445,6 +445,12 @@ export function parsePlacedObject(raw: unknown): PlacedObject | null {
   if (x === null || y === null || z === null || rotationY === null || scale === null) return null
   const name = typeof o.name === 'string' ? o.name.trim().slice(0, OBJECT_NAME_MAX_LEN) : ''
   const object: PlacedObject = { id: o.id, cid: o.cid, name, x, y, z, rotationY, scale }
+  // A per-axis scale is one triple — see parseScaleXYZ's doc for why a
+  // partial one is dropped entirely rather than partially kept.
+  if (o.scaleXYZ !== undefined) {
+    const scaleXYZ = parseScaleXYZ(o.scaleXYZ)
+    if (scaleXYZ) object.scaleXYZ = scaleXYZ
+  }
   if (kind !== 'model') object.kind = kind
   if (typeof o.mime === 'string' && o.mime.length <= MIME_MAX_LEN && MIME_RE.test(o.mime)) {
     object.mime = o.mime
@@ -628,7 +634,35 @@ function parseObjectState(raw: unknown): ObjectState | null {
   const rotationY = clampNumber(o.rotationY, -Math.PI * 4, Math.PI * 4)
   const scale = clampNumber(o.scale, SCALE_MIN, SCALE_MAX)
   if (x === null || y === null || z === null || rotationY === null || scale === null) return null
-  return { id: o.id, x, y, z, rotationY, scale }
+  const state: ObjectState = { id: o.id, x, y, z, rotationY, scale }
+  // Mirrors parsePlacedObject: the owner streams the placement's per-axis
+  // scale when it has one (see World.emitObjectStates), so a peer applying a
+  // script-driven transform never flattens a per-axis placement back to
+  // uniform. A partial triple is dropped — uniform `scale` then wins.
+  if (o.scaleXYZ !== undefined) {
+    const scaleXYZ = parseScaleXYZ(o.scaleXYZ)
+    if (scaleXYZ) state.scaleXYZ = scaleXYZ
+  }
+  return state
+}
+
+/**
+ * Validates a peer-supplied per-axis scale triple (PlacedObject.scaleXYZ /
+ * ObjectState.scaleXYZ). All-or-nothing, like parseAudioOffset just above: a
+ * triple is one displacement, and silently keeping two of its three axes
+ * would render the object at a size the author never set — quieter and less
+ * confusing than dropping the whole field, which is what returning null does
+ * (the placement then renders at its uniform `scale`). Each axis clamps to
+ * the same SCALE_MIN..SCALE_MAX as `scale` itself.
+ */
+function parseScaleXYZ(raw: unknown): { x: number; y: number; z: number } | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  const x = clampNumber(o.x, SCALE_MIN, SCALE_MAX)
+  const y = clampNumber(o.y, SCALE_MIN, SCALE_MAX)
+  const z = clampNumber(o.z, SCALE_MIN, SCALE_MAX)
+  if (x === null || y === null || z === null) return null
+  return { x, y, z }
 }
 
 // ---------------------------------------------------------------------------

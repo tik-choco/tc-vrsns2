@@ -115,9 +115,9 @@ async function joinRoom(page, room, name) {
   })
   await page.goto(`${BASE_URL}/?debug`, { waitUntil: 'load' })
   // Positional, not placeholder-text, selectors: the name field's placeholder
-  // is localized (12 locales), so a text-based lookup would break outside
-  // 'en'. Both inputs share class="input" inside .join-card, in a fixed
-  // room-then-name order.
+  // is localized (3 locales — en/ja/zh), so a text-based lookup would break
+  // outside 'en'. Both inputs share class="input" inside .join-card, in a
+  // fixed room-then-name order.
   const joinInputs = page.locator('.join-card input.input')
   await joinInputs.nth(0).fill(room)
   await joinInputs.nth(1).fill(name)
@@ -137,7 +137,7 @@ async function openPanel(page, labelText) {
   await page.getByRole('button', { name: labelText, exact: true }).click()
 }
 
-// Button/menu text is localized (12 locales — see i18n/locales/*.ts), so
+// Button/menu text is localized (3 locales — see i18n/locales/*.ts), so
 // scenario 4 (locale 'ja') cannot reuse the English strings below. Every
 // caller passes a `labels` object; EN_LABELS is the default for the other
 // three (English) scenarios.

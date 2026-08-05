@@ -60,6 +60,16 @@ export class ObjectEditor {
   private enabled = false
   private editable = new Set<string>()
   private selectedId: string | null = null
+  /**
+   * Whether the scale gizmo collapses every drag to a single uniform factor
+   * (the default) or lets each axis keep its own value. See
+   * WorldObjects.commitTransform's `uniform` param — this flag is passed
+   * straight into it at every commit, so the lock and the wire can never
+   * disagree about which mode a drag was made in.
+   */
+  private scaleLocked = true
+  /** The tool the gizmo is currently in — kept here so setScaleLocked can re-apply handle visibility without asking TransformControls. */
+  private tool: EditTool = 'move'
   /** A touch being timed to see whether it is a tap or an "edit this" hold. */
   private longPress: { pointerId: number; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null
 
@@ -102,14 +112,14 @@ export class ObjectEditor {
     if (event.value) return
     const id = this.selectedId
     if (!id) return
-    const state = this.objects.commitTransform(id)
+    const state = this.objects.commitTransform(id, this.scaleLocked)
     if (state) this.onCommit?.(state)
   }
 
   /** Keeps the live preview inside what a placement can represent, mid-drag. */
   private readonly onObjectChange = (): void => {
     if (!this.selectedId) return
-    this.objects.commitTransform(this.selectedId)
+    this.objects.commitTransform(this.selectedId, this.scaleLocked)
     this.outline?.update()
   }
 
@@ -167,13 +177,35 @@ export class ObjectEditor {
   }
 
   setTool(tool: EditTool): void {
+    this.tool = tool
     this.controls.setMode(TOOL_MODES[tool])
-    // A placement is a position + heading + uniform scale, so the gizmo only
-    // offers what survives that: all three axes to move, the Y ring to turn,
-    // and a single (Y) handle for size, applied uniformly on commit.
-    this.controls.showX = tool === 'move'
+    // A placement is a position + heading + scale, so the gizmo offers: all
+    // three axes to move, the Y ring to turn, and for size either a single
+    // (Y) handle when the scale lock is on (every drag collapses to a uniform
+    // factor on commit) or all three handles when it is off (each axis keeps
+    // its own value — see setScaleLocked).
+    this.controls.showX = tool === 'move' || (tool === 'scale' && !this.scaleLocked)
     this.controls.showY = true
-    this.controls.showZ = tool === 'move'
+    this.controls.showZ = tool === 'move' || (tool === 'scale' && !this.scaleLocked)
+  }
+
+  /** The current scale-lock state — see the scaleLocked field's doc. */
+  get isScaleLocked(): boolean {
+    return this.scaleLocked
+  }
+
+  /**
+   * Flips between uniform scaling (locked, the default) and free per-axis
+   * scaling. Only the gizmo handles change here — the placement itself is
+   * untouched until the next drag commits (or the caller normalizes it when
+   * relocking, see useSession's setScaleLocked). Handle visibility is
+   * re-applied so a mid-session lock change is honoured even while the scale
+   * tool is already active — setTool to the same mode is a cheap no-op.
+   */
+  setScaleLocked(locked: boolean): void {
+    if (this.scaleLocked === locked) return
+    this.scaleLocked = locked
+    this.setTool(this.tool)
   }
 
   select(id: string | null): void {

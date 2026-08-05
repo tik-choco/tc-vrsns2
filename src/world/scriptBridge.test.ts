@@ -95,6 +95,20 @@ describe('WorldScriptBridge', () => {
       bridge.applyTransform('obj-1', { scale: 4 })
       expect(applyTransform).toHaveBeenCalledWith({ ...makeState(), scale: 4 })
     })
+
+    it('a uniform world/setScale drops any per-axis scaleXYZ the placement had', () => {
+      const applyTransform = vi.fn()
+      const objects: ObjectSource = {
+        stateOf: () => makeState({ scaleXYZ: { x: 2, y: 1, z: 0.5 } }),
+        applyTransform,
+        objectFor: () => null,
+      }
+      const bridge = new WorldScriptBridge(objects, () => null, () => 'Player')
+      bridge.applyTransform('obj-1', { scale: 4 })
+      const sent = applyTransform.mock.calls[0][0] as ReturnType<typeof makeState>
+      expect(sent.scale).toBe(4)
+      expect(sent.scaleXYZ).toBeUndefined()
+    })
   })
 
   describe('setVisible', () => {

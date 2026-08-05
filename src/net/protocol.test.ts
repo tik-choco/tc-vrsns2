@@ -338,6 +338,34 @@ describe('world + object validation', () => {
     }
   })
 
+  it('carries a per-axis scaleXYZ triple, clamping each axis like scale', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { id: 'a', cid: 'c', name: 'ok', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, scaleXYZ: { x: 2, y: 0.5, z: 3 } },
+          { id: 'b', cid: 'c', name: 'clamp', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, scaleXYZ: { x: 9999, y: 0.0001, z: 4 } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].scaleXYZ).toEqual({ x: 2, y: 0.5, z: 3 })
+    expect(msg.objects[1].scaleXYZ).toEqual({ x: 100, y: 0.01, z: 4 })
+  })
+
+  it('drops a partial or malformed scaleXYZ entirely, falling back to uniform scale', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { id: 'a', cid: 'c', name: 'partial', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, scaleXYZ: { x: 2 } },
+          { id: 'b', cid: 'c', name: 'garbled', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, scaleXYZ: 'nope' },
+          { id: 'c', cid: 'c', name: 'missing-axis', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, scaleXYZ: { x: 2, y: 'nope', z: 3 } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    for (const object of msg.objects) expect(object.scaleXYZ).toBeUndefined()
+  })
+
   it('keeps a media placement kind and mime, and treats their absence as a model', () => {
     const msg = decode(
       frame(MSG_OBJECTS, {
@@ -404,6 +432,30 @@ describe('MSG_OBJ_STATE / ObjectState validation', () => {
       { id: 'b', x: 0, y: 0.5, z: 0, rotationY: 0, scale: 1 },
     ]
     expect(decode(encode({ kind: MSG_OBJ_STATE, states }))).toEqual({ kind: MSG_OBJ_STATE, states })
+  })
+
+  it('round-trips a per-axis scaleXYZ and clamps its axes like scale', () => {
+    const states: ObjectState[] = [
+      { id: 'a', x: 1, y: 0, z: -2, rotationY: 1.2, scale: 0.8, scaleXYZ: { x: 2, y: 0.5, z: 3 } },
+      { id: 'b', x: 0, y: 0.5, z: 0, rotationY: 0, scale: 1, scaleXYZ: { x: 9999, y: 0.0001, z: 4 } },
+    ]
+    const decoded = decode(encode({ kind: MSG_OBJ_STATE, states }))
+    if (decoded?.kind !== MSG_OBJ_STATE) throw new Error('expected MSG_OBJ_STATE')
+    expect(decoded.states[0].scaleXYZ).toEqual({ x: 2, y: 0.5, z: 3 })
+    expect(decoded.states[1].scaleXYZ).toEqual({ x: 100, y: 0.01, z: 4 })
+  })
+
+  it('drops a partial scaleXYZ from an ObjectState, falling back to uniform scale', () => {
+    const msg = decode(
+      frame(MSG_OBJ_STATE, {
+        states: [
+          { id: 'a', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, scaleXYZ: { x: 2 } },
+          { id: 'b', x: 0, y: 0, z: 0, rotationY: 0, scale: 1, scaleXYZ: 'nope' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJ_STATE) throw new Error('expected MSG_OBJ_STATE')
+    for (const state of msg.states) expect(state.scaleXYZ).toBeUndefined()
   })
 
   it('rejects the whole frame when states is missing or not an array', () => {
