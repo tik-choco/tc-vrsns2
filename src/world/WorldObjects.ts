@@ -225,6 +225,22 @@ export class WorldObjects {
    * this class.
    */
   private arrivedListener: ((id: string, player: Vec3) => void) | null = null
+  /**
+   * Fires immediately after syncRemote() REPLACES `id`'s underlying scene
+   * object rather than updating it in place — today, only ever a 'box'
+   * placement whose appearance changed (see boxAppearanceChanged and
+   * syncRemote's rebuild branch): BoxGeometry is baked at construction, so
+   * there is no live mesh to write dims/colour/texture onto, and the entry
+   * is removed and rebuilt from scratch instead, same as any other kind's
+   * cid change. ObjectEditor's gizmo/outline hold a direct reference to the
+   * OLD Object3D that removal just pulled out of the scene graph — this is
+   * the seam World wires (see ObjectEditor.reattach's doc) so it can
+   * re-target them onto the NEW one, without the UI ever seeing the
+   * selection blip through null: the placement never stopped being
+   * selected, only the mesh backing it changed. Null (the default) simply
+   * drops the event, same as the other optional listeners in this class.
+   */
+  private rebuiltListener: ((id: string) => void) | null = null
 
   /**
    * `listener` (the AudioListener mounted on the camera) enables positional
@@ -380,7 +396,10 @@ export class WorldObjects {
    * geometry/material are baked in at build time (see buildBox), so unlike a
    * transform there is nothing applyTransform() can just write onto the live
    * object — this REMOVES the entry and falls through to the same add path a
-   * brand-new id takes below, rebuilding it from scratch.
+   * brand-new id takes below, rebuilding it from scratch. rebuiltListener
+   * fires right after that rebuild completes, so a caller with something
+   * pinned to the OLD Object3D (ObjectEditor's gizmo/outline, via World) can
+   * follow it to the new one — see that field's own doc.
    */
   async syncRemote(states: PlacedObject[], resolveBytes: ResolveBytes): Promise<void> {
     const wanted = new Set(states.map((s) => s.id))
@@ -389,10 +408,16 @@ export class WorldObjects {
     }
     for (const state of states) {
       const existing = this.objects.get(state.id)
+      // Set only by the boxAppearanceChanged branch just below — a brand-new
+      // id (no `existing`) never sets this, so the rebuiltListener notify at
+      // the bottom of the box branch fires ONLY for a genuine rebuild, never
+      // for an ordinary first-time add.
+      let rebuilding = false
       if (existing) {
         if (!stateDiffers(existing.state, state)) continue
         if (state.kind === 'box' && boxAppearanceChanged(existing.state.box, state.box)) {
           this.remove(state.id)
+          rebuilding = true
         } else {
           const audioChanged =
             existing.state.volume !== state.volume || existing.state.audibleRange !== state.audibleRange
@@ -411,6 +436,9 @@ export class WorldObjects {
       if (state.kind === 'box') {
         if (this.objects.has(state.id)) continue
         await this.addFromState(EMPTY_BYTES, state, resolveBytes)
+        // Tell ObjectEditor its old Object3D reference for this id (if it
+        // was holding one) just went stale — see rebuiltListener's doc.
+        if (rebuilding) this.rebuiltListener?.(state.id)
         continue
       }
       const bytes = await resolveBytes(state.cid)
@@ -649,6 +677,11 @@ export class WorldObjects {
   /** Registers the callback fired when an owned NPC's approach walk arrives at its stop point (see arrivedListener's doc). Pass null to clear. */
   setArrivedListener(cb: ((id: string, player: Vec3) => void) | null): void {
     this.arrivedListener = cb
+  }
+
+  /** Registers the callback fired when syncRemote() replaces (rather than updates in place) a tracked id's scene object (see rebuiltListener's doc). Pass null to clear. */
+  setRebuiltListener(cb: ((id: string) => void) | null): void {
+    this.rebuiltListener = cb
   }
 
   /**

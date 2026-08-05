@@ -181,20 +181,56 @@ export class ObjectEditor {
     if (id === this.selectedId) return
     this.selectedId = id
 
-    this.clearOutline()
     const object = id ? this.objects.objectFor(id) : null
     if (!object) {
       this.selectedId = null
+      this.clearOutline()
       this.controls.detach()
       this.onSelectionChange?.(null)
       return
     }
+    this.attachTo(object)
+    this.onSelectionChange?.(this.objects.stateOf(id!))
+  }
+
+  /**
+   * Re-targets the gizmo + outline onto `id`'s CURRENT scene object without
+   * touching `selectedId` or firing onSelectionChange — the seam World wires
+   * onto WorldObjects.setRebuiltListener for the one case where a tracked
+   * placement's Object3D is replaced out from under an active selection: a
+   * 'box' appearance edit (dims/colour/texture), which WorldObjects.syncRemote
+   * cannot apply in place (BoxGeometry is baked at construction — see its
+   * doc) and instead removes and rebuilds from scratch.
+   *
+   * Without this, TransformControls and the outline would keep pointing at
+   * the Object3D remove() just pulled out of the scene graph: three.js logs
+   * "must be part of the scene graph" on every render attempt, and the
+   * outline freezes at the pre-rebuild size/position forever. Routing this
+   * through select() instead would fire onSelectionChange(null) then
+   * onSelectionChange(newState) — but the placement never stopped being
+   * selected from the UI's point of view, only the mesh backing it changed,
+   * so the UI must never see that blip (a toolbar reading the null tick
+   * could momentarily render "nothing selected", or worse, race a second
+   * pending commit against it).
+   *
+   * A no-op unless `id` is the CURRENT selection (an id being rebuilt while
+   * something else — or nothing — is selected has nothing here to re-target).
+   */
+  reattach(id: string): void {
+    if (this.selectedId !== id) return
+    const object = this.objects.objectFor(id)
+    if (!object) return
+    this.attachTo(object)
+  }
+
+  /** Shared by select() and reattach(): points the gizmo + a fresh outline (the old one may be sized for a since-replaced mesh) at `object`. */
+  private attachTo(object: THREE.Object3D): void {
+    this.clearOutline()
     this.controls.attach(object)
     this.outline = new THREE.BoxHelper(object, OUTLINE_COLOR)
     this.outline.material.depthTest = false
     this.outline.renderOrder = 1
     this.scene.add(this.outline)
-    this.onSelectionChange?.(this.objects.stateOf(id!))
   }
 
   /** Per-frame upkeep: follows the selection and drops it if it disappears. */

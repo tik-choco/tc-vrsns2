@@ -254,6 +254,15 @@ export class World {
     // The R7 "walk up and greet" arrival edge — see onNpcArrived's doc for
     // the rest of the chain this feeds.
     this.worldObjects.setArrivedListener((objectId, player) => this.npcArrivedListener?.(objectId, player))
+    // A box appearance edit rebuilds its Object3D from scratch (BoxGeometry
+    // is baked at construction — see WorldObjects.syncRemote's rebuild
+    // branch). If the rebuilt id is the current selection, the gizmo/outline
+    // must follow it to the new mesh instead of being left pointing at the
+    // one remove() just pulled out of the scene graph — see
+    // ObjectEditor.reattach's doc for why this must not go through
+    // select()/onSelectionChange (the UI must never see the selection blip
+    // through null for an id that never actually stopped being selected).
+    this.worldObjects.setRebuiltListener((id) => this.objectEditor.reattach(id))
     // Wrap the editor's own commit callback: a committed edit changes a
     // placement's transform, which is exactly the kind of change sync() must
     // see (a script's trigger volume follows its object's origin — see
