@@ -278,6 +278,145 @@ describe('observe / greet', () => {
   })
 })
 
+describe('arrived (R7 walk-up greet)', () => {
+  it('greets on arrival, through the same say/face channels as heard()', async () => {
+    const { deps, say, face } = makeDeps()
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!')
+    expect(face).toHaveBeenCalled()
+  })
+
+  it('respects greetCooldownMs — no re-fire on a second arrival soon after', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    clock.advance(NPC_LIMITS.greetCooldownMs - 1)
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    clock.advance(2)
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledTimes(2)
+  })
+
+  it('shares greetState with observe() — a proximity greet blocks an immediate arrival greet for the same pair', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement({ radius: 5 })])
+
+    runtime.observe([speaker({ x: 2, y: 0, z: 0 })])
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    // Same (npc, player) pair arrives moments later — still within the cooldown.
+    runtime.arrived('npc-1', speaker({ x: 2, y: 0, z: 0 }))
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+  })
+
+  it('is a no-op for an id this runtime is not tracking', async () => {
+    const { deps, say, chat } = makeDeps()
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+    runtime.arrived('unknown-npc', speaker())
+    await flush()
+    expect(chat).not.toHaveBeenCalled()
+    expect(say).not.toHaveBeenCalled()
+  })
+
+  it('does not re-fire while the NPC is already held from a just-landed reply', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+    expect(runtime.isHeld('npc-1')).toBe(true) // held by the reply that just landed
+
+    // A second arrival edge (e.g. a re-approach) well within greetCooldownMs
+    // must not produce a second reply while still held.
+    clock.advance(100)
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('isHeld / heldObjectIds', () => {
+  it('is false for an NPC that has never replied', () => {
+    const { deps } = makeDeps()
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+    expect(runtime.isHeld('npc-1')).toBe(false)
+  })
+
+  it('is false for an id this runtime is not tracking', () => {
+    const { deps } = makeDeps()
+    const runtime = new NpcRuntime(deps)
+    expect(runtime.isHeld('nope')).toBe(false)
+  })
+
+  it('is true while a reply is in flight (busy), before it lands', async () => {
+    const clock = makeClock()
+    let resolveChat: ((v: string) => void) | undefined
+    const chat = vi.fn(() => new Promise<string>((resolve) => (resolveChat = resolve)))
+    const { deps } = makeDeps({ chat }, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(runtime.isHeld('npc-1')).toBe(true)
+
+    resolveChat?.('Hello there!')
+    await flush()
+    // Still held afterward — within the reply's estimated speaking window.
+    expect(runtime.isHeld('npc-1')).toBe(true)
+  })
+
+  it('stops being held once the estimated speaking window elapses', async () => {
+    const clock = makeClock()
+    const { deps } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(runtime.isHeld('npc-1')).toBe(true)
+
+    clock.advance(60000) // comfortably longer than any bubbleDwellMs estimate
+    expect(runtime.isHeld('npc-1')).toBe(false)
+  })
+
+  it('heldObjectIds lists only currently-held NPCs', async () => {
+    const clock = makeClock()
+    const { deps } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([
+      placement({ objectId: 'npc-a', characterId: 'char-a', x: 0, y: 0, z: 0 }),
+      placement({ objectId: 'npc-b', characterId: 'char-b', x: 100, y: 0, z: 0 }),
+    ])
+
+    runtime.heard(speaker({ x: 0, y: 0, z: 0 }), 'hi')
+    await flush()
+    expect(runtime.heldObjectIds()).toEqual(['npc-a'])
+  })
+})
+
 describe('setPlacements / reset', () => {
   it('drops history and cooldown state for an NPC removed from the placement set', async () => {
     const { deps, say } = makeDeps()

@@ -975,6 +975,32 @@ export function useSession(): SessionApi {
       world.onObjectStates((states) => {
         sessionRef.current?.sendObjectStates(states)
       })
+      // The R7 "walk up and greet" arrival edge (see World.onNpcArrived's
+      // doc): WorldObjects reports only a world POSITION, since World has no
+      // notion of peer identity — resolved here against the exact same
+      // local/remote position sources the observe() loop below builds
+      // NpcSpeaker from, matched by nearest horizontal distance (an eye-
+      // position sample and this frame's arrival position are not
+      // necessarily bit-identical).
+      world.onNpcArrived((objectId, pos) => {
+        const session = sessionRef.current
+        if (!session) return
+        let speaker: NpcSpeaker | null = null
+        let bestDist = Infinity
+        const pose = world.getLocalPose()
+        if (pose) {
+          bestDist = Math.hypot(pos.x - pose.x, pos.z - pose.z)
+          speaker = { id: session.selfId, name: profileRef.current.name, x: pose.x, y: pose.y, z: pose.z }
+        }
+        for (const [peerId, rpos] of remotePositions.current) {
+          const d = Math.hypot(pos.x - rpos.x, pos.z - rpos.z)
+          if (d < bestDist) {
+            bestDist = d
+            speaker = { id: peerId, name: world.remoteDisplayName(peerId) ?? peerId, x: rpos.x, y: rpos.y, z: rpos.z }
+          }
+        }
+        if (speaker) npcRuntimeRef.current.arrived(objectId, speaker)
+      })
       worldRef.current = world
       if (vrsnsDebug) {
         vrsnsDebug.objects = () => world.listPlacedObjects()
@@ -2342,6 +2368,11 @@ export function useSession(): SessionApi {
         speakers.push({ id: peerId, name: world.remoteDisplayName(peerId) ?? peerId, x: pos.x, y: pos.y, z: pos.z })
       }
       npcRuntimeRef.current.observe(speakers)
+      // R7: refresh which owned NPCs the approach-movement state machine
+      // must not walk home while (see NpcRuntime.isHeld / World.setHeldNpcs)
+      // on this same cadence — a fraction of a second of staleness is
+      // harmless, and this loop already has npcRuntimeRef in hand.
+      world.setHeldNpcs(new Set(npcRuntimeRef.current.heldObjectIds()))
     }, NPC_OBSERVE_INTERVAL_MS)
     return () => clearInterval(id)
   }, [phase])

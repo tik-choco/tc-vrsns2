@@ -42,6 +42,8 @@ const GRID_LINE_COLOR = 0xd4d9e1
 const DEFAULT_PLAYER_COLOR = '#5b73c9'
 /** Interval between onLocalState emissions, ms (~10Hz). */
 const STATE_EMIT_INTERVAL_MS = 100
+/** Minimum re-send interval (ms) for a displaced NPC's keepalive — see emitObjectStates' doc. 1Hz: infrequent enough to be free, frequent enough that a newcomer or a dropped packet never leaves it stuck for long. */
+const NPC_KEEPALIVE_INTERVAL_MS = 1000
 
 /**
  * Outcome of a setLocalAvatar swap — see that method's doc comment for why
@@ -92,22 +94,29 @@ export class World {
   private scriptRuntime: ScriptRuntime
   /**
    * Maintained by syncScripts() (change-driven), read by tick() every frame.
-   * This is the whole "zero cost when nothing is scripted" story: tick()
-   * checks this one boolean before building the local occupant snapshot or
-   * calling into ScriptRuntime at all, so a room with no scripts pays nothing
-   * per frame. Covers ANY object with a script or a trigger, not just owned
-   * ones — trigger volumes are registered for every object (see
-   * ScriptRuntime.sync), so a peer's trigger still needs tick() to run for us
-   * to detect our own crossings of it.
+   * This is the whole "zero cost when nothing needs it" story: tick() checks
+   * this one boolean before building the local occupant snapshot or calling
+   * into ScriptRuntime at all, so an ordinary room pays nothing per frame.
+   * Originally just "any script or trigger" (any object, not just owned ones
+   * — trigger volumes are registered for every object, see ScriptRuntime.sync,
+   * so a peer's trigger still needs tick() to run for us to detect our own
+   * crossings of it); now ALSO true for any 'npc' placement regardless of
+   * script/trigger — see roomHasActiveObjects's doc for why an NPC needs this
+   * gate too (it long predates approach-walking: even the R5 body-turn never
+   * reached peers in a script-less room without it).
    */
-  private hasScripts = false
+  private hasActiveObjects = false
   /** Ids we currently publish, i.e. the scripts we are authoritative for. Set by setOwnedObjects(). */
   private ownedObjectIds = new Set<string>()
   /** Fires at ~10Hz with the transforms of OWNED objects that moved since the last send. See emitObjectStates(). */
   private objectStateListeners: Array<(states: ObjectState[]) => void> = []
   /** The transform last actually SENT for each owned id, so a change is reported exactly once — see emitObjectStates(). */
   private lastSentObjectState = new Map<string, ObjectState>()
+  /** Last time (performance.now()) an owned, currently-displaced NPC was force-included in an emitObjectStates send despite an unchanged transform — see the keepalive comment there. */
+  private lastNpcKeepaliveAt = new Map<string, number>()
   private lastObjStateEmitAt = 0
+  /** WorldObjects reports an owned NPC's approach walk arriving here; forwarded to onNpcArrived's listener — see both docs. */
+  private npcArrivedListener: ((objectId: string, player: Vec3) => void) | null = null
   private soundResolver: ((cid: string) => Promise<Uint8Array | null>) | null = null
   private scriptSayListener: ((objectId: string, text: string) => void) | null = null
   /** Fires once per frame with a non-trivial ScriptTickResult, so the net layer can broadcast it. See onScriptOutput(). */
@@ -138,7 +147,7 @@ export class World {
   private pendingInteract: { pointerId: number; objectId: string; x: number; y: number; at: number } | null = null
 
   private readonly onInteractPointerDown = (e: PointerEvent): void => {
-    if (!this.hasScripts || this.objectEditor.isEnabled || e.button !== 0) return
+    if (!this.hasActiveObjects || this.objectEditor.isEnabled || e.button !== 0) return
     // Where the ray comes from depends on whether there is a cursor to aim
     // with. Pointer-locked play has none — clientX/Y freeze wherever the
     // cursor was when the lock engaged — so the viewport centre IS the aim
@@ -242,6 +251,9 @@ export class World {
     // method's doc for why a non-owner running it too would fight the
     // authoritative transform arriving over MSG_OBJ_STATE.
     this.worldObjects.setOwnershipGuard((id) => this.ownedObjectIds.has(id))
+    // The R7 "walk up and greet" arrival edge — see onNpcArrived's doc for
+    // the rest of the chain this feeds.
+    this.worldObjects.setArrivedListener((objectId, player) => this.npcArrivedListener?.(objectId, player))
     // Wrap the editor's own commit callback: a committed edit changes a
     // placement's transform, which is exactly the kind of change sync() must
     // see (a script's trigger volume follows its object's origin — see
@@ -605,6 +617,33 @@ export class World {
     this.worldObjects.faceTowards(id, yaw)
   }
 
+  /**
+   * Notified when one of OUR OWN NPCs finishes walking up to a nearby player
+   * and stops (see WorldObjects' owner-only approach state machine) — the R7
+   * counterpart to onScriptSay: `player` is that player's world position
+   * only, since World has no notion of peer identity (that lives in the
+   * session layer). The session layer resolves WHO that position belongs to
+   * (matching against known local/remote positions, same as the existing
+   * NpcRuntime.observe() polling loop does) and routes it to
+   * NpcRuntime.arrived(), which greets through the exact same cooldown path
+   * observe()'s own proximity edge-detection uses.
+   */
+  onNpcArrived(cb: (objectId: string, player: Vec3) => void): void {
+    this.npcArrivedListener = cb
+  }
+
+  /**
+   * Object ids NpcRuntime currently considers "held" (see NpcRuntime.isHeld)
+   * — forwarded straight to WorldObjects, which gates the owner-only approach
+   * state machine on it so an NPC never starts walking away mid-conversation.
+   * The session layer refreshes this on the same cadence as its existing
+   * NpcRuntime.observe() polling loop; see WorldObjects.setHeldNpcs's doc for
+   * why that staleness window is harmless.
+   */
+  setHeldNpcs(ids: ReadonlySet<string>): void {
+    this.worldObjects.setHeldNpcs(ids)
+  }
+
   /** Remove every placed object from the local scene view. */
   clearObjects(): void {
     this.worldObjects.clearAll()
@@ -613,18 +652,19 @@ export class World {
 
   /**
    * Reconciles ScriptRuntime to the current placed-object set (and current
-   * ownership) and refreshes the cheap `hasScripts` flag tick() early-outs
-   * on. CHANGE-driven only — see the file header of ScriptRuntime for why
-   * calling sync() every frame would silently reset every script's
-   * variables. The call sites are the ones above (place/sync/clear), a
-   * committed edit (wired in the constructor onto objectEditor.onCommit),
-   * and setOwnedObjects() below — ownership changing is exactly the kind of
-   * change sync() must react to, even when no object itself changed.
+   * ownership) and refreshes the cheap `hasActiveObjects` flag tick() and
+   * emitObjectStates() early-out on. CHANGE-driven only — see the file
+   * header of ScriptRuntime for why calling sync() every frame would
+   * silently reset every script's variables. The call sites are the ones
+   * above (place/sync/clear), a committed edit (wired in the constructor
+   * onto objectEditor.onCommit), and setOwnedObjects() below — ownership
+   * changing is exactly the kind of change sync() must react to, even when
+   * no object itself changed.
    */
   private syncScripts(): void {
     const objects = this.worldObjects.list()
     this.scriptRuntime.sync(objects, this.ownedObjectIds)
-    this.hasScripts = objects.some((o) => o.script !== undefined || o.trigger !== undefined)
+    this.hasActiveObjects = roomHasActiveObjects(objects)
   }
 
   // --- editing placed objects ----------------------------------------------
@@ -707,11 +747,12 @@ export class World {
    * Register for transform-only deltas produced by OUR OWN placements moving
    * between frames — e.g. the 'rotate'/'bob' script presets (see
    * script/presets.ts), which call world/setRotationY / world/setPosition
-   * every tick. Fires at the same ~10Hz cadence as onLocalState, but —
-   * unlike that always-on stream — only when emitObjectStates() actually
-   * finds something that changed (see its doc). Costs nothing when nothing
-   * is scripted: emitObjectStates() early-outs on `hasScripts` before doing
-   * any work, same gate tickScripts() uses.
+   * every tick, and an owned NPC's own body-turn/approach-walk (see
+   * WorldObjects.update). Fires at the same ~10Hz cadence as onLocalState,
+   * but — unlike that always-on stream — only when emitObjectStates()
+   * actually finds something that changed (see its doc). Costs nothing when
+   * there is nothing active: emitObjectStates() early-outs on
+   * `hasActiveObjects` before doing any work, same gate tickScripts() uses.
    */
   onObjectStates(cb: (states: ObjectState[]) => void): void {
     this.objectStateListeners.push(cb)
@@ -1031,10 +1072,14 @@ export class World {
   }
 
   /**
-   * Runs one frame of every attached script. `hasScripts` (maintained by
-   * syncScripts(), change-driven) is checked FIRST and is the entire cost
-   * for the overwhelming majority of rooms, which have no scripts at all —
-   * ScriptRuntime.tick() is never called when it is false.
+   * Runs one frame of every attached script. `hasActiveObjects` (maintained
+   * by syncScripts(), change-driven) is checked FIRST and is the entire cost
+   * for the overwhelming majority of rooms, which have no scripts (or NPCs)
+   * at all — ScriptRuntime.tick() is never called when it is false. A room
+   * with only NPC placements and no scripts still pays this, but cheaply:
+   * ScriptRuntime.tick() is a no-op with nothing registered, so widening the
+   * shared flag for NPCs (see hasActiveObjects' own doc) costs nothing extra
+   * here.
    *
    * Passes only the LOCAL player, keyed by display name (what
    * event/onTriggerEnter and event/onInteract hand a script) — see
@@ -1042,7 +1087,7 @@ export class World {
    * be a bug (two clients firing the same crossing).
    */
   private tickScripts(delta: number): void {
-    if (!this.hasScripts) return
+    if (!this.hasActiveObjects) return
 
     const self = {
       name: this.localProfileName,
@@ -1090,11 +1135,12 @@ export class World {
   /**
    * Every player position this tab currently knows about — the local player
    * (once started) plus every remote — for each NPC's own nearest-player
-   * gaze pick (see WorldObjects.update). Recomputed every frame
-   * unconditionally rather than gated behind a hasNpcs-style flag the way
-   * tickScripts/emitObjectStates gate on hasScripts: unlike those, this is
-   * O(remote count) — a handful of Vector3 reads — not O(placed objects),
-   * so the always-on cost is negligible even in a room with no NPCs at all.
+   * gaze pick, and its own approach-target pick, (see WorldObjects.update).
+   * Recomputed every frame unconditionally rather than gated behind a
+   * hasNpcs-style flag the way tickScripts/emitObjectStates gate on
+   * hasActiveObjects: unlike those, this is O(remote count) — a handful of
+   * Vector3 reads — not O(placed objects), so the always-on cost is
+   * negligible even in a room with no NPCs at all.
    *
    * These are EYE positions, not the avatars' ground origins: an NPC looking
    * at a raw PlayerState position would be aiming at the player's feet and
@@ -1126,31 +1172,53 @@ export class World {
    * Publishes the transforms of objects WE OWN that changed since the last
    * send that actually went out, at the same ~10Hz cadence as
    * emitLocalState() — this is MSG_OBJ_STATE's sender half (see its doc in
-   * net/protocol.ts). `hasScripts` is checked FIRST, before touching
-   * ownedObjectIds or WorldObjects at all: the overwhelming majority of
-   * rooms have no scripts, so this — like tickScripts() — costs nothing per
-   * frame and sends nothing extra, preserving R1/R2's
-   * zero-cost-when-unscripted property.
+   * net/protocol.ts). `hasActiveObjects` is checked FIRST, before touching
+   * ownedObjectIds or WorldObjects at all: the overwhelming majority of rooms
+   * have no scripts or NPCs, so this — like tickScripts() — costs nothing per
+   * frame and sends nothing extra, preserving R1/R2's zero-cost-when-idle
+   * property. Widened (see hasActiveObjects' doc) to also run for a room
+   * with only NPC placements: without that, neither an NPC's R5 body-turn nor
+   * this R7 approach-walk ever left this tab at all in a script-less room —
+   * WorldObjects.update() was moving the local transform every frame, but
+   * nothing was ever telling a peer.
    *
    * Reads each owned object's CURRENT transform back from WorldObjects
    * (tickScripts() above already applied this frame's script-driven
-   * setTransform calls, e.g. 'rotate'/'bob') rather than tracking deltas some
-   * other way, and compares it against `lastSentObjectState` — the snapshot
-   * last actually SENT for that id, not merely last observed — so a change
-   * is reported exactly once even across a run where this method gets
+   * setTransform calls, e.g. 'rotate'/'bob', and worldObjects.update() this
+   * frame's NPC body-turn/approach-walk step) rather than tracking deltas
+   * some other way, and compares it against `lastSentObjectState` — the
+   * snapshot last actually SENT for that id, not merely last observed — so a
+   * change is reported exactly once even across a run where this method gets
    * skipped for a few frames by the interval gate below. Stale entries (an
    * id no longer owned, or no longer resolving at all) are pruned every call
-   * so the map can't grow unbounded over a long session of placing/removing
-   * objects.
+   * so the map — and the parallel lastNpcKeepaliveAt map, below — can't grow
+   * unbounded over a long session of placing/removing objects.
+   *
+   * KEEPALIVE: MSG_OBJ_STATE is sent unreliably and is never replayed to a
+   * newcomer (see net/protocol.ts's doc), and the `sameObjectTransform` skip
+   * just below exists specifically to avoid resending an UNCHANGED transform
+   * every frame — the two combined mean a peer who simply missed the one
+   * send that moved a since-stationary NPC (a dropped packet, a newcomer who
+   * joined mid-walk) would otherwise see it frozen at the wrong spot
+   * forever. So for a NPC that is currently AWAY from its authored home (see
+   * WorldObjects.isNpcAwayFromHome — approaching, arrived/talking, or
+   * returning), the unchanged-transform skip is bypassed at least once a
+   * second regardless: cheap (this whole method already runs at ~10Hz, and
+   * only owned NPC ids are ever checked), and self-limiting (an NPC that
+   * never leaves home, i.e. every placement from before this feature
+   * existed, never enters this branch at all).
    */
   private emitObjectStates(): void {
-    if (!this.hasScripts || this.objectStateListeners.length === 0) return
+    if (!this.hasActiveObjects || this.objectStateListeners.length === 0) return
     const now = performance.now()
     if (now - this.lastObjStateEmitAt < STATE_EMIT_INTERVAL_MS) return
     this.lastObjStateEmitAt = now
 
     for (const id of [...this.lastSentObjectState.keys()]) {
       if (!this.ownedObjectIds.has(id)) this.lastSentObjectState.delete(id)
+    }
+    for (const id of [...this.lastNpcKeepaliveAt.keys()]) {
+      if (!this.ownedObjectIds.has(id)) this.lastNpcKeepaliveAt.delete(id)
     }
     if (this.ownedObjectIds.size === 0) return
 
@@ -1159,6 +1227,7 @@ export class World {
       const state = this.worldObjects.stateOf(id)
       if (!state) {
         this.lastSentObjectState.delete(id)
+        this.lastNpcKeepaliveAt.delete(id)
         continue
       }
       const snapshot: ObjectState = {
@@ -1170,7 +1239,11 @@ export class World {
         scale: state.scale,
       }
       const prev = this.lastSentObjectState.get(id)
-      if (prev && sameObjectTransform(prev, snapshot)) continue
+      const forceKeepalive =
+        this.worldObjects.isNpcAwayFromHome(id) &&
+        needsNpcKeepalive(now, this.lastNpcKeepaliveAt.get(id) ?? -Infinity)
+      if (prev && sameObjectTransform(prev, snapshot) && !forceKeepalive) continue
+      if (forceKeepalive) this.lastNpcKeepaliveAt.set(id, now)
       this.lastSentObjectState.set(id, snapshot)
       changed.push(snapshot)
     }
@@ -1191,6 +1264,31 @@ export class World {
 /** Exact-equality check for emitObjectStates()'s "did this actually move" test — cheap and correct: these are the same five numbers a script wrote via setTransform, not independently-measured floats that need a tolerance. */
 function sameObjectTransform(a: ObjectState, b: ObjectState): boolean {
   return a.x === b.x && a.y === b.y && a.z === b.z && a.rotationY === b.rotationY && a.scale === b.scale
+}
+
+/**
+ * Whether ANY tracked placement needs the per-frame machinery hasActiveObjects
+ * gates: an attached script/trigger (interact/tick/emitObjectStates), or an
+ * NPC placement (its own body-turn/approach-walk stream — see
+ * emitObjectStates' keepalive doc for why an NPC needs this even with no
+ * script at all). Exported as a standalone pure function — rather than left
+ * inline inside syncScripts() — specifically so this decision is unit-
+ * testable without constructing a World, which needs a real WebGL canvas
+ * (see World.avatar.test.ts's file header for why that isn't done in tests).
+ */
+export function roomHasActiveObjects(objects: readonly PlacedObject[]): boolean {
+  return objects.some((o) => o.script !== undefined || o.trigger !== undefined || o.kind === 'npc')
+}
+
+/**
+ * Whether emitObjectStates should force-include a displaced NPC in this send
+ * despite an unchanged transform (see its keepalive doc) — true once at
+ * least NPC_KEEPALIVE_INTERVAL_MS has passed since the last time it was
+ * force-included. A standalone pure function for the same testability reason
+ * as roomHasActiveObjects above.
+ */
+export function needsNpcKeepalive(now: number, lastForcedAt: number, intervalMs: number = NPC_KEEPALIVE_INTERVAL_MS): boolean {
+  return now - lastForcedAt >= intervalMs
 }
 
 export type { AnimState, ObjectState, PlayerProfile, PlayerState }
