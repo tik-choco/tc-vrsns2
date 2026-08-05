@@ -168,8 +168,16 @@ export function listManifestCids(manifest: WorldManifest): WorldManifestCidRef[]
     byCid.set(manifest.skybox.cid, { cid: manifest.skybox.cid, name: manifest.skybox.name, kind: 'skybox' })
   }
   for (const object of manifest.objects) {
-    if (byCid.has(object.cid)) continue
-    byCid.set(object.cid, { cid: object.cid, name: object.name, kind: object.kind ?? 'model' })
+    // A box placement's cid is legally empty (its look is the box field, not
+    // bytes) — without this skip it would smuggle a bogus ''-cid ref into the
+    // availability count. Its texture, though, IS store bytes worth listing.
+    if (object.cid && !byCid.has(object.cid)) {
+      byCid.set(object.cid, { cid: object.cid, name: object.name, kind: object.kind ?? 'model' })
+    }
+    const textureCid = object.box?.textureCid
+    if (textureCid && !byCid.has(textureCid)) {
+      byCid.set(textureCid, { cid: textureCid, name: object.name, kind: 'box' })
+    }
   }
   return [...byCid.values()]
 }
