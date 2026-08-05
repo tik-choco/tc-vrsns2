@@ -183,13 +183,21 @@ export const de: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'Winkel',
 
-  // Lautstärke / Hörweite — nur bei Audio- und Video-Objekten, eingestellt
-  // über die Bearbeitungsleiste (EditToolbar.tsx)
+  // Lautstärke / Hörweite / Volllautstärke-Radius / Klangversatz — nur bei
+  // Audio- und Video-Objekten, eingestellt über die Bearbeitungsleiste
+  // (EditToolbar.tsx)
   'objects.volume': 'Lautstärke',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Hörweite',
   'objects.rangeValue': '{n} m',
   'objects.rangeExact': 'Hörweite (m)',
+  'objects.falloffStart': 'Volllautstärke-Radius (m)',
+
+  'objects.falloffStartShort': 'Volle Lautst.',
+  'objects.audioOffset': 'Klangversatz',
+  'objects.audioOffsetX': 'Klangversatz X (m)',
+  'objects.audioOffsetY': 'Klangversatz Y (m)',
+  'objects.audioOffsetZ': 'Klangversatz Z (m)',
 
   // Box-Erscheinungsbild — nur bei Objekten vom Typ „Box“, eingestellt über
   // die Bearbeitungsleiste (EditToolbar.tsx)

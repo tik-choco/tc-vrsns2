@@ -5,17 +5,19 @@
 // centred; media panels are built at their natural aspect ratio and stand on
 // the ground facing whoever placed them. Sound (video and audio placements) is
 // positional — it falls off with distance from the listener on the camera —
-// and each placement may tune its own volume/audible range on top of that
-// falloff (PlacedObject.volume/audibleRange), independent of every other
-// placement's.
+// and each placement may tune its own volume/audible range/falloff start on
+// top of that falloff (PlacedObject.volume/audibleRange/falloffStart), and
+// where within itself the sound is emitted from (PlacedObject.audioOffset,
+// see WorldObjects' own audioAnchor), independent of every other placement's.
 //
 // Objects are tracked by a unique id so a peer's placements can be reconciled
 // against the authoritative set (add the new, drop the removed) without
 // reloading what is already present.
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { effectiveFalloffStart, placementFalloff } from '../shared/audioFalloff'
 import type { BoxAppearance, ObjectState, PlacedKind, PlacedObject } from '../shared/types'
-import { AudioRangeIndicator, placementFalloff } from './audioRangeIndicator'
+import { AudioRangeIndicator } from './audioRangeIndicator'
 import type { WalkableBox } from './boxGround'
 import { normalizeAngle } from './CharacterController'
 import { isMediaKind } from './mediaFormat'
@@ -178,6 +180,21 @@ type Entry = {
   /** Lazily-created child node an NPC's voice plays from, at mouth height rather than the placement's floor-level origin (see voiceAnchor). */
   voiceAnchor?: THREE.Object3D
   /**
+   * The node a 'video'/'audio' PLACEMENT's own sound is emitted from — set
+   * by buildVideo/buildAudio (via createAudioAnchor) for those two kinds
+   * only, never for any other kind and never for playOneShot's one-shot
+   * sounds (which use voiceAnchor/the object root directly, not this field
+   * — see attachPlacementAudio's doc for why placement audio and one-shots
+   * are deliberately different paths). Present even when `sound` below is
+   * absent (no AudioListener): the audio-range indicator's tether/marker
+   * (applyAudioRangeFocus) need a real emitter node to read a world position
+   * off regardless of whether anything can actually be heard. Repositioned
+   * — never recreated — whenever PlacedObject.audioOffset or the
+   * placement's own scale changes; see refreshAudioAnchor's doc for exactly
+   * where that happens.
+   */
+  audioAnchor?: THREE.Object3D
+  /**
    * The live PositionalAudio node for a 'video'/'audio' placement's own
    * media (set by buildVideo/buildAudio only — never for any other kind,
    * and never for playOneShot's one-shot sounds, which are not tracked as
@@ -199,6 +216,8 @@ type Built = {
   npc?: NpcView
   /** See Entry.sound's doc — carried from buildVideo/buildAudio through track(). */
   sound?: THREE.PositionalAudio
+  /** See Entry.audioAnchor's doc — carried from buildVideo/buildAudio through track(), same as `sound`. */
+  audioAnchor?: THREE.Object3D
   /** See Entry.boxTile's doc — carried through track() the same way. */
   boxTile?: BoxTileState
 }
@@ -285,6 +304,13 @@ export class WorldObjects {
    * ObjectEditor.reattach.
    */
   private audioRangeFocusId: string | null = null
+  /**
+   * Reused scratch vector for applyAudioRangeFocus's emitter world-position
+   * read (Object3D.getWorldPosition requires a target to write into) — one
+   * instance for the class's whole lifetime instead of an allocation every
+   * frame a placement has audio-range focus.
+   */
+  private audioFocusEmitterPos = new THREE.Vector3()
 
   /**
    * `listener` (the AudioListener mounted on the camera) enables positional
@@ -379,6 +405,8 @@ export class WorldObjects {
       state.name,
       state.volume,
       state.audibleRange,
+      state.falloffStart,
+      state.audioOffset,
       state.box,
       resolveBytes,
     )
@@ -396,6 +424,10 @@ export class WorldObjects {
     // Same reasoning as place()'s own call into this — scale is only just
     // set above.
     if (built.boxTile) refreshBoxTileRepeat(built.boxTile)
+    // Same reasoning: audioOffset/metres-vs-scale only divides out correctly
+    // once the placement's REAL scale (just set above) is known — see
+    // refreshAudioAnchor's doc.
+    if (built.audioAnchor) refreshAudioAnchor(built.audioAnchor, state.audioOffset, state.scale)
     this.track({ ...state }, built)
   }
 
@@ -425,14 +457,18 @@ export class WorldObjects {
    * without rebuilding an asset that hasn't changed. Cheap and idempotent when
    * nothing differs.
    *
-   * Also the one place a volume/audibleRange edit reaches an already-playing
-   * placement's live PositionalAudio (see retuneAudio's doc for why that
-   * isn't inside applyTransform): the OLD volume/audibleRange is read off
+   * Also the one place a volume/audibleRange/falloffStart edit reaches an
+   * already-playing placement's live PositionalAudio (see retuneAudio's doc
+   * for why that isn't inside applyTransform): the OLD values are read off
    * `existing.state` before applyTransform overwrites it, compared against
    * the incoming ones, and retuneAudio() is called explicitly when they
-   * differ. This runs once per reconcile — a local edit's commit
-   * (useSession's setObjectVolume/setObjectAudibleRange -> commitOwnObjects
-   * -> reconcileObjects) or a peer's MSG_OBJECTS snapshot — never per
+   * differ (audioOffset is compared here too, even though it never needs
+   * retuneAudio itself — position, not a Web Audio param — since
+   * applyTransform, called unconditionally just below, already re-derives
+   * the emitter anchor from whatever `state.audioOffset` now is). This runs
+   * once per reconcile — a local edit's commit (useSession's
+   * setObjectVolume/setObjectAudibleRange -> commitOwnObjects ->
+   * reconcileObjects) or a peer's MSG_OBJECTS snapshot — never per
    * animation frame, so both a local and a peer's volume edit take effect
    * here, with nothing extra to wire on either call site.
    *
@@ -465,9 +501,12 @@ export class WorldObjects {
           rebuilding = true
         } else {
           const audioChanged =
-            existing.state.volume !== state.volume || existing.state.audibleRange !== state.audibleRange
+            existing.state.volume !== state.volume ||
+            existing.state.audibleRange !== state.audibleRange ||
+            existing.state.falloffStart !== state.falloffStart ||
+            JSON.stringify(existing.state.audioOffset) !== JSON.stringify(state.audioOffset)
           this.applyTransform(state)
-          if (audioChanged) this.retuneAudio(state.id, state.volume, state.audibleRange)
+          if (audioChanged) this.retuneAudio(state.id, state.volume, state.audibleRange, state.falloffStart)
           continue
         }
       }
@@ -572,8 +611,12 @@ export class WorldObjects {
     // NpcView.clearAddressedTurn.
     entry.npc?.clearAddressedTurn()
     // A gizmo resize changes `scale` above like any other edit — keep a
-    // box's texture tile world-locked to it (see refreshBoxTileRepeat's doc).
+    // box's texture tile world-locked to it (see refreshBoxTileRepeat's doc),
+    // and the audio anchor's offset-in-metres correct despite the new scale
+    // (see refreshAudioAnchor's doc) — same reasoning as applyTransform's own
+    // call into each, just below.
     if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
+    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, scale)
     return { ...entry.state }
   }
 
@@ -584,12 +627,22 @@ export class WorldObjects {
    * script/trigger onto a placement that hasn't moved (see stateDiffers()).
    *
    * Deliberately does NOT retune a 'video'/'audio' placement's live
-   * PositionalAudio even when `state.volume`/`audibleRange` changed: this
-   * runs every frame for a script-moved placement via WorldScriptBridge (see
-   * scriptBridge.ts's applyTransform), so adding Web Audio parameter writes
-   * here would tax every moving audio/video placement on every frame for a
-   * change that in practice only happens on an edit or a peer's resync. See
-   * retuneAudio() and syncRemote()'s doc for where that actually happens.
+   * PositionalAudio even when `state.volume`/`audibleRange`/`falloffStart`
+   * changed: this runs every frame for a script-moved placement via
+   * WorldScriptBridge (see scriptBridge.ts's applyTransform), so adding Web
+   * Audio parameter writes here would tax every moving audio/video placement
+   * on every frame for a change that in practice only happens on an edit or
+   * a peer's resync. See retuneAudio() and syncRemote()'s doc for where that
+   * actually happens.
+   *
+   * DOES reposition the audio anchor (refreshAudioAnchor) on every call,
+   * unlike the Web Audio params above — a deliberate difference, not an
+   * oversight: this is a plain Object3D.position.set() on a node nothing
+   * else writes to, the same cost class as the refreshBoxTileRepeat() call
+   * right below it (which already runs here every frame for exactly the
+   * same "stay world-locked through a script-driven transform" reason), not
+   * a Web Audio node write. Skipping it here would leave a script-animated
+   * placement's emitter silently stuck at whatever scale it was built at.
    */
   applyTransform(state: PlacedObject): void {
     const entry = this.objects.get(state.id)
@@ -613,31 +666,40 @@ export class WorldObjects {
     // Cheap and a no-op for every non-box entry and every box with no
     // texture (yet).
     if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
+    // Same world-locked reasoning, for the audio emitter's offset-in-metres
+    // instead of a texture's tiling — see this method's own doc above and
+    // refreshAudioAnchor's for why this belongs here despite the "no Web
+    // Audio writes in applyTransform" rule two paragraphs up. `entry.state`
+    // was just replaced above, so `.audioOffset` here is already the
+    // INCOMING value, not the stale one.
+    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, state.scale)
   }
 
   /**
    * Retunes an already-built 'video'/'audio' placement's LIVE positional
-   * audio (volume + audible range) in place — the explicit counterpart to
-   * applyTransform()'s deliberate no-op on the sound node (see its doc).
-   * Called only from syncRemote(), and only when volume/audibleRange
-   * actually changed, so this never runs on the per-frame script-transform
-   * path (WorldScriptBridge -> applyTransform) and never runs on an edit
-   * that touched some other field only (a script attach, a move). A no-op
-   * for an id that isn't tracked, or one with no live PositionalAudio (any
-   * kind but 'video'/'audio', or the world had no AudioListener when it was
-   * built — see attachPlacementAudio).
+   * audio (volume + audible range + falloff start) in place — the explicit
+   * counterpart to applyTransform()'s deliberate no-op on these same Web
+   * Audio params (see its doc). Called only from syncRemote(), and only when
+   * one of them actually changed, so this never runs on the per-frame
+   * script-transform path (WorldScriptBridge -> applyTransform) and never
+   * runs on an edit that touched some other field only (a script attach, a
+   * move). A no-op for an id that isn't tracked, or one with no live
+   * PositionalAudio (any kind but 'video'/'audio', or the world had no
+   * AudioListener when it was built — see attachPlacementAudio).
    *
-   * Only the EAR is this method's business. The drawn sphere is not retuned
-   * here on purpose: applyAudioRangeFocus() re-reads its radius from
-   * `entry.state` every frame, and syncRemote hands this method a state it
-   * has already written there (via applyTransform, immediately above the
-   * call), so the picture is correct on the very next frame with no second
-   * update path that could disagree with the first.
+   * Only the EAR is this method's business — position (including
+   * PlacedObject.audioOffset) is refreshAudioAnchor's job, done
+   * unconditionally inside applyTransform, not here. The drawn sphere is not
+   * retuned here on purpose either: applyAudioRangeFocus() re-reads its
+   * radii from `entry.state` every frame, and syncRemote hands this method a
+   * state it has already written there (via applyTransform, immediately
+   * above the call), so the picture is correct on the very next frame with
+   * no second update path that could disagree with the first.
    */
-  retuneAudio(id: string, volume?: number, audibleRange?: number): void {
+  retuneAudio(id: string, volume?: number, audibleRange?: number, falloffStart?: number): void {
     const sound = this.objects.get(id)?.sound
     if (!sound) return
-    const falloff = placementFalloff(audibleRange ?? AUDIO_DEFAULT_RANGE)
+    const falloff = placementFalloff(audibleRange ?? AUDIO_DEFAULT_RANGE, falloffStart)
     sound.setVolume(volume ?? DEFAULT_VOLUME)
     sound.setRefDistance(falloff.refDistance)
     sound.setMaxDistance(falloff.maxDistance)
@@ -673,8 +735,13 @@ export class WorldObjects {
       scale: state.scale,
     }
     // Same reasoning as applyTransform's own call into this — this stream
-    // can carry a script-driven scale change too.
+    // can carry a script-driven scale change too. audioOffset itself never
+    // arrives via ObjectState (see this method's own doc: transform fields
+    // only), but the anchor's LOCAL position still depends on the current
+    // scale (see refreshAudioAnchor's doc), so a scale-only change here must
+    // still re-derive it from whatever `entry.state.audioOffset` already is.
     if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
+    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, state.scale)
   }
 
   /**
@@ -758,20 +825,42 @@ export class WorldObjects {
   /**
    * Current audio-range focus (see setAudioRangeFocus/audioRangeFocusId),
    * for e2e observability (src/lib/debugHook.ts): a test drives an
-   * audibleRange edit and asserts the indicator followed, without any way to
-   * inspect a THREE scene's visual state directly from outside. Null
-   * whenever nothing is focused OR the focused id doesn't currently resolve
-   * to a live 'audio'/'video' entry — i.e. exactly whenever
-   * audioRangeIndicator itself is hidden (see applyAudioRangeFocus), so this
-   * never reports a focus the sphere isn't actually showing.
+   * audibleRange/falloffStart/audioOffset edit and asserts the indicator
+   * followed, without any way to inspect a THREE scene's visual state
+   * directly from outside. Null whenever nothing is focused OR the focused
+   * id doesn't currently resolve to a live 'audio'/'video' entry — i.e.
+   * exactly whenever audioRangeIndicator itself is hidden (see
+   * applyAudioRangeFocus), so this never reports a focus the sphere isn't
+   * actually showing.
+   *
+   * `id`/`range` are kept exactly as they were before falloffStart/
+   * audioOffset existed (an existing e2e harness, scripts/e2e-audio-range.mjs,
+   * already reads them by name). `falloffStart` here is the EFFECTIVE value
+   * (effectiveFalloffStart, the same function the indicator's inner sphere
+   * and WorldObjects' own panner setup both read), not the raw possibly-
+   * absent PlacedObject field, so a test can assert against what is actually
+   * drawn/heard without re-implementing the default/clamp itself.
+   * `audioOffset` defaults to the origin (0,0,0) the same way the field's
+   * absence means "emitted from the placement's own origin" everywhere else.
    */
-  getAudioRangeFocus(): { id: string; range: number } | null {
+  getAudioRangeFocus(): {
+    id: string
+    range: number
+    falloffStart: number
+    audioOffset: { x: number; y: number; z: number }
+  } | null {
     const id = this.audioRangeFocusId
     if (!id) return null
     const entry = this.objects.get(id)
     const isAudible = entry !== undefined && (entry.state.kind === 'audio' || entry.state.kind === 'video')
     if (!entry || !isAudible) return null
-    return { id, range: entry.state.audibleRange ?? AUDIO_DEFAULT_RANGE }
+    const range = entry.state.audibleRange ?? AUDIO_DEFAULT_RANGE
+    return {
+      id,
+      range,
+      falloffStart: effectiveFalloffStart(range, entry.state.falloffStart),
+      audioOffset: entry.state.audioOffset ?? { x: 0, y: 0, z: 0 },
+    }
   }
 
   /**
@@ -1012,12 +1101,13 @@ export class WorldObjects {
    * back up automatically the next time this runs, with no separate
    * "resume" path to keep in sync.
    *
-   * Re-reads BOTH the position and the radius from `entry` every single
-   * time, rather than setting the radius once on the frame the sphere
-   * appears: an "only on the way in" shortcut would show a stale radius
-   * after any range change that didn't happen to also hide and re-show the
-   * sphere. Three scalar writes on a frame where something is focused at
-   * all, in exchange for the whole class of "the picture is out of date"
+   * Re-reads the position, both radii, AND the emitter's own (possibly
+   * offset) position from `entry` every single time, rather than setting any
+   * of it once on the frame the sphere appears: an "only on the way in"
+   * shortcut would show a stale picture after any range/falloffStart/
+   * audioOffset change that didn't happen to also hide and re-show the
+   * sphere. A handful of scalar writes on a frame where something is focused
+   * at all, in exchange for the whole class of "the picture is out of date"
    * bugs, is not a trade worth thinking about twice.
    */
   private applyAudioRangeFocus(): void {
@@ -1028,7 +1118,33 @@ export class WorldObjects {
       this.audioRangeIndicator.hide()
       return
     }
-    this.audioRangeIndicator.show(entry.object.position, entry.state.audibleRange ?? AUDIO_DEFAULT_RANGE)
+    // The EMITTER's world position, not entry.object.position (the
+    // placement's own origin) — PlacedObject.audioOffset means those two can
+    // differ, and the indicator is drawn around wherever the sound actually
+    // comes from. getWorldPosition() (rather than hand-combining offset with
+    // the placement's own position/rotation/scale) is what "derive it
+    // properly" means here: it walks the REAL parent chain, so a rotated or
+    // resized placement's offset comes out right with no formula of our own
+    // to keep in agreement with three's. entry.audioAnchor is always present
+    // for an audible entry (see createAudioAnchor's doc) — the fallback to
+    // entry.object.position is defensive, not an expected path.
+    //
+    // At most one frame stale: this runs from update(), before render() —
+    // see World's render loop — so matrixWorld here reflects the LAST
+    // render, not a transform set earlier this same frame. Same trade-off
+    // NpcView.update accepts for its gaze target, for the same reason: a
+    // translucent editing aid is never gameplay-critical, and forcing an
+    // updateMatrixWorld() here every frame a placement has focus would be
+    // real, avoidable cost for a discrepancy nobody could actually see.
+    const emitterPosition = entry.audioAnchor
+      ? entry.audioAnchor.getWorldPosition(this.audioFocusEmitterPos)
+      : entry.object.position
+    this.audioRangeIndicator.show(
+      entry.object.position,
+      emitterPosition,
+      entry.state.audibleRange ?? AUDIO_DEFAULT_RANGE,
+      entry.state.falloffStart,
+    )
   }
 
   clearAll(): void {
@@ -1044,12 +1160,13 @@ export class WorldObjects {
 
   /**
    * Dispatch on kind: a glTF scene, an image/video panel, an audio marker, an
-   * NPC's VRM avatar, or a box primitive. `volume`/`audibleRange` only ever
-   * reach the two kinds that actually play positional audio (see
-   * buildVideo/buildAudio); `box`/`resolveBytes` only ever reach 'box' (see
-   * buildBox). Passing any of them through for a kind that doesn't use them
-   * would simply be ignored, but the other builders' signatures don't even
-   * accept them, so there is nothing to ignore.
+   * NPC's VRM avatar, or a box primitive. `volume`/`audibleRange`/
+   * `falloffStart`/`audioOffset` only ever reach the two kinds that actually
+   * play positional audio (see buildVideo/buildAudio); `box`/`resolveBytes`
+   * only ever reach 'box' (see buildBox). Passing any of them through for a
+   * kind that doesn't use them would simply be ignored, but the other
+   * builders' signatures don't even accept them, so there is nothing to
+   * ignore.
    */
   private build(
     bytes: Uint8Array,
@@ -1058,6 +1175,8 @@ export class WorldObjects {
     name?: string,
     volume?: number,
     audibleRange?: number,
+    falloffStart?: number,
+    audioOffset?: { x: number; y: number; z: number },
     box?: BoxAppearance,
     resolveBytes?: ResolveBytes,
   ): Promise<Built> {
@@ -1065,9 +1184,9 @@ export class WorldObjects {
       case 'image':
         return this.buildImage(bytes, mime)
       case 'video':
-        return this.buildVideo(bytes, mime, volume, audibleRange)
+        return this.buildVideo(bytes, mime, volume, audibleRange, falloffStart, audioOffset)
       case 'audio':
-        return this.buildAudio(bytes, mime, volume, audibleRange)
+        return this.buildAudio(bytes, mime, volume, audibleRange, falloffStart, audioOffset)
       case 'npc':
         return this.buildNpc(bytes, name ?? '')
       case 'box':
@@ -1148,6 +1267,8 @@ export class WorldObjects {
     mime?: string,
     volume?: number,
     audibleRange?: number,
+    falloffStart?: number,
+    audioOffset?: { x: number; y: number; z: number },
   ): Promise<Built> {
     const url = blobUrl(bytes, mime)
     let video: HTMLVideoElement
@@ -1162,13 +1283,15 @@ export class WorldObjects {
     texture.colorSpace = THREE.SRGBColorSpace
     const aspect = ratioOf(video.videoWidth, video.videoHeight)
     const panel = makePanel(texture, aspect)
-    const sound = this.attachPlacementAudio(panel.object, video, volume, audibleRange)
+    const anchor = this.createAudioAnchor(panel.object, audioOffset)
+    const sound = this.attachPlacementAudio(anchor, video, volume, audibleRange, falloffStart)
     startMedia(video, this.listener)
 
     return {
       object: panel.object,
       size: panel.size,
       sound: sound ?? undefined,
+      audioAnchor: anchor,
       cleanup: () => {
         stopMedia(video, url)
         sound?.disconnect()
@@ -1182,6 +1305,8 @@ export class WorldObjects {
     mime?: string,
     volume?: number,
     audibleRange?: number,
+    falloffStart?: number,
+    audioOffset?: { x: number; y: number; z: number },
   ): Promise<Built> {
     const url = blobUrl(bytes, mime)
     let audio: HTMLAudioElement
@@ -1193,7 +1318,8 @@ export class WorldObjects {
     }
 
     const marker = makeSpeakerMarker()
-    const sound = this.attachPlacementAudio(marker.object, audio, volume, audibleRange)
+    const anchor = this.createAudioAnchor(marker.object, audioOffset)
+    const sound = this.attachPlacementAudio(anchor, audio, volume, audibleRange, falloffStart)
     startMedia(audio, this.listener)
 
     return {
@@ -1201,6 +1327,7 @@ export class WorldObjects {
       size: marker.size,
       pulse: marker.pulse,
       sound: sound ?? undefined,
+      audioAnchor: anchor,
       cleanup: () => {
         stopMedia(audio, url)
         sound?.disconnect()
@@ -1319,12 +1446,42 @@ export class WorldObjects {
   }
 
   /**
+   * Creates the node a 'video'/'audio' PLACEMENT's own sound is emitted
+   * from — the same idea as voiceAnchor above (an NPC's mouth height), but
+   * for PlacedObject.audioOffset instead of a fixed body-height ratio, and
+   * built once per placement (in buildVideo/buildAudio, right before
+   * attachPlacementAudio needs somewhere to parent the PositionalAudio to)
+   * rather than lazily on first playback.
+   *
+   * Created unconditionally — even with no AudioListener, when
+   * attachPlacementAudio is about to return null and nothing will actually
+   * play — because the audio-range indicator's tether/marker
+   * (applyAudioRangeFocus) still need a real node to read the emitter's
+   * world position off, independent of whether anything can be heard.
+   *
+   * Positioned assuming `scale` 1 because the placement's OWN scale is not
+   * set to its final value until after build() returns (place()/
+   * addFromState() do that immediately afterward); refreshAudioAnchor() is
+   * called again once it's known — see its own doc and every call site into
+   * it for where "again" means.
+   */
+  private createAudioAnchor(parent: THREE.Object3D, offset?: { x: number; y: number; z: number }): THREE.Object3D {
+    const anchor = new THREE.Object3D()
+    parent.add(anchor)
+    refreshAudioAnchor(anchor, offset, 1)
+    return anchor
+  }
+
+  /**
    * Route a PLACEMENT's own media (buildVideo/buildAudio, kind
-   * 'video'/'audio') through a PositionalAudio parented to it, so the sound
+   * 'video'/'audio') through a PositionalAudio parented to its audio anchor
+   * (createAudioAnchor — NOT the placement's own root; see
+   * PlacedObject.audioOffset's doc for why the two can differ), so the sound
    * attenuates with distance from the camera's listener and goes completely
    * silent past `audibleRange` — the boundary AudioRangeIndicator draws while
-   * that placement is selected. `volume`/`audibleRange` are the placement's
-   * own PlacedObject fields; absent means DEFAULT_VOLUME/AUDIO_DEFAULT_RANGE.
+   * that placement is selected. `volume`/`audibleRange`/`falloffStart` are
+   * the placement's own PlacedObject fields; absent means DEFAULT_VOLUME/
+   * AUDIO_DEFAULT_RANGE/AUDIO_FULL_FRACTION of the range respectively.
    * Returns null when the world has no listener (audio simply stays silent).
    *
    * Linear distance model, not three's default inverse-ish one: an
@@ -1340,10 +1497,11 @@ export class WorldObjects {
     element: HTMLMediaElement,
     volume?: number,
     audibleRange?: number,
+    falloffStart?: number,
   ): THREE.PositionalAudio | null {
     const sound = this.createPositionalAudio(parent, element)
     if (!sound) return null
-    const falloff = placementFalloff(audibleRange ?? AUDIO_DEFAULT_RANGE)
+    const falloff = placementFalloff(audibleRange ?? AUDIO_DEFAULT_RANGE, falloffStart)
     sound.setDistanceModel('linear')
     sound.setRolloffFactor(falloff.rolloffFactor)
     sound.setRefDistance(falloff.refDistance)
@@ -1392,6 +1550,7 @@ export class WorldObjects {
       pulse: built.pulse,
       npc: built.npc,
       sound: built.sound,
+      audioAnchor: built.audioAnchor,
       boxTile: built.boxTile,
       // The freshly-placed/synced position IS the home position (see
       // npcHome's doc) — `state.x/y/z` is already final by the time either
@@ -1577,6 +1736,36 @@ function refreshBoxTileRepeat(tile: BoxTileState): void {
   textures[0].repeat.set((sz * scale) / per, (sy * scale) / per)
   textures[1].repeat.set((sx * scale) / per, (sz * scale) / per)
   textures[2].repeat.set((sx * scale) / per, (sy * scale) / per)
+}
+
+/**
+ * Repositions an audio/video placement's emitter anchor (Entry.audioAnchor
+ * / createAudioAnchor) so its WORLD displacement from the placement's own
+ * origin is exactly `offset` metres, regardless of the placement's own
+ * scale — see PlacedObject.audioOffset's doc for why that must hold
+ * ("3 means three metres whether the panel is tiny or enormous"). The
+ * anchor is a CHILD of the placement, so three.js already multiplies
+ * whatever local position it's given by the parent's scale when computing a
+ * world position; dividing by `scale` here is what cancels that back out
+ * again, the same shape refreshBoxTileRepeat above uses for the opposite
+ * problem (keeping a texture's tiling from shrinking/growing with scale
+ * instead of a distance from doing so).
+ *
+ * `scale` is always the placement's CURRENT live scale at the moment of the
+ * call — never a value captured once — so every caller passes whatever it
+ * itself just set object.scale to (or is about to), rather than reading it
+ * back off the Object3D a second time. `offset` absent means the origin
+ * (0,0,0), same "meaningless for any other kind, harmless default for this
+ * one" shape as every other optional PlacedObject field this file threads
+ * through.
+ */
+function refreshAudioAnchor(
+  anchor: THREE.Object3D,
+  offset: { x: number; y: number; z: number } | undefined,
+  scale: number,
+): void {
+  const s = scale || 1
+  anchor.position.set((offset?.x ?? 0) / s, (offset?.y ?? 0) / s, (offset?.z ?? 0) / s)
 }
 
 function measureSize(model: THREE.Object3D): THREE.Vector3 {
@@ -1788,6 +1977,18 @@ function clamp(value: number, min: number, max: number): number {
  * boxAppearanceChanged() check (separate from this function, since it needs
  * the OLD and NEW `box` individually, not just "did anything change")
  * decides whether that change is transform-only or needs a full rebuild.
+ *
+ * `falloffStart`/`audioOffset` are included for the SAME bookkeeping reason
+ * as `volume`/`audibleRange`, but missing either one here is a sharper bug
+ * than a stale `entry.state`: this function's own true/false result is the
+ * fast-path gate at the top of syncRemote()'s loop (`if (!stateDiffers(...))
+ * continue`) — if a peer's edit changes ONLY `audioOffset` (every other
+ * field, including x/y/z/rotationY/scale, byte-identical), omitting it here
+ * would make this function report "nothing changed" and skip applyTransform
+ * entirely, so the new offset would never even reach `entry.state`, let
+ * alone the anchor. Not a cosmetic omission but a silently-dropped edit —
+ * `audioOffset` needs JSON.stringify like `box`/`npc` above, since it is an
+ * object with no identity to compare by reference.
  */
 function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
   return (
@@ -1802,10 +2003,12 @@ function stateDiffers(a: PlacedObject, b: PlacedObject): boolean {
     a.placedBy !== b.placedBy ||
     a.volume !== b.volume ||
     a.audibleRange !== b.audibleRange ||
+    a.falloffStart !== b.falloffStart ||
     JSON.stringify(a.script) !== JSON.stringify(b.script) ||
     JSON.stringify(a.trigger) !== JSON.stringify(b.trigger) ||
     JSON.stringify(a.npc) !== JSON.stringify(b.npc) ||
-    JSON.stringify(a.box) !== JSON.stringify(b.box)
+    JSON.stringify(a.box) !== JSON.stringify(b.box) ||
+    JSON.stringify(a.audioOffset) !== JSON.stringify(b.audioOffset)
   )
 }
 

@@ -181,13 +181,21 @@ export const hi: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'कोण',
 
-  // वॉल्यूम / सुनाई देने की सीमा — सिर्फ़ ऑडियो और वीडियो ऑब्जेक्ट के लिए,
-  // संपादन टूलबार (EditToolbar.tsx) से सेट होता है
+  // वॉल्यूम / सुनाई देने की सीमा / पूर्ण वॉल्यूम त्रिज्या / ध्वनि ऑफ़सेट —
+  // सिर्फ़ ऑडियो और वीडियो ऑब्जेक्ट के लिए, संपादन टूलबार (EditToolbar.tsx)
+  // से सेट होता है
   'objects.volume': 'वॉल्यूम',
   'objects.volumeValue': '{n}%',
   'objects.range': 'सुनाई देने की सीमा',
   'objects.rangeValue': '{n} मी',
   'objects.rangeExact': 'सुनाई देने की सीमा (मी)',
+  'objects.falloffStart': 'पूर्ण वॉल्यूम त्रिज्या (मी)',
+
+  'objects.falloffStartShort': 'पूर्ण वॉल्यूम',
+  'objects.audioOffset': 'ध्वनि ऑफ़सेट',
+  'objects.audioOffsetX': 'ध्वनि ऑफ़सेट X (मी)',
+  'objects.audioOffsetY': 'ध्वनि ऑफ़सेट Y (मी)',
+  'objects.audioOffsetZ': 'ध्वनि ऑफ़सेट Z (मी)',
 
   // बॉक्स का रूप — सिर्फ़ "बॉक्स" ऑब्जेक्ट के लिए, संपादन टूलबार
   // (EditToolbar.tsx) से सेट होता है

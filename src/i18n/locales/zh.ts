@@ -181,12 +181,19 @@ export const zh: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': '角度',
 
-  // 音量／可听范围 — 仅音频和视频对象，通过编辑工具栏（EditToolbar.tsx）设置
+  // 音量／可听范围／满音量半径／声音偏移 — 仅音频和视频对象，通过编辑工具栏（EditToolbar.tsx）设置
   'objects.volume': '音量',
   'objects.volumeValue': '{n}%',
   'objects.range': '可听范围',
   'objects.rangeValue': '{n} 米',
   'objects.rangeExact': '可听范围（米）',
+  'objects.falloffStart': '满音量半径（米）',
+
+  'objects.falloffStartShort': '满音量',
+  'objects.audioOffset': '声音偏移',
+  'objects.audioOffsetX': '声音偏移 X（米）',
+  'objects.audioOffsetY': '声音偏移 Y（米）',
+  'objects.audioOffsetZ': '声音偏移 Z（米）',
 
   // 方块外观 — 仅“方块”类型的放置物，通过编辑工具栏（EditToolbar.tsx）设置
   'objects.box.badge': '方块',

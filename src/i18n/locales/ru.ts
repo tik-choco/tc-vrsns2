@@ -183,13 +183,21 @@ export const ru: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'Угол',
 
-  // Громкость / дальность звука — только для аудио- и видеообъектов,
-  // настраивается на панели редактирования (EditToolbar.tsx)
+  // Громкость / дальность звука / радиус полной громкости / смещение звука —
+  // только для аудио- и видеообъектов, настраивается на панели
+  // редактирования (EditToolbar.tsx)
   'objects.volume': 'Громкость',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Дальность звука',
   'objects.rangeValue': '{n} м',
   'objects.rangeExact': 'Дальность звука (м)',
+  'objects.falloffStart': 'Радиус полной громкости (м)',
+
+  'objects.falloffStartShort': 'Полная громк.',
+  'objects.audioOffset': 'Смещение звука',
+  'objects.audioOffsetX': 'Смещение звука X (м)',
+  'objects.audioOffsetY': 'Смещение звука Y (м)',
+  'objects.audioOffsetZ': 'Смещение звука Z (м)',
 
   // Внешний вид коробки — только объекты типа «коробка», настраивается на
   // панели редактирования (EditToolbar.tsx)

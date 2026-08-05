@@ -181,12 +181,19 @@ export const ko: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': '각도',
 
-  // 음량 / 가청 거리 — 오디오·영상 오브젝트 전용, 편집 도구모음(EditToolbar.tsx)에서 설정
+  // 음량 / 가청 거리 / 최대 음량 반경 / 소리 오프셋 — 오디오·영상 오브젝트 전용, 편집 도구모음(EditToolbar.tsx)에서 설정
   'objects.volume': '음량',
   'objects.volumeValue': '{n}%',
   'objects.range': '가청 거리',
   'objects.rangeValue': '{n}m',
   'objects.rangeExact': '가청 거리 (m)',
+  'objects.falloffStart': '최대 음량 반경 (m)',
+
+  'objects.falloffStartShort': '최대 음량',
+  'objects.audioOffset': '소리 오프셋',
+  'objects.audioOffsetX': '소리 오프셋 X (m)',
+  'objects.audioOffsetY': '소리 오프셋 Y (m)',
+  'objects.audioOffsetZ': '소리 오프셋 Z (m)',
 
   // 박스 외형 — '박스' 오브젝트 전용, 편집 도구모음(EditToolbar.tsx)에서 설정
   'objects.box.badge': '박스',

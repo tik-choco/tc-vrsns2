@@ -181,13 +181,20 @@ export const ar: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'الزاوية',
 
-  // مستوى الصوت / نطاق السماع — لعناصر الصوت والفيديو فقط، يُضبطان من شريط
-  // التحرير (EditToolbar.tsx)
+  // مستوى الصوت / نطاق السماع / نصف قطر الصوت الكامل / إزاحة الصوت — لعناصر
+  // الصوت والفيديو فقط، تُضبط من شريط التحرير (EditToolbar.tsx)
   'objects.volume': 'مستوى الصوت',
   'objects.volumeValue': '{n}%',
   'objects.range': 'نطاق السماع',
   'objects.rangeValue': '{n} م',
   'objects.rangeExact': 'نطاق السماع (م)',
+  'objects.falloffStart': 'نصف قطر الصوت الكامل (م)',
+
+  'objects.falloffStartShort': 'صوت كامل',
+  'objects.audioOffset': 'إزاحة الصوت',
+  'objects.audioOffsetX': 'إزاحة الصوت X (م)',
+  'objects.audioOffsetY': 'إزاحة الصوت Y (م)',
+  'objects.audioOffsetZ': 'إزاحة الصوت Z (م)',
 
   // مظهر الصندوق — لعناصر "الصندوق" فقط، يُضبط من شريط التحرير (EditToolbar.tsx)
   'objects.box.badge': 'صندوق',

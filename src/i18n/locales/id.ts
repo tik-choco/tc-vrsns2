@@ -183,13 +183,20 @@ export const id: Dict = {
   'objects.posZ': 'Z',
   'objects.rotationDeg': 'Sudut',
 
-  // Volume / radius terdengar — khusus objek audio dan video, diatur dari
-  // toolbar edit (EditToolbar.tsx)
+  // Volume / radius terdengar / radius volume penuh / offset suara — khusus
+  // objek audio dan video, diatur dari toolbar edit (EditToolbar.tsx)
   'objects.volume': 'Volume',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Radius terdengar',
   'objects.rangeValue': '{n} m',
   'objects.rangeExact': 'Radius terdengar (m)',
+  'objects.falloffStart': 'Radius volume penuh (m)',
+
+  'objects.falloffStartShort': 'Volume penuh',
+  'objects.audioOffset': 'Offset suara',
+  'objects.audioOffsetX': 'Offset suara X (m)',
+  'objects.audioOffsetY': 'Offset suara Y (m)',
+  'objects.audioOffsetZ': 'Offset suara Z (m)',
 
   // Tampilan kotak — khusus objek jenis "kotak", diatur dari toolbar edit
   // (EditToolbar.tsx)

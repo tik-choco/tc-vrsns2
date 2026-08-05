@@ -4,18 +4,24 @@
 // like the wire decoder's clamp (src/net/protocol.ts) even though it can't
 // import that module's private helper. clampVolume/clampAudibleRange are the
 // same guard for the volume/audible-range edits (see useSession.
-// setObjectVolume/setObjectAudibleRange), and clampScale is the same guard
-// for the scale edit (see useSession.setObjectScale) — it must agree with
-// parsePlacedObject's own SCALE_MIN/SCALE_MAX clamp so a typed value can
-// never disagree with what a peer would accept over the wire.
+// setObjectVolume/setObjectAudibleRange), clampFalloffStart/
+// clampAudioOffsetAxis are the same guard for the newer full-volume-radius/
+// sound-offset edits (see useSession.setObjectFalloffStart/
+// setObjectAudioOffset), and clampScale is the same guard for the scale edit
+// (see useSession.setObjectScale) — it must agree with parsePlacedObject's
+// own SCALE_MIN/SCALE_MAX clamp so a typed value can never disagree with
+// what a peer would accept over the wire.
 import { describe, expect, it } from 'vitest'
 import {
   AUDIBLE_RANGE_MAX,
   AUDIBLE_RANGE_MIN,
+  AUDIO_OFFSET_LIMIT,
   BOX_SIZE_MAX,
   BOX_SIZE_MIN,
   BOX_TILE_MAX,
   BOX_TILE_MIN,
+  FALLOFF_START_MAX,
+  FALLOFF_START_MIN,
   SCALE_MAX,
   SCALE_MIN,
   VOLUME_MAX,
@@ -24,8 +30,10 @@ import {
 import { NPC_LIMITS } from '../npc/limits'
 import {
   clampAudibleRange,
+  clampAudioOffsetAxis,
   clampBoxSize,
   clampBoxTile,
+  clampFalloffStart,
   clampNpcApproachRange,
   clampNpcRadius,
   clampPosition,
@@ -107,6 +115,57 @@ describe('clampAudibleRange', () => {
     expect(clampAudibleRange(Number.NaN, 6)).toBe(6)
     expect(clampAudibleRange(Number.POSITIVE_INFINITY, 6)).toBe(6)
     expect(clampAudibleRange(Number.NEGATIVE_INFINITY, 6)).toBe(6)
+  })
+})
+
+describe('clampFalloffStart', () => {
+  it('passes an in-range value through unchanged', () => {
+    expect(clampFalloffStart(3, 2)).toBe(3)
+  })
+
+  it('clamps below FALLOFF_START_MIN up to FALLOFF_START_MIN', () => {
+    expect(clampFalloffStart(0, 2)).toBe(FALLOFF_START_MIN)
+    expect(clampFalloffStart(-5, 2)).toBe(FALLOFF_START_MIN)
+  })
+
+  it('clamps above FALLOFF_START_MAX down to FALLOFF_START_MAX', () => {
+    expect(clampFalloffStart(999, 2)).toBe(FALLOFF_START_MAX)
+  })
+
+  it('accepts the exact bounds', () => {
+    expect(clampFalloffStart(FALLOFF_START_MIN, 2)).toBe(FALLOFF_START_MIN)
+    expect(clampFalloffStart(FALLOFF_START_MAX, 2)).toBe(FALLOFF_START_MAX)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampFalloffStart(Number.NaN, 3)).toBe(3)
+    expect(clampFalloffStart(Number.POSITIVE_INFINITY, 3)).toBe(3)
+    expect(clampFalloffStart(Number.NEGATIVE_INFINITY, 3)).toBe(3)
+  })
+})
+
+describe('clampAudioOffsetAxis', () => {
+  it('passes an in-range value through unchanged', () => {
+    expect(clampAudioOffsetAxis(1.5, 0)).toBe(1.5)
+  })
+
+  it('clamps below -AUDIO_OFFSET_LIMIT up to -AUDIO_OFFSET_LIMIT', () => {
+    expect(clampAudioOffsetAxis(-999, 0)).toBe(-AUDIO_OFFSET_LIMIT)
+  })
+
+  it('clamps above AUDIO_OFFSET_LIMIT down to AUDIO_OFFSET_LIMIT', () => {
+    expect(clampAudioOffsetAxis(999, 0)).toBe(AUDIO_OFFSET_LIMIT)
+  })
+
+  it('accepts the exact bounds', () => {
+    expect(clampAudioOffsetAxis(AUDIO_OFFSET_LIMIT, 0)).toBe(AUDIO_OFFSET_LIMIT)
+    expect(clampAudioOffsetAxis(-AUDIO_OFFSET_LIMIT, 0)).toBe(-AUDIO_OFFSET_LIMIT)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampAudioOffsetAxis(Number.NaN, 4)).toBe(4)
+    expect(clampAudioOffsetAxis(Number.POSITIVE_INFINITY, 4)).toBe(4)
+    expect(clampAudioOffsetAxis(Number.NEGATIVE_INFINITY, 4)).toBe(4)
   })
 })
 

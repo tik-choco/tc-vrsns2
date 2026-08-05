@@ -27,16 +27,19 @@ import {
   ImageOff,
   Grid3x3,
   Compass,
+  Speaker,
 } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
 import { useTtsVoices } from '../lib/ttsVoices'
 import {
   AUDIBLE_RANGE_MAX,
   AUDIBLE_RANGE_MIN,
+  AUDIO_OFFSET_LIMIT,
   BOX_SIZE_MAX,
   BOX_SIZE_MIN,
   BOX_TILE_MAX,
   BOX_TILE_MIN,
+  FALLOFF_START_MIN,
   SCALE_MAX,
   SCALE_MIN,
   VOLUME_MAX,
@@ -44,6 +47,15 @@ import {
 } from '../net/protocol'
 import { NPC_LIMITS } from '../npc/limits'
 import { presetIdOf, SCRIPT_PRESETS, type ScriptPresetId } from '../script/presets'
+// effectiveFalloffStart/FALLOFF_MAX_FRACTION: the same pure "what does the
+// stored pair actually mean" arithmetic WorldObjects uses to tune a
+// placement's live PositionalAudio and AudioRangeIndicator uses to draw its
+// sphere — imported here so the falloff field DISPLAYS and bounds itself
+// against the exact same effective value the placement actually sounds like,
+// rather than a second, driftable copy of that formula. See this module's
+// own doc comment for why the relationship is enforced by reading, not by a
+// storage-time clamp.
+import { effectiveFalloffStart, FALLOFF_MAX_FRACTION } from '../shared/audioFalloff'
 import {
   AUDIBLE_RANGE_DEFAULT,
   BOX_TILE_DEFAULT,
@@ -66,6 +78,8 @@ type Props = Pick<
   | 'onSetNpcApproachRange'
   | 'onSetObjectVolume'
   | 'onSetObjectAudibleRange'
+  | 'onSetObjectFalloffStart'
+  | 'onSetObjectAudioOffset'
   | 'onSetObjectScale'
   | 'onSetObjectPosition'
   | 'onSetObjectRotation'
@@ -516,6 +530,62 @@ export function EditToolbar(props: Props) {
     1,
   )
 
+  /**
+   * Full-volume-radius fine-tune (falloffStart) — sits right next to
+   * rangeExactDraft above because these two numbers are read together
+   * (effectiveFalloffStart, shared/audioFalloff.ts): the range is where the
+   * sound goes silent, falloff is where it stops being full volume, and a
+   * value here only means anything relative to whatever range is currently
+   * showing. Displays and commits the EFFECTIVE value, not the raw stored
+   * one — a placement that never set falloffStart shows its real
+   * AUDIO_FULL_FRACTION-of-range default (audibly what it's always played
+   * at) instead of a misleadingly blank field, and typing here commits
+   * exactly what's shown. Storing the effective number is still correct per
+   * useSession.setObjectFalloffStart's own doc: it only clamps to the
+   * field's OWN global bounds, and the range-relative ceiling gets
+   * re-applied every time this is read anyway, so nothing is ever baked in
+   * that a later range change couldn't un-bake.
+   */
+  const falloffDraft = useNumberDraft(
+    selected?.id,
+    effectiveFalloffStart(audibleRange, selected?.falloffStart),
+    (v) => {
+      if (selected) props.onSetObjectFalloffStart(selected.id, v)
+    },
+    1,
+  )
+  /**
+   * The falloff field's own `max`, tracking whichever audibleRange is
+   * CURRENTLY on screen rather than the field's flat protocol ceiling
+   * (FALLOFF_START_MAX, effectively 100) — see FALLOFF_MAX_FRACTION's doc in
+   * shared/audioFalloff.ts. A number input's `max` is only advisory (typing
+   * above it still works), but this makes the real constraint legible
+   * up front instead of a silent surprise: without it, a value that looks
+   * accepted while typing would visibly snap back down the next time this
+   * field re-renders from the committed (and re-derived) effective value.
+   */
+  const falloffMax = audibleRange * FALLOFF_MAX_FRACTION
+
+  // --- sound-source offset (kind 'audio'/'video' only) --------------------
+  // Where the sound is actually emitted FROM, as metres relative to the
+  // placement's own origin — see PlacedObject.audioOffset's doc in
+  // shared/types.ts. Same three-independent-drafts idiom as
+  // posXDraft/posYDraft/posZDraft above: editing one axis must never clobber
+  // whatever's mid-type in another, and each commit reads the other two off
+  // the CURRENT offset so the full {x,y,z} triple onSetObjectAudioOffset
+  // expects always travels together, matching setObjectPosition's own
+  // all-three-axes-at-once contract.
+  const audioOffset = selected?.audioOffset ?? { x: 0, y: 0, z: 0 }
+  const offsetXDraft = useNumberDraft(selected?.id, audioOffset.x, (v) => {
+    if (selected) props.onSetObjectAudioOffset(selected.id, { x: v, y: audioOffset.y, z: audioOffset.z })
+  })
+  const offsetYDraft = useNumberDraft(selected?.id, audioOffset.y, (v) => {
+    if (selected) props.onSetObjectAudioOffset(selected.id, { x: audioOffset.x, y: v, z: audioOffset.z })
+  })
+  const offsetZDraft = useNumberDraft(selected?.id, audioOffset.z, (v) => {
+    if (selected) props.onSetObjectAudioOffset(selected.id, { x: audioOffset.x, y: audioOffset.y, z: v })
+  })
+
   return (
     <div class="edit-bar" role="toolbar" aria-label={t('objects.editing')}>
       <span class="edit-bar-target">
@@ -844,7 +914,107 @@ export function EditToolbar(props: Props) {
             onBlur={rangeExactDraft.onBlur}
             onKeyDown={rangeExactDraft.onKeyDown}
           />
+          {/* Full-volume radius — grouped into this same label rather than
+              its own, since it and audibleRange above are the "two
+              distances" of one sound (see falloffDraft's own comment): a
+              value here only means anything relative to the range field
+              right next to it. `max` tracks the CURRENT range (falloffMax)
+              instead of the field's flat protocol ceiling — see falloffMax's
+              comment for why.
+
+              Carries a VISIBLE short caption as well as its aria-label: this
+              is the third control under one "Audible range" label, and two
+              bare number boxes side by side gave a sighted reader nothing to
+              tell "how far it carries" from "how far it stays loud" — the
+              tooltip only helps someone who already suspects there is a
+              difference. Collapses with every other inline caption on narrow
+              screens (.btn-text-collapse). */}
+          <span class="edit-bar-axis-label btn-text-collapse">{t('objects.falloffStartShort')}</span>
+          <input
+            class="edit-bar-size-input"
+            type="number"
+            inputmode="decimal"
+            step="0.5"
+            min={FALLOFF_START_MIN}
+            max={falloffMax}
+            aria-label={t('objects.falloffStart')}
+            title={t('objects.falloffStart')}
+            value={falloffDraft.value}
+            onInput={falloffDraft.onInput}
+            onBlur={falloffDraft.onBlur}
+            onKeyDown={falloffDraft.onKeyDown}
+          />
         </label>
+      )}
+      {/* Sound-source offset (X/Y/Z) — deliberately its OWN row rather than
+          folding into the volume/range label above: that would put six
+          controls (a select, a select, two number fields and now three more)
+          under one roof, exactly the kind of toolbar bloat whose past
+          version grew tall enough to swallow the gizmo's own pointerdown
+          (see .edit-bar's comment in style.css). Styled with the exact same
+          idiom as the position row above (.edit-bar-transform's flex-wrap
+          layout, .edit-bar-num-input fields, .edit-bar-axis-label captions)
+          since an offset IS a position — just relative to the placement's
+          origin instead of the world's — rather than inventing a new look
+          for what is structurally the same X/Y/Z control three times over. */}
+      {isAudible && (
+        <div class="edit-bar-transform edit-bar-audio-offset" role="group" aria-label={t('objects.audioOffset')}>
+          {/* A VISIBLE caption, not just the group's aria-label: this row is
+              three number fields captioned X/Y/Z, which is pixel-for-pixel
+              what the position row above already looks like. Without
+              something a sighted user can read, the two are indistinguishable
+              and the obvious mistake — typing a sound offset into the
+              placement's position, or the reverse — is one the panel invites
+              rather than prevents. A speaker glyph rather than the range
+              row's Waves so the two audio rows stay tellable apart as well. */}
+          <Speaker size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('objects.audioOffset')}</span>
+          <span class="edit-bar-axis-label">{t('objects.posX')}</span>
+          <input
+            class="edit-bar-num-input edit-bar-offset-x"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={-AUDIO_OFFSET_LIMIT}
+            max={AUDIO_OFFSET_LIMIT}
+            aria-label={t('objects.audioOffsetX')}
+            title={t('objects.audioOffsetX')}
+            value={offsetXDraft.value}
+            onInput={offsetXDraft.onInput}
+            onBlur={offsetXDraft.onBlur}
+            onKeyDown={offsetXDraft.onKeyDown}
+          />
+          <span class="edit-bar-axis-label">{t('objects.posY')}</span>
+          <input
+            class="edit-bar-num-input edit-bar-offset-y"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={-AUDIO_OFFSET_LIMIT}
+            max={AUDIO_OFFSET_LIMIT}
+            aria-label={t('objects.audioOffsetY')}
+            title={t('objects.audioOffsetY')}
+            value={offsetYDraft.value}
+            onInput={offsetYDraft.onInput}
+            onBlur={offsetYDraft.onBlur}
+            onKeyDown={offsetYDraft.onKeyDown}
+          />
+          <span class="edit-bar-axis-label">{t('objects.posZ')}</span>
+          <input
+            class="edit-bar-num-input edit-bar-offset-z"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={-AUDIO_OFFSET_LIMIT}
+            max={AUDIO_OFFSET_LIMIT}
+            aria-label={t('objects.audioOffsetZ')}
+            title={t('objects.audioOffsetZ')}
+            value={offsetZDraft.value}
+            onInput={offsetZDraft.onInput}
+            onBlur={offsetZDraft.onBlur}
+            onKeyDown={offsetZDraft.onKeyDown}
+          />
+        </div>
       )}
       <button
         type="button"

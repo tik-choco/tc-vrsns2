@@ -218,12 +218,29 @@ function makeTestWav() {
   return buf
 }
 
-/** Reads one placed object by id off the debug hook (ground truth, not the DOM). */
+/**
+ * Reads one placed object by id off the debug hook (ground truth, not the DOM).
+ * Reports the STORED fields verbatim, `null` for anything absent — in
+ * particular `falloffStart`, which is deliberately compared against the
+ * EFFECTIVE value the focus reports (see the falloff-clamp scenario: the whole
+ * point is that those two legitimately differ once the range drops beneath the
+ * authored radius).
+ */
 async function readById(page, id) {
   return page.evaluate((objId) => {
     const o = window.__vrsnsDebug?.objects()?.find((obj) => obj.id === objId)
     if (!o) return null
-    return { id: o.id, kind: o.kind, x: o.x, y: o.y, z: o.z, audibleRange: o.audibleRange ?? null }
+    return {
+      id: o.id,
+      kind: o.kind,
+      x: o.x,
+      y: o.y,
+      z: o.z,
+      rotationY: o.rotationY,
+      audibleRange: o.audibleRange ?? null,
+      falloffStart: o.falloffStart ?? null,
+      audioOffset: o.audioOffset ?? null,
+    }
   }, id)
 }
 
@@ -421,6 +438,17 @@ async function runAllScenarios(browser, consoleIssues) {
       `audioRangeFocus() to report {id: ${audioId}, range: 12} (AUDIBLE_RANGE_DEFAULT / AUDIO_DEFAULT_RANGE)`,
     )
     log('audioRangeFocus after placement/selection:', JSON.stringify(focus))
+    // Nothing has ever set falloffStart on this placement, so the full-volume
+    // radius must be AUDIO_FULL_FRACTION (0.25) of the range — the ratio that
+    // was hard-wired before the field existed, which is what keeps a
+    // placement authored back then sounding identical today.
+    if (Math.abs(focus.falloffStart - 12 * 0.25) > 0.001) {
+      throw new Error(`expected an unset falloffStart to report 3 (0.25 x 12), got ${focus.falloffStart}`)
+    }
+    const stored = await readById(page, audioId)
+    if (stored.falloffStart !== null) {
+      throw new Error(`the default must be DERIVED, not written into the placement — got a stored falloffStart of ${stored.falloffStart}`)
+    }
     await shoot(page, 'audio-range-02-default-range-sphere.png')
   })
 
@@ -470,6 +498,154 @@ async function runAllScenarios(browser, consoleIssues) {
     )
     log('after preset select (20):', JSON.stringify(focusAfterPreset))
     await shoot(page, 'audio-range-03-range-edited.png')
+  })
+
+  // --- scenario 3b: the full-volume radius is independently settable -------
+  // The range is 20 coming out of the scenario above, so 8 sits comfortably
+  // under the FALLOFF_MAX_FRACTION ceiling (18) and proves the two distances
+  // are genuinely decoupled — before falloffStart existed this would have
+  // been pinned at 5.
+  await runScenario(page, 'falloff-radius-edit', async () => {
+    await commitNumberField(page, page.getByLabel('Full-volume radius (m)'), 8)
+    await waitFor(
+      page,
+      (id) => window.__vrsnsDebug.objects()?.find((o) => o.id === id)?.falloffStart === 8,
+      audioId,
+      DEFAULT_TIMEOUT_MS,
+      'objects().falloffStart === 8 after committing the full-volume radius',
+    )
+    const focus = await waitFor(
+      page,
+      () => (window.__vrsnsDebug.audioRangeFocus()?.falloffStart === 8 ? window.__vrsnsDebug.audioRangeFocus() : null),
+      null,
+      DEFAULT_TIMEOUT_MS,
+      'audioRangeFocus().falloffStart === 8 (the inner sphere tracked the edit)',
+    )
+    log('after full-volume radius commit (8):', JSON.stringify(focus))
+    await shoot(page, 'audio-range-07-falloff-radius.png')
+  })
+
+  // --- scenario 3c: lowering the range clamps the EFFECT, not the STORE ----
+  // The designed behaviour, and the one thing about this pair that could
+  // quietly be wrong: effectiveFalloffStart() holds the full-volume radius
+  // under FALLOFF_MAX_FRACTION (0.9) of the CURRENT range, but must never
+  // rewrite what the author typed — otherwise raising the range back would
+  // not restore it, and an author would lose a number by momentarily
+  // shrinking a placement's reach.
+  await runScenario(page, 'falloff-clamp-follows-range-without-rewriting-it', async () => {
+    await commitNumberField(page, page.getByLabel('Audible range (m)'), 5)
+    const clamped = await waitFor(
+      page,
+      () => {
+        const f = window.__vrsnsDebug.audioRangeFocus()
+        return f && f.range === 5 && Math.abs(f.falloffStart - 4.5) < 0.001 ? f : null
+      },
+      null,
+      DEFAULT_TIMEOUT_MS,
+      'the effective falloffStart to drop to 4.5 (0.9 x 5) once the range is lowered under the authored 8',
+    )
+    log('range lowered to 5, effective falloff clamped:', JSON.stringify(clamped))
+    const stored = await readById(page, audioId)
+    if (stored.falloffStart !== 8) {
+      throw new Error(`the AUTHORED falloffStart must survive the clamp untouched, expected 8, got ${stored.falloffStart}`)
+    }
+    log('stored falloffStart is still the authored 8 — the clamp is derived, not destructive')
+
+    // Raise it back: the authored radius must come straight back.
+    await commitNumberField(page, page.getByLabel('Audible range (m)'), 20)
+    const restored = await waitFor(
+      page,
+      () => {
+        const f = window.__vrsnsDebug.audioRangeFocus()
+        return f && f.range === 20 && Math.abs(f.falloffStart - 8) < 0.001 ? f : null
+      },
+      null,
+      DEFAULT_TIMEOUT_MS,
+      'the effective falloffStart to return to the authored 8 once the range is raised again',
+    )
+    log('range restored to 20, authored falloff back in effect:', JSON.stringify(restored))
+  })
+
+  // --- scenario 3d: the sound can sit away from the object -----------------
+  await runScenario(page, 'audio-offset-displaces-the-emitter', async () => {
+    await commitNumberField(page, page.getByLabel('Sound offset X (m)'), 3)
+    await commitNumberField(page, page.getByLabel('Sound offset Y (m)'), 1)
+    const stored = await waitFor(
+      page,
+      (id) => {
+        const o = window.__vrsnsDebug.objects()?.find((obj) => obj.id === id)
+        return o?.audioOffset && o.audioOffset.x === 3 && o.audioOffset.y === 1 ? o.audioOffset : null
+      },
+      audioId,
+      DEFAULT_TIMEOUT_MS,
+      'objects().audioOffset to carry {x: 3, y: 1}',
+    )
+    log('stored audioOffset:', JSON.stringify(stored))
+    const focus = await waitFor(
+      page,
+      () => {
+        const f = window.__vrsnsDebug.audioRangeFocus()
+        return f && f.audioOffset?.x === 3 && f.audioOffset?.y === 1 ? f : null
+      },
+      null,
+      DEFAULT_TIMEOUT_MS,
+      'audioRangeFocus().audioOffset to carry the same displacement (the sphere moved with the emitter)',
+    )
+    log('focus audioOffset:', JSON.stringify(focus))
+    await shoot(page, 'audio-range-08-offset-tether.png')
+  })
+
+  // --- scenario 3e: the offset rides the placement's rotation --------------
+  // Only the offset's persistence and the focus id are machine-checkable
+  // here: the offset is authored in the placement's own frame, so turning the
+  // object is supposed to swing the emitter around it WITHOUT the stored
+  // numbers changing at all. That the emitter actually swung is a scene-graph
+  // fact (the anchor is a child of the placement), covered by the unit tests
+  // and by the screenshot below rather than by an assertion this script can
+  // make through the debug hook.
+  await runScenario(page, 'offset-survives-a-turn', async () => {
+    await commitNumberField(page, page.locator('.edit-bar-rot'), 90)
+    await waitFor(
+      page,
+      (id) => {
+        const o = window.__vrsnsDebug.objects()?.find((obj) => obj.id === id)
+        return o && Math.abs(o.rotationY - Math.PI / 2) < 0.05
+      },
+      audioId,
+      DEFAULT_TIMEOUT_MS,
+      'the placement to have turned 90 degrees',
+    )
+    const after = await readById(page, audioId)
+    if (!after.audioOffset || after.audioOffset.x !== 3 || after.audioOffset.y !== 1) {
+      throw new Error(`turning the placement must not disturb its authored sound offset, got ${JSON.stringify(after.audioOffset)}`)
+    }
+    const focus = await readFocus(page)
+    if (focus?.id !== audioId) {
+      throw new Error(`expected the focus to stay on the turned placement, got ${JSON.stringify(focus)}`)
+    }
+    log('after a 90-degree turn — offset intact, focus intact:', JSON.stringify({ offset: after.audioOffset, focus }))
+    await shoot(page, 'audio-range-09-offset-after-turn.png')
+  })
+
+  // --- scenario 3f: zeroing the offset puts the sound back in the object ---
+  await runScenario(page, 'zero-offset-returns-the-emitter', async () => {
+    await commitNumberField(page, page.getByLabel('Sound offset X (m)'), 0)
+    await commitNumberField(page, page.getByLabel('Sound offset Y (m)'), 0)
+    const focus = await waitFor(
+      page,
+      () => {
+        const f = window.__vrsnsDebug.audioRangeFocus()
+        return f && f.audioOffset?.x === 0 && f.audioOffset?.y === 0 && f.audioOffset?.z === 0 ? f : null
+      },
+      null,
+      DEFAULT_TIMEOUT_MS,
+      'audioRangeFocus().audioOffset to be zeroed again (tether and marker hidden)',
+    )
+    log('offset zeroed:', JSON.stringify(focus))
+    await shoot(page, 'audio-range-10-offset-zeroed.png')
+    // Put the heading back so the move scenario below reads against the same
+    // orientation the earlier scenarios established.
+    await commitNumberField(page, page.locator('.edit-bar-rot'), 180)
   })
 
   // --- scenario 4: move the object; the focus visual stays on it -----------
@@ -555,7 +731,9 @@ async function runAllScenarios(browser, consoleIssues) {
 
 main()
   .then(() => {
-    log('AUDIO RANGE E2E PASSED ✅ — place / default range / range edit (exact + preset) / move / non-audio selection / deselect all verified')
+    log(
+      'AUDIO RANGE E2E PASSED ✅ — place / default range / range edit (exact + preset) / full-volume radius / clamp-without-rewrite / sound offset / turn / zeroed offset / move / non-audio selection / deselect all verified',
+    )
     process.exit(0)
   })
   .catch((err) => {

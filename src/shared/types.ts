@@ -252,6 +252,36 @@ export type PlacedObject = {
    */
   audibleRange?: number
   /**
+   * How far (world units) a 'video'/'audio' placement stays at FULL volume
+   * before it begins fading toward `audibleRange` — the near edge of the
+   * fade, where audibleRange is the far one. Splitting the two is what lets
+   * an author say "loud right here, gone a step later" (a small falloffStart
+   * under a large range) or "even across the whole room, then nothing" (the
+   * two close together), which one number alone could not express.
+   *
+   * Absent means AUDIO_FULL_FRACTION of the range, exactly the ratio that was
+   * hard-wired before this field existed. Always read through
+   * effectiveFalloffStart(), never raw: it is clamped against the CURRENT
+   * range (see FALLOFF_MAX_FRACTION), since the two fields are edited
+   * independently and either can arrive from a peer without the other.
+   * Meaningless for any other kind.
+   */
+  falloffStart?: number
+  /**
+   * Where a 'video'/'audio' placement's sound comes FROM, as metres offset
+   * from the placement's own origin — so a screen's audio can sit off to one
+   * side, above, or behind it, the way a real room's speakers are not inside
+   * the picture. Rotates with the placement (turn the screen and its speakers
+   * swing with it) but is NOT affected by its scale: 3 means three metres
+   * whether the panel is tiny or enormous, because it is a distance an author
+   * measured, not a proportion of the object.
+   *
+   * Absent means the sound is emitted from the placement's own origin, which
+   * is what every placement did before this field existed. Meaningless for
+   * any other kind.
+   */
+  audioOffset?: { x: number; y: number; z: number }
+  /**
    * Appearance of this placement's box primitive. Present iff `kind` is
    * 'box'; a placement claiming that kind without one still renders, using
    * the default appearance (see net/protocol.ts's parsePlacedObject) — same
