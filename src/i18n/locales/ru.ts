@@ -138,6 +138,12 @@ export const ru: Dict = {
   'world.importAllAvailable': 'Все ресурсы, нужные этому файлу, уже есть на этом устройстве.',
   'world.importConfirm': 'Импортировать',
   'world.importing': 'Импорт…',
+  'world.skyLabel': 'Небо',
+  'world.skySet': 'Задать небо',
+  'world.skyRemove': 'Убрать небо',
+  'world.skyNone': 'Нет',
+  'world.skyTooLarge': 'Это изображение слишком большое. Ограничение — {size} МБ.',
+  'world.skyInvalid': 'Формат изображения неба не поддерживается. Используйте JPEG, PNG или WebP.',
 
   // Objects panel
   'objects.title': 'Объекты',

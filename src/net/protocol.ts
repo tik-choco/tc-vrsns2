@@ -15,6 +15,7 @@ import type {
   PlacedObject,
   PlayerProfile,
   PlayerState,
+  Skybox,
   WorldEditPolicy,
   WorldEnvironment,
   WorldFormat,
@@ -48,7 +49,17 @@ export const MSG_CHAT = 0x02
 export const MSG_PROFILE = 0x03
 /** "Send me your state now" — no body; newcomers get an immediate snapshot. */
 export const MSG_STATE_REQ = 0x04
-/** Shared world environment change, body { env: WorldEnvironment | null } (DELIVERY_RELIABLE). */
+/**
+ * Shared world environment + skybox change, body { env: WorldEnvironment |
+ * null, skybox: Skybox | null } (DELIVERY_RELIABLE). The two ride one frame
+ * because they are both "the room's shared backdrop, last-writer-wins" state
+ * replayed to newcomers the same way, but they are independent facts — env
+ * can be null (default grid) while skybox is set, or vice versa — so
+ * RoomSession.setWorld/setSkybox each send the OTHER's last-known value
+ * alongside their own change rather than clobbering it. `skybox` was added
+ * after `env` shipped: see parseSkybox for why a frame missing it (an older
+ * peer, or one from before this field existed) decodes exactly as before.
+ */
 export const MSG_WORLD = 0x05
 /** Sender's owned set of placed objects, body { objects } (DELIVERY_RELIABLE). */
 export const MSG_OBJECTS = 0x06
@@ -136,7 +147,7 @@ export type NetMessage =
   | { kind: typeof MSG_CHAT; text: string }
   | { kind: typeof MSG_PROFILE; profile: PlayerProfile }
   | { kind: typeof MSG_STATE_REQ }
-  | { kind: typeof MSG_WORLD; env: WorldEnvironment | null }
+  | { kind: typeof MSG_WORLD; env: WorldEnvironment | null; skybox: Skybox | null }
   | { kind: typeof MSG_OBJECTS; objects: PlacedObject[] }
   | { kind: typeof MSG_ROOM_ANNOUNCE; rooms: RoomAnnounceEntry[] }
   | { kind: typeof MSG_LOCK; policy: WorldEditPolicy }
@@ -304,7 +315,7 @@ export function encode(msg: NetMessage): Uint8Array {
       body = undefined
       break
     case MSG_WORLD:
-      body = { env: msg.env }
+      body = { env: msg.env, skybox: msg.skybox }
       break
     case MSG_OBJECTS:
       body = { objects: msg.objects }
@@ -360,6 +371,23 @@ export function parseWorldEnv(raw: unknown): WorldEnvironment | null {
   if (typeof o.format !== 'string' || !WORLD_FORMATS.has(o.format)) return null
   const name = typeof o.name === 'string' ? o.name.trim().slice(0, OBJECT_NAME_MAX_LEN) : ''
   return { cid: o.cid, name, format: o.format as WorldFormat }
+}
+
+/**
+ * Validates a peer-supplied Skybox. Returns null if malformed — same cid/name
+ * rules as parseWorldEnv (no format to check; a skybox is always a plain
+ * image). Exported for the same reuse reason as parseWorldEnv: worldSave.ts
+ * and worldManifest.ts re-validate a restored/imported one through this exact
+ * function rather than a second, drift-prone copy. Unlike parseWorldEnv, a
+ * caller decoding MSG_WORLD treats this function's null as "no skybox" rather
+ * than "drop the whole frame" — see MSG_WORLD's doc for why.
+ */
+export function parseSkybox(raw: unknown): Skybox | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.cid !== 'string' || o.cid.length === 0 || o.cid.length > CID_MAX_LEN) return null
+  const name = typeof o.name === 'string' ? o.name.trim().slice(0, OBJECT_NAME_MAX_LEN) : ''
+  return { cid: o.cid, name }
 }
 
 /**
@@ -1218,10 +1246,17 @@ export function decode(data: Uint8Array): NetMessage | null {
     }
     case MSG_WORLD: {
       if (!('env' in body)) return null
-      if (body.env === null) return { kind: MSG_WORLD, env: null }
-      const env = parseWorldEnv(body.env)
-      if (!env) return null
-      return { kind: MSG_WORLD, env }
+      let env: WorldEnvironment | null = null
+      if (body.env !== null) {
+        env = parseWorldEnv(body.env)
+        if (!env) return null
+      }
+      // skybox is additive (added after env shipped): absent — an older
+      // frame, or one from before this field existed — and invalid both mean
+      // "no skybox" rather than sinking the whole frame the way a bad env
+      // does. See parseSkybox's doc.
+      const skybox = body.skybox == null ? null : parseSkybox(body.skybox)
+      return { kind: MSG_WORLD, env, skybox }
     }
     case MSG_OBJECTS: {
       if (!Array.isArray(body.objects)) return null

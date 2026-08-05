@@ -137,6 +137,12 @@ export const zh: Dict = {
   'world.importAllAvailable': '此文件所需的全部资源已在此设备上。',
   'world.importConfirm': '导入',
   'world.importing': '正在导入…',
+  'world.skyLabel': '天空',
+  'world.skySet': '设置天空',
+  'world.skyRemove': '移除天空',
+  'world.skyNone': '无',
+  'world.skyTooLarge': '图片太大，上限为 {size} MB。',
+  'world.skyInvalid': '不支持的天空图片格式。请使用 JPEG、PNG 或 WebP。',
 
   // Objects panel
   'objects.title': '物体',

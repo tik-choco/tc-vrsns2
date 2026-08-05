@@ -162,6 +162,21 @@ export type WorldEnvironment = {
 }
 
 /**
+ * A shared skybox image: the room's surrounding sky, synced over MSG_WORLD
+ * alongside — but independent of — WorldEnvironment (see that type's doc).
+ * The default grid world and a loaded environment can each carry one, so this
+ * deliberately does NOT live inside WorldEnvironment: an environment can be
+ * null while a sky is still set. Referenced by CID in the shared mistlib
+ * store, same as WorldEnvironment, but never filed in a local catalog (see
+ * useSession's setSkybox) — a sky is neither placeable nor equippable, just
+ * bytes the room agrees to look at.
+ */
+export type Skybox = {
+  cid: string
+  name: string
+}
+
+/**
  * A decorative object placed in the world by a participant. `id` is a unique
  * per-placement identifier (so two copies of the same asset coexist and are
  * addressable); `cid` points at the model or media bytes in the shared store.

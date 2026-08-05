@@ -30,6 +30,28 @@ export const PLACEABLE_ACCEPT = '.glb,.gltf,image/*,video/*,audio/*'
  */
 export const MAX_PLACEABLE_BYTES = 64 * 1024 * 1024
 
+/** `accept` attribute for the skybox file picker — see SKYBOX_MIME_TYPES below for why it is narrower than PLACEABLE_ACCEPT's `image/*`. */
+export const SKYBOX_ACCEPT = 'image/jpeg,image/png,image/webp'
+
+/**
+ * MIME types accepted for a skybox upload (useSession's setSkybox). Narrower
+ * than a placed image: a skybox is never run through shrinkImageForPlacement
+ * (its 2048px edge cap would visibly degrade an equirectangular panorama —
+ * see setSkybox's own doc), so it goes to the shared store at full,
+ * unshrunk resolution, and gif/svg/bmp/avif make little sense as an unshrunk
+ * multi-megapixel sky.
+ */
+export const SKYBOX_MIME_TYPES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+/**
+ * Upload cap for a skybox image, well below MAX_PLACEABLE_BYTES: unlike a
+ * placed image, a skybox is never shrunk before publishing (see
+ * SKYBOX_MIME_TYPES's doc), so this is the only ceiling on what an unshrunk,
+ * full-resolution equirectangular panorama can cost every peer's data
+ * channel to fetch.
+ */
+export const MAX_SKYBOX_BYTES = 12 * 1024 * 1024
+
 const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   // images
   png: 'image/png',

@@ -137,6 +137,12 @@ export const ar: Dict = {
   'world.importAllAvailable': 'كل الأصول التي يحتاجها هذا الملف موجودة بالفعل على هذا الجهاز.',
   'world.importConfirm': 'استيراد',
   'world.importing': 'جارٍ الاستيراد…',
+  'world.skyLabel': 'السماء',
+  'world.skySet': 'ضبط السماء',
+  'world.skyRemove': 'إزالة السماء',
+  'world.skyNone': 'بلا',
+  'world.skyTooLarge': 'هذه الصورة كبيرة جدًا. الحد هو {size} ميغابايت.',
+  'world.skyInvalid': 'صيغة صورة السماء غير مدعومة. استخدم JPEG أو PNG أو WebP.',
 
   // Objects panel
   'objects.title': 'العناصر',

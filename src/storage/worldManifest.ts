@@ -27,10 +27,10 @@
 // bad entry drops just that entry rather than the whole import — see
 // parseWorldManifest below.
 
-import type { PlacedKind, PlacedObject, WorldEditPolicy, WorldEnvironment } from '../shared/types'
+import type { PlacedKind, PlacedObject, Skybox, WorldEditPolicy, WorldEnvironment } from '../shared/types'
 import type { ScriptGraph } from '../script/ir'
 import { SELF_TARGET } from '../script/ir'
-import { OBJECTS_MAX, parsePlacedObject, parseWorldEnv } from '../net/protocol'
+import { OBJECTS_MAX, parsePlacedObject, parseSkybox, parseWorldEnv } from '../net/protocol'
 
 /** Bumped only on a breaking change to this file's shape. See parseWorldManifest. */
 export const WORLD_MANIFEST_VERSION = 1
@@ -46,6 +46,14 @@ export type WorldManifest = {
   /** ISO 8601, informational only — never part of any identity, never validated against. */
   exportedAt: string
   env: WorldEnvironment | null
+  /**
+   * Shared skybox at export time, independent of `env` (see Skybox's doc in
+   * shared/types.ts). Added after WORLD_MANIFEST_VERSION 1 shipped —
+   * additively, with no version bump: parseWorldManifest below treats a file
+   * written before this field existed exactly like an explicit null, the
+   * same tolerance every other field-level addition in this format gets.
+   */
+  skybox: Skybox | null
   objects: PlacedObject[]
   policy: WorldEditPolicy
 }
@@ -60,13 +68,14 @@ const EDIT_POLICIES: ReadonlySet<string> = new Set<WorldEditPolicy>(['owner', 'e
  * published to the room it came from either, see worldSave.saveWorldSave).
  */
 export function serializeWorldManifest(
-  world: { env: WorldEnvironment | null; objects: PlacedObject[]; policy: WorldEditPolicy },
+  world: { env: WorldEnvironment | null; skybox: Skybox | null; objects: PlacedObject[]; policy: WorldEditPolicy },
   exportedAt: Date = new Date(),
 ): WorldManifest {
   return {
     version: WORLD_MANIFEST_VERSION,
     exportedAt: exportedAt.toISOString(),
     env: world.env,
+    skybox: world.skybox,
     objects: world.objects.slice(0, OBJECTS_MAX),
     policy: world.policy,
   }
@@ -122,7 +131,7 @@ const TARGET_CFG_KEY = 'target'
 export type WorldManifestCidRef = {
   cid: string
   name: string
-  kind: 'env' | PlacedKind
+  kind: 'env' | 'skybox' | PlacedKind
 }
 
 /**
@@ -133,8 +142,15 @@ export type WorldManifestCidRef = {
  * against what's actually held locally and report e.g. "3 of 12 assets are
  * unavailable" instead of silently rendering an empty room.
  *
- * Scoped to the cids that directly render a placement or the environment
- * (PlacedObject.cid / WorldEnvironment.cid). Deliberately does NOT crawl into
+ * Scoped to the cids that directly render a placement, the environment, or
+ * the skybox (PlacedObject.cid / WorldEnvironment.cid / Skybox.cid).
+ * IMPORTANT heads-up for any caller feeding this into
+ * worldManifestAvailability.ts's probe: a skybox is never filed in a local
+ * catalog (see useSession's setSkybox), so that probe's catalog-only check
+ * always reports a 'skybox' ref as unavailable even when the cid actually
+ * resolves fine over the network at apply time — a documented undercount,
+ * not a bug in either module (see that file's own header for why it settles
+ * for catalog-only). Deliberately does NOT crawl into
  * a placement's script graph for secondary cids — a ui/image template's cid
  * would be safe to walk (UiNode is a real discriminated union, not an opaque
  * cfg bag), but an audio/play node's cid lives in the same convention-only
@@ -147,6 +163,9 @@ export function listManifestCids(manifest: WorldManifest): WorldManifestCidRef[]
   const byCid = new Map<string, WorldManifestCidRef>()
   if (manifest.env) {
     byCid.set(manifest.env.cid, { cid: manifest.env.cid, name: manifest.env.name, kind: 'env' })
+  }
+  if (manifest.skybox && !byCid.has(manifest.skybox.cid)) {
+    byCid.set(manifest.skybox.cid, { cid: manifest.skybox.cid, name: manifest.skybox.name, kind: 'skybox' })
   }
   for (const object of manifest.objects) {
     if (byCid.has(object.cid)) continue
@@ -225,6 +244,10 @@ export function parseWorldManifest(raw: unknown): WorldManifest | null {
   if (o.version !== WORLD_MANIFEST_VERSION) return null
 
   const env = o.env == null ? null : parseWorldEnv(o.env)
+  // Additive field (no version bump — see WorldManifest.skybox's doc): a
+  // file written before it existed simply has no `skybox` key, which reads
+  // the same as an explicit null.
+  const skybox = o.skybox == null ? null : parseSkybox(o.skybox)
 
   const idMap = new Map<string, string>()
   const objects: PlacedObject[] = []
@@ -246,5 +269,5 @@ export function parseWorldManifest(raw: unknown): WorldManifest | null {
   const policy =
     typeof o.policy === 'string' && EDIT_POLICIES.has(o.policy) ? (o.policy as WorldEditPolicy) : 'owner'
 
-  return { version: WORLD_MANIFEST_VERSION, exportedAt, env, objects, policy }
+  return { version: WORLD_MANIFEST_VERSION, exportedAt, env, skybox, objects, policy }
 }

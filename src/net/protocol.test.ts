@@ -1,6 +1,6 @@
 // Node-environment tests for the wire protocol — no DOM/wasm imports.
 import { describe, expect, it } from 'vitest'
-import type { ObjectState, PlacedObject, PlayerProfile, PlayerState, WorldEnvironment } from '../shared/types'
+import type { ObjectState, PlacedObject, PlayerProfile, PlayerState, Skybox, WorldEnvironment } from '../shared/types'
 import { SCRIPT_LIMITS } from '../script/ir'
 import { NPC_LIMITS } from '../npc/limits'
 import type { ScriptGraph, ScriptInput, TriggerVolume, UiNode } from '../script/ir'
@@ -91,8 +91,48 @@ describe('encode/decode round trip', () => {
 
   it('round-trips a world environment and a reset', () => {
     const env: WorldEnvironment = { cid: 'bafyworld', name: 'Plaza', format: 'glb' }
-    expect(decode(encode({ kind: MSG_WORLD, env }))).toEqual({ kind: MSG_WORLD, env })
-    expect(decode(encode({ kind: MSG_WORLD, env: null }))).toEqual({ kind: MSG_WORLD, env: null })
+    expect(decode(encode({ kind: MSG_WORLD, env, skybox: null }))).toEqual({ kind: MSG_WORLD, env, skybox: null })
+    expect(decode(encode({ kind: MSG_WORLD, env: null, skybox: null }))).toEqual({
+      kind: MSG_WORLD,
+      env: null,
+      skybox: null,
+    })
+  })
+
+  it('round-trips a skybox independently of the environment', () => {
+    const sky: Skybox = { cid: 'bafysky', name: 'Sunset' }
+    // A sky may be set with no environment (default grid)...
+    expect(decode(encode({ kind: MSG_WORLD, env: null, skybox: sky }))).toEqual({
+      kind: MSG_WORLD,
+      env: null,
+      skybox: sky,
+    })
+    // ...or alongside one, and cleared independently of it.
+    const env: WorldEnvironment = { cid: 'bafyworld', name: 'Plaza', format: 'glb' }
+    expect(decode(encode({ kind: MSG_WORLD, env, skybox: sky }))).toEqual({ kind: MSG_WORLD, env, skybox: sky })
+    expect(decode(encode({ kind: MSG_WORLD, env, skybox: null }))).toEqual({ kind: MSG_WORLD, env, skybox: null })
+  })
+
+  it('reads an old MSG_WORLD frame with no skybox field as skybox: null', () => {
+    const env: WorldEnvironment = { cid: 'bafyworld', name: 'Plaza', format: 'glb' }
+    expect(decode(frame(MSG_WORLD, { env }))).toEqual({ kind: MSG_WORLD, env, skybox: null })
+  })
+
+  it('drops only a malformed skybox, never the whole MSG_WORLD frame', () => {
+    const env: WorldEnvironment = { cid: 'bafyworld', name: 'Plaza', format: 'glb' }
+    expect(decode(frame(MSG_WORLD, { env, skybox: { cid: '', name: 'n' } }))).toEqual({
+      kind: MSG_WORLD,
+      env,
+      skybox: null,
+    })
+    expect(decode(frame(MSG_WORLD, { env, skybox: 'not-an-object' }))).toEqual({
+      kind: MSG_WORLD,
+      env,
+      skybox: null,
+    })
+    expect(decode(frame(MSG_WORLD, { env: null, skybox: { cid: 'x'.repeat(CID_MAX_LEN + 1), name: 'n' } }))).toEqual(
+      { kind: MSG_WORLD, env: null, skybox: null },
+    )
   })
 
   it('round-trips a placed-object set', () => {

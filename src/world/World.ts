@@ -567,6 +567,22 @@ export class World {
   }
 
   /**
+   * Load a shared skybox from image bytes — the room's surrounding sky,
+   * orthogonal to loadEnvironment/clearEnvironment above: unlike them this
+   * never touches the default ground/grid, so a sky can be set over either
+   * the default world or a loaded environment (see WorldManager.loadSkybox's
+   * doc for how it avoids touching what loadEnvironment owns).
+   */
+  async loadSkybox(bytes: Uint8Array): Promise<void> {
+    await this.worldManager.loadSkybox(bytes)
+  }
+
+  /** Remove the current skybox, restoring the default background. */
+  clearSkybox(): void {
+    this.worldManager.clearSkybox()
+  }
+
+  /**
    * Place an asset on the ground in front of the local player and return its
    * PlacedObject state for the caller to broadcast. Models face the same way
    * the player does; image/video panels turn back to face them. The drop

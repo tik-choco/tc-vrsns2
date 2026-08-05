@@ -38,6 +38,12 @@ describe('unavailableManifestCids', () => {
     const audio = ref('clip-cid', { kind: 'audio', name: 'Clip' })
     expect(unavailableManifestCids([env, audio], new Set())).toEqual([env, audio])
   })
+
+  it('treats a skybox ref like any other kind — no special-casing here', () => {
+    const sky = ref('sky-cid', { kind: 'skybox', name: 'Sunset' })
+    expect(unavailableManifestCids([sky], new Set())).toEqual([sky])
+    expect(unavailableManifestCids([sky], new Set(['sky-cid']))).toEqual([])
+  })
 })
 
 describe('probeManifestAvailability', () => {

@@ -137,6 +137,12 @@ export const ko: Dict = {
   'world.importAllAvailable': '이 파일에 필요한 자산은 모두 이미 이 기기에 있어요.',
   'world.importConfirm': '가져오기',
   'world.importing': '가져오는 중…',
+  'world.skyLabel': '하늘',
+  'world.skySet': '하늘 설정',
+  'world.skyRemove': '하늘 제거',
+  'world.skyNone': '없음',
+  'world.skyTooLarge': '이미지가 너무 커요. 최대 {size} MB예요.',
+  'world.skyInvalid': '지원하지 않는 하늘 이미지예요. JPEG, PNG, WebP를 사용하세요.',
 
   // Objects panel
   'objects.title': '오브젝트',

@@ -137,6 +137,12 @@ export const hi: Dict = {
   'world.importAllAvailable': 'इस फ़ाइल को जिन एसेट की ज़रूरत है, वे सभी पहले से इस डिवाइस पर मौजूद हैं।',
   'world.importConfirm': 'इम्पोर्ट करें',
   'world.importing': 'इम्पोर्ट हो रहा है…',
+  'world.skyLabel': 'आकाश',
+  'world.skySet': 'आकाश सेट करें',
+  'world.skyRemove': 'आकाश हटाएं',
+  'world.skyNone': 'कोई नहीं',
+  'world.skyTooLarge': 'यह तस्वीर बहुत बड़ी है। सीमा {size} MB है।',
+  'world.skyInvalid': 'यह आकाश तस्वीर समर्थित नहीं है। JPEG, PNG या WebP का उपयोग करें।',
 
   // Objects panel
   'objects.title': 'ऑब्जेक्ट',

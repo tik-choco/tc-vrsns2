@@ -62,10 +62,21 @@ export class WorldManager {
   private loadToken = 0
   private disposed = false
 
+  // Skybox: orthogonal to the environment above (loadEnvironment/
+  // clearEnvironment never touch scene.background/environment — see
+  // loadSkybox's doc), so its own texture/token/loader are tracked
+  // separately and neither side's load path interferes with the other's.
+  private textureLoader = new THREE.TextureLoader()
+  private skyboxTexture: THREE.Texture | null = null
+  private skyboxLoadToken = 0
+  /** scene.background as the constructor found it (World's flat theme color) — what a removed skybox restores. */
+  private readonly defaultBackground: THREE.Scene['background']
+
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer) {
     this.scene = scene
     this.camera = camera
     this.renderer = renderer
+    this.defaultBackground = scene.background
   }
 
   get isLoaded(): boolean {
@@ -108,6 +119,54 @@ export class WorldManager {
     this.splat = null
   }
 
+  /**
+   * Load and show a shared skybox from raw image bytes, replacing any
+   * current one — orthogonal to loadEnvironment/clearEnvironment above (see
+   * their doc: neither ever touches scene.background/environment), so a
+   * skybox and an environment coexist freely in either combination. A blob
+   * URL is minted for TextureLoader and revoked once decoding settles,
+   * mirroring loadEnvironment. If a newer load starts (or we are disposed)
+   * while awaiting, the stale result is discarded and disposed instead of
+   * applied.
+   *
+   * EquirectangularReflectionMapping goes on BOTH scene.background (what you
+   * see) and scene.environment (PBR ambient/reflection lighting for
+   * materials that read it) — this vendored three version's WebGLEnvironments
+   * (src/renderers/webgl/WebGLEnvironments.js) detects that mapping on
+   * `.environment` and does the equirect -> PMREM-equivalent conversion
+   * internally, so no separate PMREMGenerator pass is needed here.
+   */
+  async loadSkybox(bytes: Uint8Array): Promise<void> {
+    const token = ++this.skyboxLoadToken
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    const url = URL.createObjectURL(new Blob([buffer]))
+    try {
+      const texture = await this.textureLoader.loadAsync(url)
+      if (token !== this.skyboxLoadToken || this.disposed) {
+        texture.dispose()
+        return
+      }
+      texture.mapping = THREE.EquirectangularReflectionMapping
+      texture.colorSpace = THREE.SRGBColorSpace
+      texture.needsUpdate = true
+      this.clearSkybox()
+      this.skyboxTexture = texture
+      this.scene.background = texture
+      this.scene.environment = texture
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  /** Remove the current skybox (if any), restoring the background the constructor found (World's flat theme color) and clearing the PBR environment. */
+  clearSkybox(): void {
+    if (!this.skyboxTexture) return
+    this.skyboxTexture.dispose()
+    this.skyboxTexture = null
+    this.scene.background = this.defaultBackground
+    this.scene.environment = null
+  }
+
   /** Drive the splat viewer's per-frame update; a no-op for GLB/GLTF worlds. */
   update(_dt: number): void {
     const viewer = this.splat?.viewer
@@ -120,6 +179,7 @@ export class WorldManager {
     if (this.disposed) return
     this.disposed = true
     this.clearEnvironment()
+    this.clearSkybox()
   }
 
   private async loadGltf(url: string): Promise<THREE.Object3D> {
