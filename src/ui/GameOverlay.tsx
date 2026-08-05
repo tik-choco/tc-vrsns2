@@ -24,7 +24,8 @@ import { editableObjectCount, type GameOverlayProps } from './uiContract'
 import { BehaviourDialog } from './BehaviourDialog'
 import { ChatPanel } from './ChatPanel'
 import { DropImportOverlay } from './DropImportOverlay'
-import { routeDroppedFile, type DropImportRoute } from './dropImport'
+import { allowedDropActions, routeDroppedFile, type DropImportRoute } from './dropImport'
+import { parseWorldManifest, type WorldManifest } from '../storage/worldManifest'
 import { EditToolbar } from './EditToolbar'
 import { GraphEditor } from './GraphEditor'
 import { MobileControls } from './MobileControls'
@@ -55,6 +56,27 @@ const MENU: MenuEntry[] = [
   { id: 'settings', icon: SettingsIcon, labelKey: 'menu.settings' },
   { id: 'leave', icon: LogOut, labelKey: 'menu.leave' },
 ]
+
+/**
+ * Reads a dropped .json file and parses it as a world manifest, or resolves
+ * null for anything that fails along the way — a deliberately thin duplicate
+ * of just the read+parse step WorldPanel.tsx's own (unexported) equivalent
+ * performs for its Import button. WorldPanel is not part of this pass of
+ * work, so rather than extract a shared helper (which would require editing
+ * that file to actually use it), this stays its own small copy here — see
+ * dropAddToWorld's own doc for why a drop's confirm is a lighter-weight "yes,
+ * bring this in" than WorldPanel's fuller probe-and-confirm import screen
+ * (no unavailable-asset count, no separate confirm step): it reads, parses,
+ * and — on success — hands straight to onImportWorldManifest.
+ */
+async function readDroppedWorldManifest(file: File): Promise<WorldManifest | null> {
+  try {
+    const text = await file.text()
+    return parseWorldManifest(JSON.parse(text) as unknown)
+  } catch {
+    return null
+  }
+}
 
 export function GameOverlay(props: GameOverlayProps) {
   const { t } = useTranslation()
@@ -130,10 +152,6 @@ export function GameOverlay(props: GameOverlayProps) {
   graphEditorOpenRef.current = graphEditorOpen
   const dropImportRef = useRef(dropImport)
   dropImportRef.current = dropImport
-  // Read by the window-level drop listener below, which is registered once
-  // on mount — must never see a stale worldPolicy.
-  const worldPolicyRef = useRef(props.worldPolicy)
-  worldPolicyRef.current = props.worldPolicy
 
   // Neither dialog ever opens while not editing a selection; if either goes
   // away out from under one (leaving edit mode, the selection being cleared)
@@ -285,11 +303,18 @@ export function GameOverlay(props: GameOverlayProps) {
 
   const closePanel = () => setPanel(null)
 
-  // Window-level drag-and-drop import. Registered once on mount (reads
-  // worldPolicy through the ref above, same reasoning as every other
-  // once-registered listener in this file) and torn down on unmount, which
-  // for this component only ever happens by leaving the room — so there is
-  // no separate cleanup path to worry about beyond the one below.
+  // Window-level drag-and-drop import. Registered once on mount and torn
+  // down on unmount, which for this component only ever happens by leaving
+  // the room — so there is no separate cleanup path to worry about beyond
+  // the one below.
+  //
+  // Deliberately does NOT gate on worldPolicy anymore (task #27): this used
+  // to refuse the whole gesture under 'locked', which also hid the
+  // always-allowed actions (equip-avatar, save-to-catalog-only — neither
+  // touches anything shared). The route is now always computed and the
+  // overlay always shown; allowedDropActions decides PER ACTION whether the
+  // room's current policy permits it, and DropImportOverlay renders a
+  // blocked one disabled with a hint instead.
   useEffect(() => {
     // A drop landing on (or inside) an <input> — the panels' own hidden
     // file-picker inputs (CatalogPanel.tsx) chief among them — must be left
@@ -302,13 +327,11 @@ export function GameOverlay(props: GameOverlayProps) {
     // instead of being preventDefault()'d for no reason.
     const isFileDrag = (dt: DataTransfer | null) => !!dt && Array.from(dt.types).includes('Files')
     const onDragOver = (e: DragEvent) => {
-      if (worldPolicyRef.current === 'locked') return
       if (isInputTarget(e.target)) return
       if (!isFileDrag(e.dataTransfer)) return
       e.preventDefault()
     }
     const onDrop = (e: DragEvent) => {
-      if (worldPolicyRef.current === 'locked') return
       if (isInputTarget(e.target)) return
       const file = e.dataTransfer?.files?.[0]
       if (!file) return // a dragged link or text selection, not a file — nothing to import
@@ -328,12 +351,28 @@ export function GameOverlay(props: GameOverlayProps) {
    * uploadAvatar (which already both catalogs and equips in one call — see
    * its own doc); world and object both need the freshly-saved cid to chain
    * into applyWorld/placeObject, which is exactly why uploadWorld/
-   * uploadObject now resolve it instead of void.
+   * uploadObject now resolve it instead of void. A manifest route (task #27)
+   * has no catalog/verb at all — it reads and parses the dropped file itself
+   * (see readDroppedWorldManifest below) and hands the result straight to
+   * onImportWorldManifest, the "hand the FILE to the existing manifest
+   * import flow" this task's brief calls for.
    */
   const dropAddToWorld = () => {
     if (!dropImport || !dropImport.route.recognized) return
     const { file, route } = dropImport
     setDropImport(null)
+    if ('manifest' in route) {
+      void readDroppedWorldManifest(file).then((manifest) => {
+        // A malformed/corrupt/unrelated .json dropped here simply does
+        // nothing further — same "drop just this attempt" tolerance every
+        // other best-effort parse in this app already gets (see e.g.
+        // useSession's own `console.debug` catches), rather than a second
+        // error-surface this drop-confirm flow doesn't otherwise have.
+        if (manifest) void props.onImportWorldManifest(manifest)
+        else console.debug('dropped world manifest failed to parse', file.name)
+      })
+      return
+    }
     if (route.worldVerb === 'equip') {
       props.onUploadAvatar(file)
     } else if (route.worldVerb === 'setEnvironment') {
@@ -357,10 +396,11 @@ export function GameOverlay(props: GameOverlayProps) {
     })
   }
 
-  /** Catalogs the file and stops there — no equip/apply/place. */
+  /** Catalogs the file and stops there — no equip/apply/place. Never wired for a manifest route (DropImportOverlay never renders the button for one — see its own manifest branch), but guards anyway so this stays type-safe against DropImportRoute's manifest variant, which carries no catalogKind at all. */
   const dropSaveToCatalogOnly = () => {
     if (!dropImport || !dropImport.route.recognized) return
     const { file, route } = dropImport
+    if ('manifest' in route) return
     setDropImport(null)
     if (route.catalogKind === 'avatar') props.onUploadAvatarToCatalog(file)
     else if (route.catalogKind === 'world') void props.onUploadWorld(file)
@@ -487,9 +527,14 @@ export function GameOverlay(props: GameOverlayProps) {
           onSetObjectScript={props.onSetObjectScript}
           onSetNpcRadius={props.onSetNpcRadius}
           onSetNpcVoice={props.onSetNpcVoice}
+          onSetNpcApproachRange={props.onSetNpcApproachRange}
           onSetObjectVolume={props.onSetObjectVolume}
           onSetObjectAudibleRange={props.onSetObjectAudibleRange}
           onSetObjectScale={props.onSetObjectScale}
+          onSetObjectPosition={props.onSetObjectPosition}
+          onSetObjectRotation={props.onSetObjectRotation}
+          onSetObjectBox={props.onSetObjectBox}
+          onUploadBoxTexture={props.onUploadBoxTexture}
           scriptProblems={props.scriptProblems}
           onDescribeBehaviour={() => setDescribeOpen(true)}
           onEditGraph={() => setGraphEditorOpen(true)}
@@ -541,8 +586,13 @@ export function GameOverlay(props: GameOverlayProps) {
           <DropImportOverlay
             fileName={dropImport.file.name}
             route={dropImport.route}
+            allowed={allowedDropActions(dropImport.route, props.worldPolicy)}
             onAddToWorld={dropAddToWorld}
-            onSetAsWorldEnvironment={dropImport.route.alsoValidAsWorld ? dropSetAsWorldEnvironment : undefined}
+            onSetAsWorldEnvironment={
+              !('manifest' in dropImport.route) && dropImport.route.alsoValidAsWorld
+                ? dropSetAsWorldEnvironment
+                : undefined
+            }
             onSaveToCatalogOnly={dropSaveToCatalogOnly}
             onCancel={closeDropImport}
           />

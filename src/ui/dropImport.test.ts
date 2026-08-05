@@ -3,7 +3,7 @@
 // the DropImportRoute as a prop, so this file is the actual coverage for
 // "which prompt does a given dropped file get".
 import { describe, expect, it } from 'vitest'
-import { routeDroppedFile } from './dropImport'
+import { allowedDropActions, routeDroppedFile } from './dropImport'
 
 describe('routeDroppedFile', () => {
   it('routes a .vrm to the avatar catalog, equip verb', () => {
@@ -103,5 +103,80 @@ describe('routeDroppedFile', () => {
     ] as const) {
       expect(routeDroppedFile(name, type)).toEqual({ recognized: false })
     }
+  })
+
+  it('routes a .json file to the world-manifest variant', () => {
+    expect(routeDroppedFile('room.json', 'application/json')).toEqual({
+      recognized: true,
+      manifest: true,
+    })
+  })
+
+  it('is case-insensitive for .json too', () => {
+    expect(routeDroppedFile('Room.JSON', '')).toEqual({ recognized: true, manifest: true })
+  })
+
+  it('routes .json ahead of everything else, even a name that also looks like media', () => {
+    // The extension ladder checks .json first (route priority), so a name
+    // that would otherwise fall through to a MIME-based media guess must
+    // still resolve to the manifest variant, never 'object'/'place'.
+    expect(routeDroppedFile('photo.json', 'image/png')).toEqual({ recognized: true, manifest: true })
+  })
+})
+
+describe('allowedDropActions', () => {
+  const modelRoute = routeDroppedFile('prop.glb', 'model/gltf-binary')
+  const avatarRoute = routeDroppedFile('character.vrm', '')
+  const manifestRoute = routeDroppedFile('room.json', '')
+  const unsupportedRoute = routeDroppedFile('mystery', '')
+
+  it('an unrecognized route permits nothing', () => {
+    expect(allowedDropActions(unsupportedRoute, 'owner')).toEqual({
+      addToWorld: false,
+      setAsWorldEnvironment: false,
+      saveToCatalogOnly: false,
+    })
+  })
+
+  it('placing/setting-environment is blocked under a locked policy', () => {
+    expect(allowedDropActions(modelRoute, 'locked')).toEqual({
+      addToWorld: false,
+      setAsWorldEnvironment: false,
+      saveToCatalogOnly: true,
+    })
+  })
+
+  it('placing/setting-environment is allowed under owner/everyone', () => {
+    expect(allowedDropActions(modelRoute, 'owner')).toEqual({
+      addToWorld: true,
+      setAsWorldEnvironment: true,
+      saveToCatalogOnly: true,
+    })
+    expect(allowedDropActions(modelRoute, 'everyone')).toEqual({
+      addToWorld: true,
+      setAsWorldEnvironment: true,
+      saveToCatalogOnly: true,
+    })
+  })
+
+  it('equip-avatar and save-to-catalog-only stay allowed even when locked', () => {
+    expect(allowedDropActions(avatarRoute, 'locked')).toEqual({
+      addToWorld: true,
+      setAsWorldEnvironment: false,
+      saveToCatalogOnly: true,
+    })
+  })
+
+  it('a manifest import is gated the same as placing/setting-environment, and never offers save-to-catalog-only', () => {
+    expect(allowedDropActions(manifestRoute, 'locked')).toEqual({
+      addToWorld: false,
+      setAsWorldEnvironment: false,
+      saveToCatalogOnly: false,
+    })
+    expect(allowedDropActions(manifestRoute, 'owner')).toEqual({
+      addToWorld: true,
+      setAsWorldEnvironment: false,
+      saveToCatalogOnly: false,
+    })
   })
 })
