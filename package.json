@@ -19,6 +19,7 @@
     "test:e2e:graph": "node scripts/e2e-graph.mjs",
     "test:e2e:edit": "node scripts/e2e-edit-entry.mjs",
     "test:e2e:build": "node scripts/e2e-build.mjs",
+    "test:e2e:audio-range": "node scripts/e2e-audio-range.mjs",
     "test:e2e:netload": "node scripts/e2e-netload.mjs",
     "test:e2e:npc": "node scripts/e2e-npc.mjs",
     "test:e2e:npc-edit": "node scripts/e2e-npc-edit.mjs",

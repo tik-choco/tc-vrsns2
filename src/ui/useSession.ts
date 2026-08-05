@@ -1125,6 +1125,12 @@ export function useSession(): SessionApi {
             .own()
             .filter((o) => o.kind === 'npc' && o.npc)
             .map((o) => ({ ...o, lastReplyAt: npcLastReplyAt.current.get(o.id) ?? null }))
+        // Which placement's audible-range sphere is on screen, and how big it
+        // is. Read straight off the world rather than off the UI's selection
+        // state on purpose: the point of an e2e assertion here is catching a
+        // divergence between the two (a selection the visual never followed,
+        // or a range edit the visual never picked up).
+        vrsnsDebug.audioRangeFocus = () => world.getAudioRangeFocus()
       }
       // Restore a previously equipped avatar so the local player isn't a primitive.
       if (profileRef.current.avatarCid) {

@@ -42,6 +42,16 @@ export type VrsnsDebug = {
   /** Ids the local player may currently select and edit, per the room policy. */
   editable: (() => string[]) | null
   /**
+   * The audio-range indicator's current focus — the id of whichever
+   * 'audio'/'video' placement is selected plus its effective audible range
+   * (World.getAudioRangeFocus / WorldObjects.getAudioRangeFocus), or null
+   * while nothing audio-carrying is selected. There is no other way for a
+   * test to confirm the indicator followed an audibleRange edit or a
+   * selection change — the sphere itself is a THREE scene object, not
+   * anything the DOM exposes.
+   */
+  audioRangeFocus: (() => { id: string; range: number } | null) | null
+  /**
    * Our own NPC placements (R5), each carrying `lastReplyAt` — the
    * Date.now() of its most recent `say`, or null if it has never replied.
    * NpcRuntime keeps no public accessor for that timestamp itself, so
@@ -124,6 +134,7 @@ function createBag(): VrsnsDebug | null {
     objects: null,
     owned: null,
     editable: null,
+    audioRangeFocus: null,
     npcs: null,
     peerScopes: null,
     tts: null,

@@ -145,11 +145,21 @@ const VOLUME_STEPS = [0, 0.5, 0.75, VOLUME_DEFAULT, 1.25, 1.5, VOLUME_MAX].filte
 )
 
 /**
- * Coarse presets for an audible-range edit, same reasoning as VOLUME_STEPS.
- * Includes AUDIBLE_RANGE_DEFAULT (4, WorldObjects' own ref distance) for the
- * same "not just a custom fallback" reason.
+ * Coarse presets for an audible-range edit. These used to be the only way to
+ * set a range at all, on the reasoning that nobody could perceive a fine
+ * difference between e.g. 10m and 11m — but that stopped being true once a
+ * selected 'audio'/'video' placement shows a translucent range sphere in the
+ * world: the sphere's edge is exactly where the placement goes silent (past
+ * a quarter of this radius it's a linear fade, see uiContract.ts's
+ * AUDIBLE_RANGE_DEFAULT doc comment), so a one-metre difference is now
+ * something you can actually watch move on screen. The presets stay, as a
+ * fast one-click way to land on a common radius; the numeric field right
+ * next to this <select> (rangeExactDraft below) is what covers everything
+ * in between. Includes AUDIBLE_RANGE_DEFAULT (12, WorldObjects'
+ * AUDIO_DEFAULT_RANGE) for the same "not just a custom fallback" reason as
+ * VOLUME_STEPS.
  */
-const RANGE_STEPS = [1, 2, AUDIBLE_RANGE_DEFAULT, 6, 10, 20, 40, 100].filter(
+const RANGE_STEPS = [2, 4, 8, AUDIBLE_RANGE_DEFAULT, 20, 40, 100].filter(
   (r) => r >= AUDIBLE_RANGE_MIN && r <= AUDIBLE_RANGE_MAX,
 )
 
@@ -483,6 +493,29 @@ export function EditToolbar(props: Props) {
   const audibleRange = selected?.audibleRange ?? AUDIBLE_RANGE_DEFAULT
   const rangeIsCustom = !RANGE_STEPS.includes(audibleRange)
 
+  /**
+   * Fine-tune counterpart to the RANGE_STEPS <select> above — see that
+   * constant's doc comment for why a free-text value became worth having
+   * once the range sphere made a one-metre difference visible. This edits
+   * the exact same audibleRange field, through the exact same
+   * onSetObjectAudibleRange prop the select's onRangeChange calls, so the
+   * two controls can never disagree about what's actually stored: picking a
+   * preset updates this field's display next render (audibleRange flows
+   * back in as `current` below, same as any other external update), and
+   * typing here leaves the select free to re-render into its "custom" entry
+   * (rangeIsCustom above) rather than silently snapping to a preset. Same
+   * useNumberDraft idiom as the box-size fields — see that hook's own doc
+   * comment for why a plain value-bound input would clobber mid-type digits.
+   */
+  const rangeExactDraft = useNumberDraft(
+    selected?.id,
+    audibleRange,
+    (v) => {
+      if (selected) props.onSetObjectAudibleRange(selected.id, v)
+    },
+    1,
+  )
+
   return (
     <div class="edit-bar" role="toolbar" aria-label={t('objects.editing')}>
       <span class="edit-bar-target">
@@ -791,6 +824,26 @@ export function EditToolbar(props: Props) {
               </option>
             ))}
           </select>
+          {/* Fine-tune companion to the preset <select> above — see
+              rangeExactDraft's own comment for why it commits through the
+              exact same onSetObjectAudibleRange prop. Its own aria-label/
+              title (rather than relying on this <label>'s wrapping text,
+              which the <select> already claims) since a <label> with two
+              labelable children can't unambiguously address either one. */}
+          <input
+            class="edit-bar-size-input"
+            type="number"
+            inputmode="decimal"
+            step="0.5"
+            min={AUDIBLE_RANGE_MIN}
+            max={AUDIBLE_RANGE_MAX}
+            aria-label={t('objects.rangeExact')}
+            title={t('objects.rangeExact')}
+            value={rangeExactDraft.value}
+            onInput={rangeExactDraft.onInput}
+            onBlur={rangeExactDraft.onBlur}
+            onKeyDown={rangeExactDraft.onKeyDown}
+          />
         </label>
       )}
       <button

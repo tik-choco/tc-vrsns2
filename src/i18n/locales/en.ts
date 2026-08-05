@@ -190,6 +190,7 @@ export const en = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'Audible range',
   'objects.rangeValue': '{n} m',
+  'objects.rangeExact': 'Audible range (m)',
 
   // Box appearance — 'box' kind placements only, edited from the edit
   // toolbar (EditToolbar.tsx)

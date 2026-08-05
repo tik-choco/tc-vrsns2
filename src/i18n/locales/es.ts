@@ -188,6 +188,7 @@ export const es: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'Radio audible',
   'objects.rangeValue': '{n} m',
+  'objects.rangeExact': 'Radio audible (m)',
 
   // Apariencia de la caja — solo objetos de tipo "caja", se edita desde la
   // barra de edición (EditToolbar.tsx)

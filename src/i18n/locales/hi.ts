@@ -187,6 +187,7 @@ export const hi: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'सुनाई देने की सीमा',
   'objects.rangeValue': '{n} मी',
+  'objects.rangeExact': 'सुनाई देने की सीमा (मी)',
 
   // बॉक्स का रूप — सिर्फ़ "बॉक्स" ऑब्जेक्ट के लिए, संपादन टूलबार
   // (EditToolbar.tsx) से सेट होता है

@@ -188,6 +188,7 @@ export const pt: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'Raio audível',
   'objects.rangeValue': '{n} m',
+  'objects.rangeExact': 'Raio audível (m)',
 
   // Aparência da caixa — apenas objetos do tipo "caixa", ajustada na barra
   // de edição (EditToolbar.tsx)

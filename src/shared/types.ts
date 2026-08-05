@@ -234,17 +234,21 @@ export type PlacedObject = {
    * volume is a deliberately separate, out-of-scope concern. 1 (also the
    * value when this field is absent) is unchanged source loudness, so a
    * placement from before this field existed sounds exactly as it always
-   * has. Applied via WorldObjects.attachPositionalAudio. Meaningless for any
+   * has. Applied via WorldObjects.attachPlacementAudio. Meaningless for any
    * other kind.
    */
   volume?: number
   /**
-   * How far (world units) a 'video'/'audio' placement's sound carries at full
-   * volume before it starts falling off with distance — the positional-audio
-   * ref distance WorldObjects.attachPositionalAudio sets. Same synced,
+   * How far (world units) a 'video'/'audio' placement can be heard AT ALL —
+   * a hard boundary, not just where falloff begins: it plays at full volume
+   * out to a quarter of this distance, fades linearly across the rest, and is
+   * silent beyond it (WorldObjects.attachPlacementAudio, via
+   * placementFalloff). It is also exactly what the translucent sphere drawn
+   * around a selected placement measures, which is the point — an author sets
+   * this by looking at where the edge falls, not by guessing. Same synced,
    * author-set nature as `volume` above (see its doc). Absent means
-   * WorldObjects' own default ref distance, matching every placement from
-   * before this field existed. Meaningless for any other kind.
+   * WorldObjects' own default range, matching every placement from before
+   * this field existed. Meaningless for any other kind.
    */
   audibleRange?: number
   /**

@@ -186,6 +186,7 @@ export const ja: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': '聞こえる距離',
   'objects.rangeValue': '{n} m',
+  'objects.rangeExact': '聞こえる範囲 (m)',
 
   // ボックスの外観 — 「ボックス」種類の配置物専用。編集ツールバー（EditToolbar.tsx）で設定
   'objects.box.badge': 'ボックス',

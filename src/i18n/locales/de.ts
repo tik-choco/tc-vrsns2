@@ -189,6 +189,7 @@ export const de: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'Hörweite',
   'objects.rangeValue': '{n} m',
+  'objects.rangeExact': 'Hörweite (m)',
 
   // Box-Erscheinungsbild — nur bei Objekten vom Typ „Box“, eingestellt über
   // die Bearbeitungsleiste (EditToolbar.tsx)

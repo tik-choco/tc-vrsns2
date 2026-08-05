@@ -25,12 +25,21 @@ export const NPC_LIMITS = {
   maxOwnedNpcs: 8,
   /**
    * Distance (metres) beyond which synthesizing TTS for a listener is
-   * pointless — WorldObjects' PositionalAudio (refDistance 4, rolloff 1.4,
-   * inverse model) is already faint out here, so skipping the fetch entirely
-   * saves a wasted round trip rather than producing audio nobody would hear.
-   * Deliberately looser than maxRadius: the listener synthesizing isn't
-   * necessarily the player who triggered the reply, so it can't reuse that
-   * per-placement hearing radius.
+   * pointless — an NPC's voice is a one-shot, so it plays on WorldObjects'
+   * ONE_SHOT_REF_DISTANCE/ONE_SHOT_ROLLOFF inverse falloff (4 / 1.4) and is
+   * already faint out here; skipping the fetch entirely saves a wasted round
+   * trip rather than producing audio nobody would hear. Deliberately looser
+   * than maxRadius: the listener synthesizing isn't necessarily the player
+   * who triggered the reply, so it can't reuse that per-placement hearing
+   * radius.
+   *
+   * Note this is tied to the ONE-SHOT falloff specifically, NOT to a placed
+   * audio/video object's audibleRange — those have a hard silence boundary a
+   * player can see and drag, and a voice deliberately does not (see
+   * attachOneShotAudio's doc). If one-shots ever move onto that model, this
+   * number becomes wrong in an expensive direction: every listener between
+   * the new boundary and 40 m would pay for a synthesis that is now exactly
+   * zero gain, out of a budget of only ttsMaxConcurrent at a time.
    */
   ttsMaxDistance: 40,
   /** Never more than this many TTS syntheses in flight across all NPCs on this tab (independent of the LLM concurrency cap above). */
