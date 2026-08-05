@@ -19,7 +19,17 @@ import type { WalkableBox } from './boxGround'
 import { normalizeAngle } from './CharacterController'
 import { isMediaKind } from './mediaFormat'
 import { isFacingDone, NpcView, stepYawTowards } from './NpcView'
-import type { SpeakingLevelReading, Vec3 } from './npcPresence'
+import {
+  approachStopPoint,
+  hasArrived,
+  nearestPlayer,
+  separateApproachTargets,
+  stepApproach,
+  stepApproachMode,
+  type NpcApproachMode,
+  type SpeakingLevelReading,
+  type Vec3,
+} from './npcPresence'
 
 /** Resolves a cid to its bytes from the shared store, or null if unavailable. */
 type ResolveBytes = (cid: string) => Promise<Uint8Array | null>
@@ -123,6 +133,25 @@ type Entry = {
   npc?: NpcView
   /** Pending target heading (radians) for faceTowards(); consumed incrementally by update(), cleared once reached. */
   faceTarget?: number
+  /**
+   * Authored/rest world position for an NPC placement — the spot an approach
+   * walk returns to. Set at track() time and wherever a deliberate transform
+   * is established (commitTransform/applyTransform), mirroring npc's own
+   * restHeading (see NpcView.setRestHeading's doc) — never touched by the
+   * per-frame approach step itself (stepNpcApproach), which is the whole
+   * point: the live, currently-walking position lives ONLY in
+   * entry.object.position/entry.state, never here. Present iff this is an
+   * NPC entry.
+   */
+  npcHome?: Vec3
+  /**
+   * Owner-only approach state machine's current phase for this NPC — see
+   * npcPresence.ts's stepApproachMode. Absent (treated as 'home') until the
+   * first frame stepNpcApproach runs for this entry; stays 'home' forever
+   * for an NPC with no (or an invalid) approachRange, i.e. the feature is
+   * simply off for it — see stepNpcApproach's doc.
+   */
+  npcApproachMode?: NpcApproachMode
   /** Lazily-created child node an NPC's voice plays from, at mouth height rather than the placement's floor-level origin (see voiceAnchor). */
   voiceAnchor?: THREE.Object3D
   /**
@@ -175,6 +204,27 @@ export class WorldObjects {
    * never run it locally.
    */
   private isOwned: (id: string) => boolean = () => false
+  /**
+   * Object ids NpcRuntime currently considers "held" (an LLM/TTS round trip
+   * in flight, or a reply still within its estimated speaking window) —
+   * installed by setHeldNpcs, consulted only by the owner-only approach step
+   * (stepNpcApproach) so an owned NPC never starts walking away mid-sentence.
+   * Refreshed on whatever cadence the session layer's NpcRuntime polling
+   * runs at (see useSession's NPC_OBSERVE_INTERVAL_MS loop) — a fraction of a
+   * second of staleness here is harmless. Defaults to empty so this class
+   * works standalone (e.g. in tests), same reasoning as isDraggedElsewhere/
+   * isOwned above.
+   */
+  private heldNpcIds: ReadonlySet<string> = new Set()
+  /**
+   * Fires once, the frame an OWNED NPC's approach walk reaches its stop point
+   * (see stepNpcApproach) — World's onNpcArrived is the public seam this
+   * feeds, which useSession routes to NpcRuntime.arrived() (the same greet
+   * path observe()'s proximity edge-detection already uses). Null (the
+   * default) simply drops the event, same as the other optional listeners in
+   * this class.
+   */
+  private arrivedListener: ((id: string, player: Vec3) => void) | null = null
 
   /**
    * `listener` (the AudioListener mounted on the camera) enables positional
@@ -435,12 +485,14 @@ export class WorldObjects {
     object.scale.setScalar(scale)
 
     entry.state = { ...entry.state, x, y, z, rotationY, scale }
-    // A deliberate edit — the ONLY thing that redefines "rest" (see
-    // NpcView.restHeading's doc). The frequent ~10Hz auto-turn stream
-    // (applyRemoteState, below) must never do this, or restHeading would
-    // just chase whatever heading last arrived over the network instead of
-    // being something to ease back TO.
+    // A deliberate edit — the ONLY thing that redefines "rest"/"home" (see
+    // NpcView.restHeading's doc and npcHome's doc above). The frequent ~10Hz
+    // auto-turn/auto-walk streams (applyRemoteState below, stepNpcApproach)
+    // must never do this, or rest/home would just chase whatever transform
+    // last arrived over the network or was walked to, instead of being
+    // something to ease/walk back TO.
     entry.npc?.setRestHeading(rotationY)
+    if (entry.npcHome) entry.npcHome = { x, y, z }
     // The drag guard only suppresses the per-frame turn STEP, so a line spoken
     // to this NPC mid-drag stays pending and would fire the moment the gizmo
     // is released. Committing a heading by hand cancels it — see
@@ -476,8 +528,10 @@ export class WorldObjects {
     // This is where an NPC's binding (radius) actually arrives — place()
     // builds the initial state before it exists (see its doc) and the
     // caller folds it in via exactly this path. Same deliberate-edit
-    // reasoning as commitTransform for why restHeading updates here too.
+    // reasoning as commitTransform for why restHeading/npcHome update here
+    // too.
     entry.npc?.setRestHeading(state.rotationY)
+    if (entry.npcHome) entry.npcHome = { x: state.x, y: state.y, z: state.z }
     if (state.npc) entry.npc?.setNoticeRange(state.npc.radius)
     // A box's texture tile is WORLD-LOCKED (see refreshBoxTileRepeat's doc),
     // so any transform that touches scale — including this one, called every
@@ -587,6 +641,32 @@ export class WorldObjects {
     this.isOwned = guard
   }
 
+  /** Installs the set of NPC placement ids NpcRuntime currently considers held (see heldNpcIds's doc). */
+  setHeldNpcs(ids: ReadonlySet<string>): void {
+    this.heldNpcIds = ids
+  }
+
+  /** Registers the callback fired when an owned NPC's approach walk arrives at its stop point (see arrivedListener's doc). Pass null to clear. */
+  setArrivedListener(cb: ((id: string, player: Vec3) => void) | null): void {
+    this.arrivedListener = cb
+  }
+
+  /**
+   * True while `id`'s owner-driven approach walk currently has it away from
+   * its authored home position (anything but the 'home' phase — see
+   * npcPresence.ts's NpcApproachMode). World.emitObjectStates reads this to
+   * force a periodic re-send even when the transform hasn't changed THIS
+   * frame (see its keepalive doc) — MSG_OBJ_STATE is unreliable and never
+   * replayed to a newcomer, so a stationary-but-displaced NPC (e.g. standing
+   * still mid-conversation) would otherwise silently freeze at the wrong
+   * spot for any peer that missed the one send that moved it. False for a
+   * non-NPC entry, an untracked id, or an NPC that has never left home.
+   */
+  isNpcAwayFromHome(id: string): boolean {
+    const mode = this.objects.get(id)?.npcApproachMode
+    return mode !== undefined && mode !== 'home'
+  }
+
   /**
    * Shows a speech bubble + (re)starts the level-driven mouth for an NPC's
    * `say` effect — the ONE trigger, fired from World.applyScriptEffects AND
@@ -661,6 +741,10 @@ export class WorldObjects {
     if (this.objects.size === 0) return
     this.elapsed += delta
     const pulse = 1 + Math.sin(this.elapsed * 3) * 0.12
+    // Resolved together, not per-entry in isolation, so separateApproachTargets
+    // can keep two owned NPCs converging on the same player from choosing the
+    // same stop point — see ownedApproachTargets' doc.
+    const approachTargets = this.ownedApproachTargets(players)
     for (const [id, entry] of this.objects) {
       entry.pulse?.scale.set(pulse, pulse, 1)
       if (entry.npc) {
@@ -672,15 +756,111 @@ export class WorldObjects {
         // still gazes/speaks/lipsyncs locally (all pure-visual, no wire
         // message) — only the BODY heading is gated, since that's the only
         // piece of this that gets published.
-        if (desiredBodyYaw !== null && this.isOwned(id) && !this.isDraggedElsewhere(id)) {
+        const owned = this.isOwned(id) && !this.isDraggedElsewhere(id)
+        if (desiredBodyYaw !== null && owned) {
           entry.faceTarget = desiredBodyYaw
         }
+        // Approach/return walking is owner-only for the exact same reason —
+        // see stepNpcApproach's doc. A non-owner's NPC simply never gets an
+        // npcApproachMode past its 'home' default, which is also what keeps
+        // isNpcAwayFromHome (the keepalive gate) correctly false there: the
+        // keepalive exists to cover a peer's OWN unreliable MSG_OBJ_STATE
+        // send, not something every peer independently decides.
+        if (owned) this.stepNpcApproach(id, entry, delta, approachTargets.get(id) ?? null)
       }
       if (entry.faceTarget === undefined || this.isDraggedElsewhere(id)) continue
       const nextYaw = stepYawTowards(entry.object.rotation.y, entry.faceTarget, delta)
       entry.object.rotation.set(0, nextYaw, 0)
       entry.state = { ...entry.state, rotationY: nextYaw }
       if (isFacingDone(nextYaw, entry.faceTarget)) entry.faceTarget = undefined
+    }
+  }
+
+  /**
+   * For every OWNED NPC with a valid approachRange and a player currently
+   * within it (measured from the NPC's HOME position, not its live one — see
+   * NpcApproachInputs.playerInRange's doc), the point it should walk to and
+   * the player it picked. Batched across all such NPCs (rather than resolved
+   * one at a time inside stepNpcApproach) purely so separateApproachTargets
+   * can see every candidate stop point at once and push apart any that land
+   * too close together — e.g. two NPCs both approaching the same visitor.
+   */
+  private ownedApproachTargets(players: readonly Vec3[]): Map<string, { player: Vec3; stopPoint: Vec3 }> {
+    const raw: Array<{ id: string; player: Vec3; stopPoint: Vec3 }> = []
+    for (const [id, entry] of this.objects) {
+      if (!entry.npc || !entry.npcHome || !this.isOwned(id) || this.isDraggedElsewhere(id)) continue
+      const range = entry.state.npc?.approachRange
+      if (range === undefined) continue // absent = feature off, see NpcBinding.approachRange's doc
+      const player = nearestPlayer(entry.npcHome, players, range)
+      if (!player) continue
+      raw.push({ id, player, stopPoint: approachStopPoint(entry.npcHome, player) })
+    }
+    if (raw.length === 0) return new Map()
+    const separated = separateApproachTargets(raw.map((r) => r.stopPoint))
+    const out = new Map<string, { player: Vec3; stopPoint: Vec3 }>()
+    raw.forEach((r, i) => out.set(r.id, { player: r.player, stopPoint: separated[i] }))
+    return out
+  }
+
+  /**
+   * One frame of the owner-only approach state machine for one NPC entry —
+   * advances entry.npcApproachMode (npcPresence.ts's stepApproachMode) and,
+   * while approaching or returning, steps entry.object.position/entry.state
+   * a little closer along the way. Deliberately writes into entry.state the
+   * SAME route faceTowards()'s body-turn stream already uses (see update()'s
+   * faceTarget block above) rather than through ObjectRegistry/
+   * commitOwnObjects: World.emitObjectStates reads entry state back off this
+   * class for its owned-object MSG_OBJ_STATE stream, so a walking NPC simply
+   * looks like any other owner-driven transform change to everything
+   * downstream, and — just as important — the room's autosave (which reads
+   * ObjectRegistry.own(), never this class) never sees anything but the
+   * placement's original, authored spot. `target` is this frame's resolved
+   * (player, stopPoint) from ownedApproachTargets, or null when nobody is
+   * currently in range. A no-op (mode pinned at 'home') for an NPC with no
+   * approachRange at all — see ownedApproachTargets' own early-out — so this
+   * feature is entirely inert for every placement from before it existed.
+   */
+  private stepNpcApproach(
+    id: string,
+    entry: Entry,
+    delta: number,
+    target: { player: Vec3; stopPoint: Vec3 } | null,
+  ): void {
+    const home = entry.npcHome
+    if (!home) return
+    const mode = entry.npcApproachMode ?? 'home'
+    if (mode === 'home' && !target) return // nothing to do and nothing has ever moved it
+    const position: Vec3 = { x: entry.object.position.x, y: entry.object.position.y, z: entry.object.position.z }
+    const held = this.heldNpcIds.has(id)
+
+    const nextMode = stepApproachMode(mode, {
+      playerInRange: target !== null,
+      reachedStop: target !== null && hasArrived(position, target.stopPoint),
+      reachedHome: hasArrived(position, home),
+      held,
+    })
+
+    // Edge-triggered: fires exactly the frame the walk actually finishes, not
+    // on every subsequent frame the NPC simply stands there having arrived.
+    if (nextMode === 'arrived' && mode !== 'arrived' && target) {
+      this.arrivedListener?.(id, target.player)
+    }
+
+    let next = position
+    if (nextMode === 'approaching' && target) {
+      next = stepApproach(position, target.stopPoint, delta)
+    } else if (nextMode === 'returning') {
+      next = stepApproach(position, home, delta)
+    }
+    // 'home'/'arrived': stand still — no step.
+
+    entry.npcApproachMode = nextMode
+    if (next.x !== position.x || next.z !== position.z) {
+      // y is always home's, never the walk's own carried value — belt and
+      // braces on top of stepApproach already doing this, per the "no
+      // vertical pathing" limitation (see npcHome's doc / the R7 design).
+      entry.object.position.set(next.x, home.y, next.z)
+      entry.state = { ...entry.state, x: next.x, y: home.y, z: next.z }
     }
   }
 
@@ -1008,6 +1188,10 @@ export class WorldObjects {
       npc: built.npc,
       sound: built.sound,
       boxTile: built.boxTile,
+      // The freshly-placed/synced position IS the home position (see
+      // npcHome's doc) — `state.x/y/z` is already final by the time either
+      // place() or addFromState() reaches here.
+      npcHome: built.npc ? { x: state.x, y: state.y, z: state.z } : undefined,
     })
     this.scene.add(built.object)
   }

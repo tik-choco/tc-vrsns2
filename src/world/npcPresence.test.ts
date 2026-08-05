@@ -5,19 +5,29 @@
 // existing yaw-easing tests.
 import { describe, expect, it } from 'vitest'
 import {
+  APPROACH_ARRIVE_EPSILON,
+  APPROACH_WALK_SPEED,
+  approachStopPoint,
   BODY_TURN_HYSTERESIS,
   bubbleDwellMs,
   eyePosition,
   EYE_HEIGHT_BELOW_TOP,
   GAZE_PITCH_LIMIT,
   GAZE_YAW_LIMIT,
+  hasArrived,
   IDLE_SPEAKING_LEVEL,
   INITIAL_MOUTH_STATE,
+  MIN_APPROACH_SEPARATION,
   nearestPlayer,
   NEUTRAL_GAZE,
+  separateApproachTargets,
+  STOP_DISTANCE,
+  stepApproach,
+  stepApproachMode,
   stepBodyTarget,
   stepGaze,
   stepMouth,
+  type NpcApproachMode,
   type Vec3,
 } from './npcPresence'
 
@@ -275,5 +285,169 @@ describe('stepMouth', () => {
     const next = stepMouth(INITIAL_MOUTH_STATE, 'level', { level: Number.NaN, seq: 1 }, 0.016)
     expect(Number.isFinite(next.mouthWeight)).toBe(true)
     expect(Number.isFinite(next.smoothedLevel)).toBe(true)
+  })
+})
+
+describe('stepApproach', () => {
+  it('moves toward the target at APPROACH_WALK_SPEED, not past it, for a small step', () => {
+    const next = stepApproach(ORIGIN, { x: 10, y: 0, z: 0 }, 0.1)
+    expect(next.x).toBeCloseTo(APPROACH_WALK_SPEED * 0.1, 10)
+    expect(next.x).toBeLessThan(10)
+  })
+
+  it('lands exactly on the target once within one step, never overshooting', () => {
+    const next = stepApproach(ORIGIN, { x: 0.05, y: 0, z: 0 }, 1) // 1s at 1.4 m/s covers 1.4m, far past 0.05
+    expect(next).toEqual({ x: 0.05, y: 0, z: 0 })
+  })
+
+  it('carries y through from `current` unchanged — no vertical pathing', () => {
+    const next = stepApproach({ x: 0, y: 3, z: 0 }, { x: 10, y: 0, z: 0 }, 0.1)
+    expect(next.y).toBe(3)
+  })
+
+  it('is a no-op already at the target', () => {
+    const target = { x: 2, y: 0, z: 5 }
+    expect(stepApproach(target, target, 0.5)).toEqual(target)
+  })
+
+  it('does nothing at delta 0', () => {
+    expect(stepApproach(ORIGIN, { x: 10, y: 0, z: 0 }, 0)).toEqual(ORIGIN)
+  })
+})
+
+describe('hasArrived', () => {
+  it('is false while still far from the target', () => {
+    expect(hasArrived(ORIGIN, { x: 5, y: 0, z: 0 })).toBe(false)
+  })
+
+  it('is true once within the default epsilon', () => {
+    expect(hasArrived(ORIGIN, { x: APPROACH_ARRIVE_EPSILON / 2, y: 0, z: 0 })).toBe(true)
+  })
+
+  it('ignores y (horizontal distance only)', () => {
+    expect(hasArrived({ x: 0, y: 0, z: 0 }, { x: 0, y: 50, z: 0 })).toBe(true)
+  })
+
+  it('is true exactly at the target', () => {
+    const target = { x: 1, y: 2, z: 3 }
+    expect(hasArrived(target, target)).toBe(true)
+  })
+})
+
+describe('approachStopPoint', () => {
+  it('lands STOP_DISTANCE from the player, on the line back toward home', () => {
+    const home = { x: 0, y: 0, z: 10 }
+    const player = { x: 0, y: 0, z: 0 }
+    const stop = approachStopPoint(home, player)
+    expect(Math.hypot(stop.x - player.x, stop.z - player.z)).toBeCloseTo(STOP_DISTANCE, 6)
+    // Between the player and home, on the home side.
+    expect(stop.z).toBeCloseTo(STOP_DISTANCE, 6)
+  })
+
+  it('carries y from `from` (home), not the player', () => {
+    const home = { x: 0, y: 1.5, z: 10 }
+    const player = { x: 0, y: 0, z: 0 }
+    expect(approachStopPoint(home, player).y).toBe(1.5)
+  })
+
+  it('falls back to a fixed direction rather than NaN when home and player coincide', () => {
+    const same = { x: 3, y: 0, z: 3 }
+    const stop = approachStopPoint(same, same)
+    expect(Number.isFinite(stop.x)).toBe(true)
+    expect(Number.isFinite(stop.z)).toBe(true)
+    expect(Math.hypot(stop.x - same.x, stop.z - same.z)).toBeCloseTo(STOP_DISTANCE, 6)
+  })
+})
+
+describe('separateApproachTargets', () => {
+  it('leaves already-separated targets untouched', () => {
+    const targets = [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }]
+    expect(separateApproachTargets(targets)).toEqual(targets)
+  })
+
+  it('pushes two coincident targets at least minSeparation apart', () => {
+    const same = { x: 5, y: 0, z: 5 }
+    const [a, b] = separateApproachTargets([same, { ...same }])
+    expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeCloseTo(MIN_APPROACH_SEPARATION, 6)
+  })
+
+  it('pushes two near-but-too-close targets apart symmetrically', () => {
+    const a0 = { x: 0, y: 0, z: 0 }
+    const b0 = { x: 0.5, y: 0, z: 0 } // 0.5m apart, under MIN_APPROACH_SEPARATION (1.2m)
+    const [a, b] = separateApproachTargets([a0, b0])
+    expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeCloseTo(MIN_APPROACH_SEPARATION, 6)
+    // Symmetric: each moved the same distance from its original spot.
+    expect(Math.hypot(a.x - a0.x, a.z - a0.z)).toBeCloseTo(Math.hypot(b.x - b0.x, b.z - b0.z), 6)
+  })
+
+  it('handles three-way clustering without producing NaN', () => {
+    const same = { x: 0, y: 0, z: 0 }
+    const out = separateApproachTargets([same, { ...same }, { ...same }])
+    for (const p of out) {
+      expect(Number.isFinite(p.x)).toBe(true)
+      expect(Number.isFinite(p.z)).toBe(true)
+    }
+  })
+})
+
+describe('stepApproachMode', () => {
+  const base = { playerInRange: false, reachedStop: false, reachedHome: false, held: false }
+
+  it('home -> approaching once a player enters range', () => {
+    expect(stepApproachMode('home', { ...base, playerInRange: true })).toBe('approaching')
+  })
+
+  it('stays home while nobody is in range', () => {
+    expect(stepApproachMode('home', base)).toBe('home')
+  })
+
+  it('approaching -> arrived on reaching the stop point while still in range', () => {
+    expect(stepApproachMode('approaching', { ...base, playerInRange: true, reachedStop: true })).toBe('arrived')
+  })
+
+  it('approaching stays approaching until the stop point is reached', () => {
+    expect(stepApproachMode('approaching', { ...base, playerInRange: true })).toBe('approaching')
+  })
+
+  it('approaching -> returning: abandons the walk if the player leaves range mid-approach', () => {
+    expect(stepApproachMode('approaching', { ...base, playerInRange: false })).toBe('returning')
+  })
+
+  it('arrived stays arrived while held, even once the player has left range', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: false, held: true })).toBe('arrived')
+  })
+
+  it('arrived stays arrived while the player is still in range (not held)', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: true })).toBe('arrived')
+  })
+
+  it('arrived -> returning only once not held AND the player has left range', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: false, held: false })).toBe('returning')
+  })
+
+  it('returning -> approaching if a player re-enters range before reaching home', () => {
+    expect(stepApproachMode('returning', { ...base, playerInRange: true })).toBe('approaching')
+  })
+
+  it('returning -> home on reaching home', () => {
+    expect(stepApproachMode('returning', { ...base, reachedHome: true })).toBe('home')
+  })
+
+  it('returning stays returning until home is reached', () => {
+    expect(stepApproachMode('returning', base)).toBe('returning')
+  })
+
+  it('round-trips through every mode in a plausible walk-up-and-back scenario', () => {
+    let mode: NpcApproachMode = 'home'
+    mode = stepApproachMode(mode, { ...base, playerInRange: true })
+    expect(mode).toBe('approaching')
+    mode = stepApproachMode(mode, { ...base, playerInRange: true, reachedStop: true })
+    expect(mode).toBe('arrived')
+    mode = stepApproachMode(mode, { ...base, playerInRange: false, held: true })
+    expect(mode).toBe('arrived') // still talking
+    mode = stepApproachMode(mode, { ...base, playerInRange: false, held: false })
+    expect(mode).toBe('returning')
+    mode = stepApproachMode(mode, { ...base, reachedHome: true })
+    expect(mode).toBe('home')
   })
 })

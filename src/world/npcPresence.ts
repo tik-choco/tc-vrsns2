@@ -156,9 +156,17 @@ export function stepBodyTarget(committed: number, desired: number): number {
   return Math.abs(shortestAngleDelta(committed, desired)) > BODY_TURN_HYSTERESIS ? desired : committed
 }
 
-/** Nearest of `players` to `origin` within `range` (horizontal distance only — a player mid-jump shouldn't pop in/out of notice), or null if none qualify. */
-export function nearestPlayer(origin: Vec3, players: readonly Vec3[], range: number): Vec3 | null {
-  let best: Vec3 | null = null
+/**
+ * Nearest of `players` to `origin` within `range` (horizontal distance only —
+ * a player mid-jump shouldn't pop in/out of notice), or null if none qualify.
+ * Generic over `T` (rather than fixed to Vec3) so a caller with identified
+ * players — WorldObjects' approach targeting, below, wants to know WHICH
+ * player it picked, not just where they were standing — gets the whole
+ * object back instead of having to re-match a bare position against its
+ * own list afterward.
+ */
+export function nearestPlayer<T extends Vec3>(origin: Vec3, players: readonly T[], range: number): T | null {
+  let best: T | null = null
   let bestDistSq = range * range
   for (const p of players) {
     const dx = p.x - origin.x
@@ -170,6 +178,151 @@ export function nearestPlayer(origin: Vec3, players: readonly Vec3[], range: num
     }
   }
   return best
+}
+
+// --- Approach: owner walks the NPC to a nearby player, then home -----------
+//
+// A THIRD system, separate from gaze and body-turn above: gaze/turn are
+// cosmetic and read identically no matter WHY the NPC's root is where it is.
+// Actually walking — moving that root — only makes sense for the OWNER (see
+// WorldObjects.update's isOwned gate): every other peer just renders wherever
+// MSG_OBJ_STATE says the NPC is, and WorldObjects.NpcView derives its own
+// walk/idle animation from watching that position change (see NpcView.ts's
+// stepLocomotion) rather than being told to walk — so nothing here needs a
+// network message of its own. These are pure step/predicate helpers with no
+// per-instance state; the small state machine deciding WHEN to approach or
+// go home (stepApproachMode, below) is likewise pure — WorldObjects keeps the
+// one persistent NpcApproachMode value per owned NPC and calls these every
+// frame, the same way it already calls stepGaze/stepBodyTarget above.
+
+/** Walking speed for an owner-driven NPC approach/return, metres/second — a measured, unhurried human walk. */
+export const APPROACH_WALK_SPEED = 1.4
+/** How close (metres, horizontal) an NPC stops from the player it walked up to — near enough to read as a conversation, not a collision. */
+export const STOP_DISTANCE = 1.5
+/** Close enough (metres) to a target to call a walk finished — a nonzero epsilon so floating-point drift never leaves an NPC pacing forever a millimetre short. */
+export const APPROACH_ARRIVE_EPSILON = 0.05
+/** Minimum gap (metres) kept between two NPCs' stop points around the SAME player, so a pair converging on one visitor end up side by side rather than standing inside each other. */
+export const MIN_APPROACH_SEPARATION = 1.2
+
+/**
+ * One frame of straight-line walking from `current` toward `target`,
+ * horizontal only — `y` is carried through from `current` unchanged, since an
+ * NPC never paths vertically (flat-ground limitation; see the R7 design).
+ * Lands exactly ON `target` rather than overshooting once the remaining
+ * distance is within one frame's step, so callers can test "did I arrive"
+ * with plain equality/hasArrived rather than a moving epsilon.
+ */
+export function stepApproach(current: Vec3, target: Vec3, delta: number, speed: number = APPROACH_WALK_SPEED): Vec3 {
+  const dx = target.x - current.x
+  const dz = target.z - current.z
+  const distance = Math.hypot(dx, dz)
+  const step = speed * delta
+  if (distance <= step || distance === 0) return { x: target.x, y: current.y, z: target.z }
+  const t = step / distance
+  return { x: current.x + dx * t, y: current.y, z: current.z + dz * t }
+}
+
+/** True once `current` is within `epsilon` of `target`, horizontal distance only. */
+export function hasArrived(current: Vec3, target: Vec3, epsilon: number = APPROACH_ARRIVE_EPSILON): boolean {
+  return Math.hypot(target.x - current.x, target.z - current.z) <= epsilon
+}
+
+/**
+ * The point `stopDistance` from `player`, on the line back toward `from` (the
+ * NPC's home) — where an approaching NPC should come to a stop, so it ends up
+ * facing the player from roughly the direction it walked in from rather than
+ * some arbitrary side. Falls back to a fixed direction when `player` and
+ * `from` coincide (a home placed exactly on top of where a player happens to
+ * be standing), so this never divides by zero.
+ */
+export function approachStopPoint(from: Vec3, player: Vec3, stopDistance: number = STOP_DISTANCE): Vec3 {
+  const dx = from.x - player.x
+  const dz = from.z - player.z
+  const distance = Math.hypot(dx, dz)
+  const ux = distance > 1e-6 ? dx / distance : 1
+  const uz = distance > 1e-6 ? dz / distance : 0
+  return { x: player.x + ux * stopDistance, y: from.y, z: player.z + uz * stopDistance }
+}
+
+/**
+ * Pushes any pair of `targets` closer than `minSeparation` apart,
+ * symmetrically — two NPCs whose natural stop points around the same player
+ * would otherwise coincide (or nearly) end up side by side instead of
+ * stacked. A single relaxation pass, which is plenty for the handful of NPCs
+ * one player's approach range could ever gather (bounded by
+ * NPC_LIMITS.maxOwnedNpcs per owner). Coincident points (distance exactly 0)
+ * fall back to a fixed axis so the push is always well-defined rather than a
+ * divide-by-zero no-op.
+ */
+export function separateApproachTargets(targets: readonly Vec3[], minSeparation: number = MIN_APPROACH_SEPARATION): Vec3[] {
+  const out = targets.map((t) => ({ ...t }))
+  for (let i = 0; i < out.length; i++) {
+    for (let j = i + 1; j < out.length; j++) {
+      const dx = out[j].x - out[i].x
+      const dz = out[j].z - out[i].z
+      const distance = Math.hypot(dx, dz)
+      if (distance >= minSeparation) continue
+      const ux = distance > 1e-6 ? dx / distance : 1
+      const uz = distance > 1e-6 ? dz / distance : 0
+      const push = (minSeparation - distance) / 2
+      out[i].x -= ux * push
+      out[i].z -= uz * push
+      out[j].x += ux * push
+      out[j].z += uz * push
+    }
+  }
+  return out
+}
+
+/** Phases of the owner-only approach state machine for one NPC — see stepApproachMode. */
+export type NpcApproachMode = 'home' | 'approaching' | 'arrived' | 'returning'
+
+/** Inputs stepApproachMode reads for one frame's transition decision. */
+export type NpcApproachInputs = {
+  /** A player is currently within this NPC's approachRange (measured from its HOME position — see WorldObjects, same reference NpcRuntime's own hearing-radius check uses). */
+  playerInRange: boolean
+  /** Only meaningful while `mode` is 'approaching': the walk has reached its stop point. */
+  reachedStop: boolean
+  /** Only meaningful while `mode` is 'returning': the walk has reached home. */
+  reachedHome: boolean
+  /** The NPC is speaking, or a reply is being composed for it, right now (see NpcRuntime.isHeld) — movement must never resume while this is true, even once the player that triggered it has already left range. */
+  held: boolean
+}
+
+/**
+ * One frame of the owner-only approach state machine — see this file's
+ * header comment above for why this is a separate system from gaze/body-turn.
+ *
+ *  - home -> approaching: a player entered range.
+ *  - approaching -> arrived: reached the stop point (still in range — a range
+ *    exit on the way there is handled by the branch below instead).
+ *  - approaching -> returning: the player left range before the walk
+ *    finished — abandon and go home rather than finishing a walk toward
+ *    someone no longer there.
+ *  - arrived -> arrived: held (speaking, or composing a reply) OR the player
+ *    is still in range — never walks away out from under a conversation, and
+ *    never walks away just because a reply hasn't landed yet.
+ *  - arrived -> returning: not held AND the player has left range.
+ *  - returning -> approaching: someone (the same player, or another) is back
+ *    in range before the walk home finished.
+ *  - returning -> home: reached the original spot.
+ */
+export function stepApproachMode(mode: NpcApproachMode, inputs: NpcApproachInputs): NpcApproachMode {
+  switch (mode) {
+    case 'home':
+      return inputs.playerInRange ? 'approaching' : 'home'
+    case 'approaching':
+      if (!inputs.playerInRange) return 'returning'
+      return inputs.reachedStop ? 'arrived' : 'approaching'
+    case 'arrived':
+      if (inputs.held) return 'arrived'
+      return inputs.playerInRange ? 'arrived' : 'returning'
+    case 'returning':
+      if (inputs.playerInRange) return 'approaching'
+      return inputs.reachedHome ? 'home' : 'returning'
+    default:
+      return mode
+  }
 }
 
 // --- Speech bubble dwell -----------------------------------------------------

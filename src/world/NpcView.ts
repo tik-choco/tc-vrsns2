@@ -81,6 +81,15 @@ export class NpcView {
    * (`totalDurationMs`) the bubble publishes for exactly this purpose.
    */
   private speakingRemaining = 0
+  /**
+   * Root position as of the last update() call, for deriving walk/idle from
+   * OBSERVED motion (see stepLocomotion below) — null before the first frame,
+   * so the very first call has nothing to compare against and reports no
+   * motion rather than a spurious jump from (0,0,0).
+   */
+  private lastObservedPosition: Vec3 | null = null
+  /** Current locomotion anim, held so playAnim() is only called on a CHANGE (see AvatarRig.playAnim — calling it every frame would restart the clip every frame). */
+  private locomotionAnim: LocomotionAnim = 'idle'
 
   constructor(name: string) {
     this.root = new THREE.Group()
@@ -224,6 +233,25 @@ export class NpcView {
     const origin = this.root.position
     const target = nearestPlayer(origin, nearbyPlayers, this.noticeRange)
 
+    // Walk/idle derived from OBSERVED root motion, not from being told to
+    // walk — see this class's file header and stepLocomotion's doc for why:
+    // it makes an owner-driven approach step (WorldObjects.update) and a
+    // peer's applyRemoteState-driven one look identical, with no protocol
+    // change either way. Guarded on lastObservedPosition being set (skipped
+    // on this NPC's very first frame) so there is never a spurious "walk"
+    // burst from comparing against an unset origin.
+    const currentPos: Vec3 = { x: origin.x, y: origin.y, z: origin.z }
+    let travelYaw: number | null = null
+    if (this.lastObservedPosition) {
+      travelYaw = facingFromMotion(this.lastObservedPosition, currentPos)
+      const nextAnim = stepLocomotion(this.locomotionAnim, this.lastObservedPosition, currentPos, delta)
+      if (nextAnim !== this.locomotionAnim) {
+        this.locomotionAnim = nextAnim
+        this.rig.playAnim(nextAnim)
+      }
+    }
+    this.lastObservedPosition = currentPos
+
     // The BODY only turns for someone who actually spoke to us (faceSpeaker),
     // and eases back to the resting heading once that window lapses. Walking
     // past an NPC turns its head, not its whole body — a room full of NPCs all
@@ -244,7 +272,13 @@ export class NpcView {
       this.addressedRemaining -= delta
       if (this.addressedRemaining <= 0) this.addressedHeading = null
     }
-    const desiredHeading = this.addressedHeading ?? this.restHeading
+    // Walking overrides addressed/rest facing entirely: you cannot plausibly
+    // be greeting someone while visibly walking away from them, and the walk
+    // itself is what turns the body toward the player as it approaches (the
+    // explicit faceSpeaker() turn from NpcRuntime.arrived() takes back over
+    // the instant the walk stops — see NpcRuntime.arrived's doc).
+    const desiredHeading =
+      this.locomotionAnim === 'walk' && travelYaw !== null ? travelYaw : this.addressedHeading ?? this.restHeading
     const previousCommitted = this.committedHeading
     this.committedHeading = stepBodyTarget(this.committedHeading, desiredHeading)
 
@@ -293,6 +327,46 @@ export class NpcView {
     this.nameTag.dispose()
     this.chatBubble.dispose()
   }
+}
+
+/** Walk/idle, as derived by stepLocomotion below. */
+export type LocomotionAnim = 'idle' | 'walk'
+
+/** Speed (m/s, horizontal) OBSERVED root motion must reach before it counts as walking. */
+export const LOCOMOTION_WALK_SPEED_ON = 0.15
+/** Speed (m/s) motion must drop BELOW to count as stopped again — deliberately lower than LOCOMOTION_WALK_SPEED_ON (a Schmitt trigger) so a speed hovering right at one fixed threshold — the last, decelerating instant of a walk, or float noise in an otherwise-stationary remote position — doesn't flicker the anim between idle and walk every other frame. */
+export const LOCOMOTION_WALK_SPEED_OFF = 0.05
+
+/**
+ * One frame of walk/idle derivation from OBSERVED root motion — see this
+ * file's header for why: it reads identically whether `next` differs from
+ * `previous` because WorldObjects' owner-side approach step just moved it, or
+ * because applyRemoteState just applied a peer's MSG_OBJ_STATE, so neither
+ * path needs to say "I am walking" explicitly. Horizontal distance only
+ * (matches every other distance check in this file — an NPC never paths
+ * vertically). `delta <= 0` returns `current` unchanged: no time elapsed
+ * means no observation was possible this frame.
+ */
+export function stepLocomotion(current: LocomotionAnim, previous: Vec3, next: Vec3, delta: number): LocomotionAnim {
+  if (delta <= 0) return current
+  const dx = next.x - previous.x
+  const dz = next.z - previous.z
+  const speed = Math.hypot(dx, dz) / delta
+  const threshold = current === 'walk' ? LOCOMOTION_WALK_SPEED_OFF : LOCOMOTION_WALK_SPEED_ON
+  return speed >= threshold ? 'walk' : 'idle'
+}
+
+/**
+ * Facing heading (radians) implied by an observed horizontal displacement
+ * from `previous` to `next`, or null when the movement is too small to trust
+ * a direction from (avoids snapping to face some direction from float noise
+ * while effectively stationary).
+ */
+export function facingFromMotion(previous: Vec3, next: Vec3, epsilon = 0.0005): number | null {
+  const dx = next.x - previous.x
+  const dz = next.z - previous.z
+  if (Math.hypot(dx, dz) < epsilon) return null
+  return Math.atan2(dx, dz)
 }
 
 /**
