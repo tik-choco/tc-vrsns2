@@ -738,11 +738,16 @@ body {
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  /* Kept deliberately tighter than --sp-2: the bar sits bottom-centre, the
+     selected object and its gizmo project towards the same spot, and every
+     extra row of height here eats directly into the clickable gizmo area
+     above (an NPC's full field set once grew tall enough to swallow the move
+     handle's pixel — the panel, not the canvas, got the pointerdown). */
+  gap: 0.3rem;
   max-inline-size: calc(100vw - 2rem);
   flex-wrap: wrap;
   justify-content: center;
-  padding: 0.45rem 0.6rem;
+  padding: 0.3rem 0.55rem;
   border-radius: var(--r-pill);
   background: var(--glass-2);
   border: 1px solid var(--border);
@@ -817,7 +822,7 @@ body {
    identity — this rule is what actually styles all of them. */
 .edit-bar-num-input,
 .edit-bar-size-input {
-  padding: 0.35rem 0.4rem;
+  padding: 0.28rem 0.4rem;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--fill-1);
@@ -871,9 +876,15 @@ body {
   cursor: pointer;
 }
 
-/* Narrow desktop: same collision with the bottom-left chat bar the hint pill
-   has — bias to the bottom-right corner instead of the centre. */
-@media (max-width: 1200px) and (pointer: fine) {
+/* Any desktop width: dock to the bottom-right corner, never the centre.
+   This began as a narrow-width dodge around the bottom-left chat bar, but
+   centred turned out to be wrong at EVERY width — the selected object and
+   its gizmo project towards the same bottom-centre pixels the bar occupies,
+   and once the field set grows (an NPC's rows, the box rows) the panel's top
+   edge swallows the gizmo handles' pointerdowns outright: a real Playwright
+   drag hit the panel div, not the canvas, at 1280px. The corner never
+   competes with the thing being edited. */
+@media (pointer: fine) {
   .edit-bar {
     inset-inline-start: auto;
     inset-inline-end: calc(var(--sp-4) + var(--sa-r));
