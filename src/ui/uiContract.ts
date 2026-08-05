@@ -259,6 +259,21 @@ export type GameOverlayProps = {
    */
   onSetObjectScale: (id: string, scale: number) => void
   /**
+   * Edits ONE axis of a placement's scale (the scale lock's unlocked mode) —
+   * the per-axis counterpart to onSetObjectScale. Writing any axis turns the
+   * placement into per-axis scale (PlacedObject.scaleXYZ), keeping its
+   * `scale` as the last uniform value; see useSession.setObjectScaleAxis.
+   */
+  onSetObjectScaleAxis: (id: string, axis: 'x' | 'y' | 'z', value: number) => void
+  /**
+   * Whether the scale gizmo collapses every drag to a single uniform factor
+   * (locked — the default) or lets each axis keep its own value. On
+   * relocking, a per-axis placement snaps back to uniform (dominant axis);
+   * see useSession.setScaleLocked.
+   */
+  scaleLocked: boolean
+  onSetScaleLocked: (locked: boolean) => void
+  /**
    * Edits any placement's world position by exact number (task #26) — the
    * numeric counterpart to dragging the Move gizmo. Same gating as
    * onSetObjectScale; all three axes travel together since EditToolbar's X/Y/Z

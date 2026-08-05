@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { CharacterController, cameraLookHeading, normalizeAngle } from './CharacterController'
+import { boxTopsAt, type WalkableBox } from './boxGround'
 
 /**
  * The heading the movement path produces for "hold forward" at a given camera
@@ -97,6 +98,7 @@ type UpdateReceiver = {
   stateMachine: { setAnimState: (anim: string) => void }
   groundY: number
   groundTopsAt: (x: number, z: number) => number[]
+  boxCollidersAt: () => WalkableBox[]
 }
 
 function makeUpdateReceiver(overrides: Partial<UpdateReceiver> = {}): UpdateReceiver {
@@ -116,6 +118,7 @@ function makeUpdateReceiver(overrides: Partial<UpdateReceiver> = {}): UpdateRece
     stateMachine: { setAnimState: () => undefined },
     groundY: 0,
     groundTopsAt: () => [],
+    boxCollidersAt: () => [],
     ...overrides,
   }
 }
@@ -207,5 +210,51 @@ describe('update() grounding — box tops (boxGround.ts wiring)', () => {
     stepUpdate(receiver, 1 / 60, 300)
     expect(receiver.grounded).toBe(true)
     expect(receiver.root.position.y).toBeCloseTo(0, 5)
+  })
+})
+
+// update() side collision — the resolveAxis wiring (boxGround.ts). Same
+// stand-in-this harness as the grounding suite above; walking forward is -Z
+// at the default camera yaw (0).
+describe('update() side collision — box walls', () => {
+  it('stops the player at a tall box side instead of walking straight through', () => {
+    // A 1x2x1 box sitting at z=-3: its near face is at z=-2.5, so the player
+    // (radius 0.35) is pinned at z=-2.15 no matter how long they press W.
+    const receiver = makeUpdateReceiver({
+      boxCollidersAt: () => [{ x: 0, y: 0, z: -3, rotationY: 0, scaleX: 1, scaleY: 1, scaleZ: 1, sx: 1, sy: 2, sz: 1 }],
+    })
+    receiver.root.position.set(0, 0, 0)
+    receiver.keys.forward = true
+    stepUpdate(receiver, 1 / 60, 300)
+    expect(receiver.root.position.z).toBeCloseTo(-2.15, 5)
+    expect(receiver.grounded).toBe(true)
+  })
+
+  it('still climbs a box within STEP_UP — a step is a stair, not a wall', () => {
+    // A 0.4-high box at z=-2: the side pass lets the player in (top within
+    // STEP_UP of the floor), the vertical pass snaps them up onto it, and
+    // they keep walking across its top. Both providers are wired from the
+    // same box list, exactly like World.ts wires them.
+    const boxes = [{ x: 0, y: 0, z: -2, rotationY: 0, scaleX: 1, scaleY: 1, scaleZ: 1, sx: 1, sy: 0.4, sz: 1 }]
+    const receiver = makeUpdateReceiver({
+      boxCollidersAt: () => boxes,
+      groundTopsAt: (x, z) => boxTopsAt(x, z, boxes),
+    })
+    receiver.root.position.set(0, 0, 0)
+    receiver.keys.forward = true
+    stepUpdate(receiver, 1 / 60, 40)
+    expect(receiver.grounded).toBe(true)
+    expect(receiver.root.position.y).toBeCloseTo(0.4, 5)
+    // Still on the box's top (its footprint spans z in [-2.5, -1.5]).
+    expect(receiver.root.position.z).toBeLessThan(-1.5)
+    expect(receiver.root.position.z).toBeGreaterThan(-2.5)
+  })
+
+  it('the default collider provider (no boxes) reproduces pass-through movement', () => {
+    const receiver = makeUpdateReceiver()
+    receiver.root.position.set(0, 0, 0)
+    receiver.keys.forward = true
+    stepUpdate(receiver, 1 / 60, 60)
+    expect(receiver.root.position.z).toBeCloseTo(-3, 5)
   })
 })

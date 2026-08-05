@@ -257,6 +257,11 @@ export type SessionApi = {
   // editing already-placed objects (own placements only)
   setEditMode: (enabled: boolean) => void
   setEditTool: (tool: EditTool) => void
+  /** The scale gizmo's lock — true means every drag scales all axes together. */
+  scaleLocked: boolean
+  setScaleLocked: (locked: boolean) => void
+  /** Edits ONE axis of a placement's scale (the unlocked mode). */
+  setObjectScaleAxis: (id: string, axis: 'x' | 'y' | 'z', value: number) => void
   deleteSelectedObject: () => void
   // scripting: attach a preset or generated behaviour, render its windows, surface problems
   /** Attaches a built-in preset or a generated graph (src/script/generate.ts) to a placement, or clears its script when null. Gated the same as any other edit. */
@@ -579,6 +584,9 @@ export function useSession(): SessionApi {
   const [orphanCount, setOrphanCount] = useState(0)
   const [editMode, setEditModeState] = useState(false)
   const [editTool, setEditToolState] = useState<EditTool>('move')
+  // Uniform by default — per-axis scaling is opt-in per editing session (see
+  // setScaleLocked's doc; the ObjectEditor gizmo starts locked to match).
+  const [scaleLocked, setScaleLockedState] = useState(true)
   const [selectedObject, setSelectedObject] = useState<PlacedObject | null>(null)
   const [avatarBusy, setAvatarBusy] = useState(false)
   const [worldBusy, setWorldBusy] = useState(false)
@@ -2405,6 +2413,31 @@ export function useSession(): SessionApi {
     worldRef.current?.setEditTool(tool)
   }, [])
 
+  /**
+   * Flips the scale gizmo between uniform (locked, the default) and free
+   * per-axis scaling. Relocking also snaps the CURRENT selection back to
+   * uniform if it is per-axis: a placement the user just scaled freely on one
+   * axis must visibly return to "all axes together" the moment the lock goes
+   * on, or the gizmo would be locked while the object demonstrably isn't
+   * (see World.normalizeScale — the same dominant-axis collapse
+   * commitTransform's locked mode applies to any drag).
+   */
+  const setScaleLocked = useCallback(
+    (locked: boolean) => {
+      setScaleLockedState(locked)
+      worldRef.current?.setScaleLocked(locked)
+      if (!locked) return
+      const selected = selectedObjectRef.current
+      if (!selected?.scaleXYZ) return
+      const normalized = worldRef.current?.normalizeScale(selected.id)
+      if (!normalized) return
+      commitOwnObjects(objects.current.claim(normalized))
+      reconcileObjects()
+      setSelectedObject(normalized)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
   /** Deletes just the selected placement (the rest of the world is untouched). */
   const deleteSelectedObject = useCallback(() => {
     const selected = selectedObjectRef.current
@@ -2702,6 +2735,38 @@ export function useSession(): SessionApi {
       const clamped = clampScale(scale, current.scale)
       if (clamped === current.scale) return
       const next: PlacedObject = { ...current, scale: clamped }
+      // The uniform field IS the locked mode — writing it redefines the
+      // placement as uniform, dropping any per-axis scale it had (see
+      // PlacedObject.scaleXYZ's doc for the same rule on the wire).
+      delete next.scaleXYZ
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Edits ONE axis of a placement's scale (EditToolbar's X/Y/Z fields, shown
+   * in the scale lock's unlocked mode) — the per-axis counterpart to
+   * setObjectScale above, same shape (gate on worldPolicy + editableIds, read
+   * the live placement, clamp, claim + commitOwnObjects, then reconcile).
+   * Writing any axis turns the placement per-axis (PlacedObject.scaleXYZ);
+   * the other two axes come from the current effective scale — scaleXYZ if
+   * the placement already has one, else its uniform `scale` on all three —
+   * and `scale` itself is left at the last uniform value (an older peer's
+   * view of this placement).
+   */
+  const setObjectScaleAxis = useCallback(
+    (id: string, axis: 'x' | 'y' | 'z', value: number) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current) return
+      const base = current.scaleXYZ ?? { x: current.scale, y: current.scale, z: current.scale }
+      const clamped = clampScale(value, base[axis])
+      if (clamped === base[axis]) return
+      const next: PlacedObject = { ...current, scaleXYZ: { ...base, [axis]: clamped } }
       commitOwnObjects(objects.current.claim(next))
       reconcileObjects()
       if (selectedObjectRef.current?.id === id) setSelectedObject(next)
@@ -3048,6 +3113,9 @@ export function useSession(): SessionApi {
     clearObjects,
     setEditMode,
     setEditTool,
+    scaleLocked,
+    setScaleLocked,
+    setObjectScaleAxis,
     deleteSelectedObject,
     setObjectScript,
     setNpcRadius,

@@ -170,6 +170,8 @@ export const ja: Dict = {
   'objects.rotate': '回転',
   'objects.scale': 'サイズ',
   'objects.size': '倍率',
+  'objects.scaleLock': '均等にスケール',
+  'objects.scaleUnlock': '自由にスケール',
   'objects.placedBy': '配置：{name}',
   'objects.orphans': '退室した人が残したものが{count}個あります。ルームを出るまで表示されますが、誰も編集できません。',
 

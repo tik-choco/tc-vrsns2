@@ -188,6 +188,9 @@ export function App() {
           selectedObject={session.selectedObject}
           onSetEditMode={session.setEditMode}
           onSetEditTool={session.setEditTool}
+          scaleLocked={session.scaleLocked}
+          onSetScaleLocked={session.setScaleLocked}
+          onSetObjectScaleAxis={session.setObjectScaleAxis}
           onDeleteSelectedObject={session.deleteSelectedObject}
           onSetObjectScript={session.setObjectScript}
           onSetNpcRadius={session.setNpcRadius}

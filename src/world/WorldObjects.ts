@@ -416,7 +416,7 @@ export class WorldObjects {
       disposeObject(built.object)
       return
     }
-    built.object.scale.setScalar(state.scale)
+    applyScaleVector(built.object, state)
     built.object.rotation.y = state.rotationY
     built.object.position.set(state.x, state.y, state.z)
     built.npc?.setRestHeading(state.rotationY)
@@ -427,7 +427,7 @@ export class WorldObjects {
     // Same reasoning: audioOffset/metres-vs-scale only divides out correctly
     // once the placement's REAL scale (just set above) is known — see
     // refreshAudioAnchor's doc.
-    if (built.audioAnchor) refreshAudioAnchor(built.audioAnchor, state.audioOffset, state.scale)
+    if (built.audioAnchor) refreshAudioAnchor(built.audioAnchor, state.audioOffset, built.object.scale)
     this.track({ ...state }, built)
   }
 
@@ -573,12 +573,19 @@ export class WorldObjects {
   /**
    * Reads a placement's scene transform back into its state after an edit,
    * normalizing it to what a PlacedObject can actually express and every peer
-   * can reproduce: position clamped, rotation reduced to a heading, scale made
-   * uniform. The scene object is corrected to match, so what the editor left
-   * behind and what goes on the wire are never different things. Returns the
-   * new state (to broadcast), or null if the id is gone.
+   * can reproduce: position clamped, rotation reduced to a heading, and —
+   * unless `uniform` is false — scale made uniform (see PlacedObject.scaleXYZ
+   * for the per-axis mode `uniform` governs). The scene object is corrected to
+   * match, so what the editor left behind and what goes on the wire are never
+   * different things. Returns the new state (to broadcast), or null if the id
+   * is gone.
+   *
+   * `uniform` is the gizmo's scale-lock state (ObjectEditor.scaleLocked):
+   * locked = every drag collapses to the single factor a placement has always
+   * carried (dropping any scaleXYZ — relocking snaps back to uniform);
+   * unlocked = each axis keeps what the gizmo left it, recorded as scaleXYZ.
    */
-  commitTransform(id: string): PlacedObject | null {
+  commitTransform(id: string, uniform = true): PlacedObject | null {
     const entry = this.objects.get(id)
     if (!entry) return null
     const object = entry.object
@@ -588,15 +595,32 @@ export class WorldObjects {
     const z = clamp(object.position.z, -EDIT_POS_LIMIT, EDIT_POS_LIMIT)
     // A gizmo can tilt an object on any axis; only the heading survives.
     const rotationY = wrapAngle(new THREE.Euler().setFromQuaternion(object.quaternion, 'YXZ').y)
-    // Non-uniform scaling is likewise not representable — the axis the user
-    // actually dragged (the one furthest from the old scale) wins for all three.
-    const scale = clamp(dominantScale(object.scale, entry.state.scale), EDIT_SCALE_MIN, EDIT_SCALE_MAX)
+    // Uniform mode: non-uniform scaling is not representable — the axis the
+    // user actually dragged (the one furthest from the old scale) wins for all
+    // three (see dominantScale). Per-axis mode: each axis keeps whatever the
+    // gizmo left it at, clamped independently.
+    let scale = entry.state.scale
+    if (uniform) {
+      scale = clamp(dominantScale(object.scale, entry.state.scale), EDIT_SCALE_MIN, EDIT_SCALE_MAX)
+      object.scale.setScalar(scale)
+    } else {
+      object.scale.set(
+        clamp(object.scale.x, EDIT_SCALE_MIN, EDIT_SCALE_MAX),
+        clamp(object.scale.y, EDIT_SCALE_MIN, EDIT_SCALE_MAX),
+        clamp(object.scale.z, EDIT_SCALE_MIN, EDIT_SCALE_MAX),
+      )
+    }
 
     object.position.set(x, y, z)
     object.rotation.set(0, rotationY, 0)
-    object.scale.setScalar(scale)
 
-    entry.state = { ...entry.state, x, y, z, rotationY, scale }
+    const next: PlacedObject = { ...entry.state, x, y, z, rotationY, scale }
+    // The per-axis scale follows the mode: an unlocked drag records scaleXYZ
+    // (`scale` keeps the last uniform value — an older peer's view of this
+    // placement), a locked drag erases it again.
+    if (uniform) delete next.scaleXYZ
+    else next.scaleXYZ = { x: object.scale.x, y: object.scale.y, z: object.scale.z }
+    entry.state = next
     // A deliberate edit — the ONLY thing that redefines "rest"/"home" (see
     // NpcView.restHeading's doc and npcHome's doc above). The frequent ~10Hz
     // auto-turn/auto-walk streams (applyRemoteState below, stepNpcApproach)
@@ -610,13 +634,14 @@ export class WorldObjects {
     // is released. Committing a heading by hand cancels it — see
     // NpcView.clearAddressedTurn.
     entry.npc?.clearAddressedTurn()
-    // A gizmo resize changes `scale` above like any other edit — keep a
+    // A gizmo resize changes the scale above like any other edit — keep a
     // box's texture tile world-locked to it (see refreshBoxTileRepeat's doc),
     // and the audio anchor's offset-in-metres correct despite the new scale
     // (see refreshAudioAnchor's doc) — same reasoning as applyTransform's own
-    // call into each, just below.
+    // call into each, just below. The live vector is passed (not a captured
+    // value), since per-axis mode makes "the scale" three numbers.
     if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
-    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, scale)
+    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, object.scale)
     return { ...entry.state }
   }
 
@@ -647,10 +672,21 @@ export class WorldObjects {
   applyTransform(state: PlacedObject): void {
     const entry = this.objects.get(state.id)
     if (!entry) return
+    const next = { ...entry.state, ...state }
     entry.object.position.set(state.x, state.y, state.z)
     entry.object.rotation.set(0, state.rotationY, 0)
-    entry.object.scale.setScalar(state.scale)
-    entry.state = { ...entry.state, ...state }
+    if (state.scaleXYZ) {
+      entry.object.scale.set(state.scaleXYZ.x, state.scaleXYZ.y, state.scaleXYZ.z)
+    } else {
+      // A transform with no per-axis scale — an older peer, or a script's
+      // world/setScale, which is uniform by contract (scriptBridge drops the
+      // placement's scaleXYZ before calling here) — redefines the placement
+      // as uniform: flatten the scene AND drop any lingering scaleXYZ, or
+      // entry.state would promise a per-axis scale the scene no longer has.
+      entry.object.scale.setScalar(state.scale)
+      delete next.scaleXYZ
+    }
+    entry.state = next
     // This is where an NPC's binding (radius) actually arrives — place()
     // builds the initial state before it exists (see its doc) and the
     // caller folds it in via exactly this path. Same deliberate-edit
@@ -672,7 +708,7 @@ export class WorldObjects {
     // Audio writes in applyTransform" rule two paragraphs up. `entry.state`
     // was just replaced above, so `.audioOffset` here is already the
     // INCOMING value, not the stale one.
-    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, state.scale)
+    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, entry.object.scale)
   }
 
   /**
@@ -723,10 +759,7 @@ export class WorldObjects {
   applyRemoteState(state: ObjectState): void {
     const entry = this.objects.get(state.id)
     if (!entry) return
-    entry.object.position.set(state.x, state.y, state.z)
-    entry.object.rotation.set(0, state.rotationY, 0)
-    entry.object.scale.setScalar(state.scale)
-    entry.state = {
+    const next = {
       ...entry.state,
       x: state.x,
       y: state.y,
@@ -734,6 +767,22 @@ export class WorldObjects {
       rotationY: state.rotationY,
       scale: state.scale,
     }
+    entry.object.position.set(state.x, state.y, state.z)
+    entry.object.rotation.set(0, state.rotationY, 0)
+    if (state.scaleXYZ) {
+      // The owner streams its placement's per-axis scale with every snapshot
+      // (World.emitObjectStates), so a script-driven transform never flattens
+      // a per-axis placement back to uniform on the way through.
+      entry.object.scale.set(state.scaleXYZ.x, state.scaleXYZ.y, state.scaleXYZ.z)
+      next.scaleXYZ = state.scaleXYZ
+    } else {
+      // A sender without per-axis data (an older peer, or a script's uniform
+      // world/setScale) redefines the placement as uniform — flatten the
+      // scene and drop any lingering scaleXYZ, same rule as applyTransform.
+      entry.object.scale.setScalar(state.scale)
+      delete next.scaleXYZ
+    }
+    entry.state = next
     // Same reasoning as applyTransform's own call into this — this stream
     // can carry a script-driven scale change too. audioOffset itself never
     // arrives via ObjectState (see this method's own doc: transform fields
@@ -741,7 +790,7 @@ export class WorldObjects {
     // scale (see refreshAudioAnchor's doc), so a scale-only change here must
     // still re-derive it from whatever `entry.state.audioOffset` already is.
     if (entry.boxTile) refreshBoxTileRepeat(entry.boxTile)
-    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, state.scale)
+    if (entry.audioAnchor) refreshAudioAnchor(entry.audioAnchor, entry.state.audioOffset, entry.object.scale)
   }
 
   /**
@@ -1468,7 +1517,7 @@ export class WorldObjects {
   private createAudioAnchor(parent: THREE.Object3D, offset?: { x: number; y: number; z: number }): THREE.Object3D {
     const anchor = new THREE.Object3D()
     parent.add(anchor)
-    refreshAudioAnchor(anchor, offset, 1)
+    refreshAudioAnchor(anchor, offset, { x: 1, y: 1, z: 1 })
     return anchor
   }
 
@@ -1579,7 +1628,12 @@ export class WorldObjects {
         y: entry.object.position.y,
         z: entry.object.position.z,
         rotationY: entry.object.rotation.y,
-        scale: entry.object.scale.x,
+        // Per-axis, straight off the live scene node — a box scaled freely on
+        // one axis collides as the scaled footprint it visibly is (see
+        // boxGround.ts's WalkableBox doc).
+        scaleX: entry.object.scale.x,
+        scaleY: entry.object.scale.y,
+        scaleZ: entry.object.scale.z,
         sx: appearance.sx,
         sy: appearance.sy,
         sz: appearance.sz,
@@ -1746,12 +1800,14 @@ function refreshBoxTileRepeat(tile: BoxTileState): void {
  * ("3 means three metres whether the panel is tiny or enormous"). The
  * anchor is a CHILD of the placement, so three.js already multiplies
  * whatever local position it's given by the parent's scale when computing a
- * world position; dividing by `scale` here is what cancels that back out
+ * world position; dividing by `scales` here is what cancels that back out
  * again, the same shape refreshBoxTileRepeat above uses for the opposite
  * problem (keeping a texture's tiling from shrinking/growing with scale
- * instead of a distance from doing so).
+ * instead of a distance from doing so). Each world axis divides by its own
+ * scale component, so a per-axis scaled placement still places the emitter
+ * `offset` metres out along each axis.
  *
- * `scale` is always the placement's CURRENT live scale at the moment of the
+ * `scales` is always the placement's CURRENT live scale at the moment of the
  * call — never a value captured once — so every caller passes whatever it
  * itself just set object.scale to (or is about to), rather than reading it
  * back off the Object3D a second time. `offset` absent means the origin
@@ -1762,10 +1818,12 @@ function refreshBoxTileRepeat(tile: BoxTileState): void {
 function refreshAudioAnchor(
   anchor: THREE.Object3D,
   offset: { x: number; y: number; z: number } | undefined,
-  scale: number,
+  scales: { x: number; y: number; z: number },
 ): void {
-  const s = scale || 1
-  anchor.position.set((offset?.x ?? 0) / s, (offset?.y ?? 0) / s, (offset?.z ?? 0) / s)
+  const sx = scales.x || 1
+  const sy = scales.y || 1
+  const sz = scales.z || 1
+  anchor.position.set((offset?.x ?? 0) / sx, (offset?.y ?? 0) / sy, (offset?.z ?? 0) / sz)
 }
 
 function measureSize(model: THREE.Object3D): THREE.Vector3 {
@@ -2040,6 +2098,21 @@ function wrapAngle(radians: number): number {
   if (wrapped > Math.PI) return wrapped - Math.PI * 2
   if (wrapped <= -Math.PI) return wrapped + Math.PI * 2
   return wrapped
+}
+
+/**
+ * Writes a placement's effective scale onto its scene node: scaleXYZ when the
+ * placement has one (per-axis mode), else the uniform `scale` on all three
+ * axes. The ONLY place a placement's scale should be applied — see
+ * PlacedObject.scaleXYZ's doc for why reading it raw would misrender.
+ */
+function applyScaleVector(
+  object: THREE.Object3D,
+  state: { scale: number; scaleXYZ?: { x: number; y: number; z: number } },
+): void {
+  const s = state.scaleXYZ
+  if (s) object.scale.set(s.x, s.y, s.z)
+  else object.scale.setScalar(state.scale)
 }
 
 /**

@@ -28,6 +28,8 @@ import {
   Grid3x3,
   Compass,
   Speaker,
+  Lock,
+  LockOpen,
 } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
 import { useTtsVoices } from '../lib/ttsVoices'
@@ -68,6 +70,9 @@ import {
 type Props = Pick<
   GameOverlayProps,
   | 'editTool'
+  | 'scaleLocked'
+  | 'onSetScaleLocked'
+  | 'onSetObjectScaleAxis'
   | 'selectedObject'
   | 'onSetEditTool'
   | 'onDeleteSelectedObject'
@@ -340,6 +345,27 @@ export function EditToolbar(props: Props) {
   }
 
   const scaleValue = scaleDraft ?? (selected ? formatScale(selected.scale) : '')
+
+  // --- per-axis scale (the scale lock's unlocked mode) --------------------
+  // The X/Y/Z fields shown when the scale lock is off. Each axis is its own
+  // independent useNumberDraft, same reasoning as the position fields below
+  // ("editing X must never clobber what Y or Z is mid-type"); the commit goes
+  // to onSetObjectScaleAxis, which reads the other two axes off `selected`
+  // itself, so a single edited axis can't clobber its siblings either. The
+  // displayed value is the EFFECTIVE axis scale — scaleXYZ if the placement
+  // has one, else its uniform `scale` on all three axes (which is also what
+  // the fields show the moment a uniform placement is selected unlocked).
+  const effectiveScaleAxis = (axis: 'x' | 'y' | 'z'): number =>
+    selected ? (selected.scaleXYZ?.[axis] ?? selected.scale) : 1
+  const scaleXDraft = useNumberDraft(selected?.id, effectiveScaleAxis('x'), (v) => {
+    if (selected) props.onSetObjectScaleAxis(selected.id, 'x', v)
+  })
+  const scaleYDraft = useNumberDraft(selected?.id, effectiveScaleAxis('y'), (v) => {
+    if (selected) props.onSetObjectScaleAxis(selected.id, 'y', v)
+  })
+  const scaleZDraft = useNumberDraft(selected?.id, effectiveScaleAxis('z'), (v) => {
+    if (selected) props.onSetObjectScaleAxis(selected.id, 'z', v)
+  })
 
   // --- position / rotation (task #26) ----------------------------------
   // Each axis is its own independent draft field (useNumberDraft), same
@@ -619,24 +645,84 @@ export function EditToolbar(props: Props) {
           land on an exact value or make two objects match. Shown for any
           selection (unlike the volume/range/npc fields below, which are
           gated on kind/npc) since every placement has a scale — see
-          onSetObjectScale's doc comment in uiContract.ts. */}
-      <label class="edit-bar-script">
+          onSetObjectScale's doc comment in uiContract.ts. The lock button
+          next to it toggles between one uniform field and per-axis X/Y/Z
+          fields (see onSetScaleLocked's doc comment there too); the gizmo's
+          handles and commit rule follow the same flag. */}
+      <div class="edit-bar-scale" role="group" aria-label={t('objects.size')}>
         <Ruler size={15} aria-hidden="true" />
-        <span class="btn-text-collapse">{t('objects.size')}</span>
-        <input
-          class="edit-bar-size-input"
-          type="number"
-          inputmode="decimal"
-          step="0.1"
-          min={SCALE_MIN}
-          max={SCALE_MAX}
+        <button
+          type="button"
+          class={props.scaleLocked ? 'edit-bar-scale-lock' : 'edit-bar-scale-lock is-unlocked'}
+          title={props.scaleLocked ? t('objects.scaleLock') : t('objects.scaleUnlock')}
+          aria-label={props.scaleLocked ? t('objects.scaleLock') : t('objects.scaleUnlock')}
+          aria-pressed={!props.scaleLocked}
           disabled={!selected}
-          value={scaleValue}
-          onInput={onScaleInput}
-          onBlur={onScaleBlur}
-          onKeyDown={onScaleKeyDown}
-        />
-      </label>
+          onClick={() => props.onSetScaleLocked(!props.scaleLocked)}
+        >
+          {props.scaleLocked ? <Lock size={14} aria-hidden="true" /> : <LockOpen size={14} aria-hidden="true" />}
+        </button>
+        {props.scaleLocked ? (
+          <input
+            class="edit-bar-size-input"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={SCALE_MIN}
+            max={SCALE_MAX}
+            disabled={!selected}
+            value={scaleValue}
+            onInput={onScaleInput}
+            onBlur={onScaleBlur}
+            onKeyDown={onScaleKeyDown}
+          />
+        ) : (
+          <span class="edit-bar-scale-axes">
+            <span class="edit-bar-axis-label">{t('objects.scaleX')}</span>
+            <input
+              class="edit-bar-num-input"
+              type="number"
+              inputmode="decimal"
+              step="0.1"
+              min={SCALE_MIN}
+              max={SCALE_MAX}
+              disabled={!selected}
+              value={scaleXDraft.value}
+              onInput={scaleXDraft.onInput}
+              onBlur={scaleXDraft.onBlur}
+              onKeyDown={scaleXDraft.onKeyDown}
+            />
+            <span class="edit-bar-axis-label">{t('objects.scaleY')}</span>
+            <input
+              class="edit-bar-num-input"
+              type="number"
+              inputmode="decimal"
+              step="0.1"
+              min={SCALE_MIN}
+              max={SCALE_MAX}
+              disabled={!selected}
+              value={scaleYDraft.value}
+              onInput={scaleYDraft.onInput}
+              onBlur={scaleYDraft.onBlur}
+              onKeyDown={scaleYDraft.onKeyDown}
+            />
+            <span class="edit-bar-axis-label">{t('objects.scaleZ')}</span>
+            <input
+              class="edit-bar-num-input"
+              type="number"
+              inputmode="decimal"
+              step="0.1"
+              min={SCALE_MIN}
+              max={SCALE_MAX}
+              disabled={!selected}
+              value={scaleZDraft.value}
+              onInput={scaleZDraft.onInput}
+              onBlur={scaleZDraft.onBlur}
+              onKeyDown={scaleZDraft.onKeyDown}
+            />
+          </span>
+        )}
+      </div>
       {/* Numeric position + rotation (task #26) — the exact-value counterpart
           to dragging the Move/Rotate gizmos. Shown for any selection, same
           "every placement has this" reasoning as the size field above.

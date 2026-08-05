@@ -70,7 +70,14 @@ export class WorldScriptBridge implements ScriptWorldBridge {
       state.z = patch.pos.z
     }
     if (patch.rotationY !== undefined) state.rotationY = patch.rotationY
-    if (patch.scale !== undefined) state.scale = patch.scale
+    if (patch.scale !== undefined) {
+      state.scale = patch.scale
+      // A script's world/setScale is uniform by contract — it redefines the
+      // placement as uniform, so any per-axis scale (PlacedObject.scaleXYZ)
+      // is dropped rather than merged under the new factor. applyTransform
+      // then flattens the scene to match (see its scale branch).
+      delete state.scaleXYZ
+    }
     this.objects.applyTransform(state)
   }
 

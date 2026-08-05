@@ -39,6 +39,8 @@ export type ObjectState = {
   z: number
   rotationY: number
   scale: number
+  /** Per-axis scale, mirroring PlacedObject.scaleXYZ — see that field's doc. */
+  scaleXYZ?: { x: number; y: number; z: number }
 }
 
 /** Lightweight peer profile exchanged at the application layer (untrusted — sanitize on receipt). */
@@ -195,7 +197,22 @@ export type PlacedObject = {
   y: number
   z: number
   rotationY: number
+  /**
+   * Uniform scale factor, applied to all three axes — the only scale an older
+   * placement (or older peer) knows. See scaleXYZ for what happens when both
+   * are present.
+   */
   scale: number
+  /**
+   * Per-axis scale, present iff an author unlocked per-axis scaling and
+   * dragged the gizmo on an individual axis. Absent = uniform `scale` applied
+   * to all three axes, which is every placement from before this field
+   * existed. When present, `scale` still holds the last uniform value — that
+   * is how an older peer renders the placement (a deliberate approximation of
+   * the author's intent, not a sync of any one axis). Always read through the
+   * effective-scale helper in WorldObjects (applyScaleVector), never raw.
+   */
+  scaleXYZ?: { x: number; y: number; z: number }
   /** Asset kind; absent means 'model'. */
   kind?: PlacedKind
   /** MIME type of the bytes, so media decodes correctly from a blob URL. */
