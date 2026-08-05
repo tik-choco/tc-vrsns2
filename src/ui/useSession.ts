@@ -247,7 +247,7 @@ export type SessionApi = {
    * placement is: claim + commitOwnObjects + reconcileObjects, then drops
    * into edit mode with the new box selected.
    */
-  placeBox: () => void
+  placeBox: () => Promise<void>
   /** Places a tc-town character into the world as an NPC (R5) — see CharactersPanel's "Place in world". */
   placeTownCharacter: (entry: CharacterIndexEntry) => Promise<void>
   clearObjects: () => void
@@ -391,8 +391,15 @@ const NPC_SILENCE_LEVEL = 0.02
 const NPC_SILENCE_HOLD_MS = 1200
 /** Default appearance for a freshly authored box (placeBox) — mirrors net/protocol.ts's parsePlacedObject fallback exactly, so a box just placed and a wire-decoded box with no appearance render identically. */
 const DEFAULT_BOX_APPEARANCE: BoxAppearance = { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' }
-/** Drop distance in front of the player for placeBox — matches WorldObjects' own default drop distance for a non-media placement, so a box lands exactly where any other prop would. */
-const BOX_PLACE_DISTANCE = 1.5
+/**
+ * Drop distance in front of the player for placeBox. Unlike a thin model, a
+ * box has real bulk right at its anchor point, so WorldObjects' own
+ * non-media default (1.5m) put its near face inside the avatar: half the
+ * box's own depth (0.5m for the 1m default) plus the avatar's own radius
+ * plus a small clearance margin land around 2.5m before the box actually
+ * sits clear of the player.
+ */
+const BOX_PLACE_DISTANCE = 2.5
 
 /** Schedules a thumbnail capture one rendered frame out (rAF, or a short timeout where unavailable). */
 function scheduleNextFrame(cb: () => void): void {
@@ -986,14 +993,22 @@ export function useSession(): SessionApi {
     setPlacedCount(worldRef.current?.listPlacedObjects().length ?? 0)
   }, [])
 
-  /** Reconcile the scene to everything currently in the registry. */
+  /**
+   * Reconcile the scene to everything currently in the registry. Returns the
+   * underlying world.syncObjects promise (undefined when there is no world)
+   * so a caller that needs the scene to actually reflect the update — e.g.
+   * placeBox selecting what it just placed — can await it; every other call
+   * site fires this the same way it always did, letting the promise resolve
+   * in the background.
+   */
   const reconcileObjects = useCallback(() => {
     const world = worldRef.current
     if (!world) return
     const union = objects.current.union()
-    void world.syncObjects(union, resolveBytes).then(refreshPlacedCount)
+    const synced = world.syncObjects(union, resolveBytes).then(refreshPlacedCount)
     setPlacedCount(union.length)
     setOrphanCount(objects.current.orphanCount())
+    return synced
   }, [refreshPlacedCount])
 
   /**
@@ -2257,7 +2272,7 @@ export function useSession(): SessionApi {
    * selected — same "placing is the start of editing it" reasoning as
    * placeObject.
    */
-  const placeBox = useCallback(() => {
+  const placeBox = useCallback(async () => {
     const world = worldRef.current
     if (!world || worldPolicyRef.current === 'locked') return
     const pose = world.getLocalPose()
@@ -2277,7 +2292,15 @@ export function useSession(): SessionApi {
       box: { ...DEFAULT_BOX_APPEARANCE },
     }
     commitOwnObjects([...objects.current.own(), state])
-    reconcileObjects()
+    // Unlike placeObject (which awaits World.placeObject and so already has
+    // a mesh to select by the time it calls selectObject), a box has no
+    // World.placeObject call at all — reconcileObjects() is the only thing
+    // that ever registers its mesh, and that registration happens inside
+    // the ASYNC world.syncObjects it fires. Awaiting reconcileObjects() here
+    // (see its own doc) guarantees the mesh exists before selectObject runs;
+    // without it, ObjectEditor.select() looks the id up too early, finds
+    // nothing, and silently clears the selection instead.
+    await reconcileObjects()
     setEditMode(true)
     worldRef.current?.selectObject(state.id)
   }, [commitOwnObjects, reconcileObjects, setEditMode])
@@ -2327,7 +2350,10 @@ export function useSession(): SessionApi {
           },
         }
         commitOwnObjects([...objects.current.own(), npcState])
-        reconcileObjects()
+        // Same await-before-select reasoning as placeBox above: syncRemote is
+        // what merges the npc binding into the tracked copy, and selecting
+        // before it settles can race the editor's id lookup.
+        await reconcileObjects()
         setEditMode(true)
         worldRef.current?.selectObject(npcState.id)
       } catch (e) {
