@@ -226,8 +226,14 @@ function useNumberDraft(
   const onKeyDown = (e: KeyboardEvent) => {
     const input = e.target as HTMLInputElement
     if (e.key === 'Enter') {
+      // stopPropagation keeps GameOverlay's window keydown handler from
+      // re-acting on the same key once blur() below has already cleared
+      // document.activeElement — otherwise its "nothing editable focused"
+      // guard sees nothing focused and opens chat (same fix as ChatPanel).
+      e.stopPropagation()
       input.blur() // commits via onBlur above
     } else if (e.key === 'Escape') {
+      e.stopPropagation()
       setDraft(null) // discard first, so the blur below is a no-op commit
       input.blur()
     }
@@ -296,8 +302,14 @@ export function EditToolbar(props: Props) {
   const onScaleKeyDown = (e: KeyboardEvent) => {
     const input = e.target as HTMLInputElement
     if (e.key === 'Enter') {
+      // See useNumberDraft's onKeyDown above for why this stopPropagation
+      // is needed: without it, blur() below clears document.activeElement
+      // before GameOverlay's window keydown handler sees this same Enter,
+      // so its editable-focus guard misses and chat opens.
+      e.stopPropagation()
       input.blur() // commits via onScaleBlur above
     } else if (e.key === 'Escape') {
+      e.stopPropagation()
       setScaleDraft(null) // discard first, so the blur below is a no-op commit
       input.blur()
     }
