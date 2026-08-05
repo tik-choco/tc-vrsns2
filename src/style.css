@@ -805,6 +805,72 @@ body {
   align-self: center;
 }
 
+/* Numeric fields added for box authoring / NPC approach range / numeric
+   position+rotation (tasks #23/#24/#26) — shares .edit-bar-script-select's
+   look (same padding/border/background/font) but is narrower, since a
+   number field never needs the room a <select>'s longest label does. The
+   size field switched to this same class from .edit-bar-script-select (it
+   used to just reuse the select's styling, which is what made an e2e
+   locator keyed on that class ambiguous — see scripts/e2e-graph.mjs's own
+   note on the same issue). Every individual field also carries its own
+   second class (.edit-bar-pos-x, .edit-bar-box-w, …) purely for locator
+   identity — this rule is what actually styles all of them. */
+.edit-bar-num-input,
+.edit-bar-size-input {
+  padding: 0.35rem 0.4rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  inline-size: 4rem;
+}
+.edit-bar-num-input:disabled,
+.edit-bar-size-input:disabled {
+  opacity: 0.5;
+}
+/* A short, untranslated-feeling single-letter/word label ahead of a numeric
+   field (X/Y/Z, W/H/D) — smaller and more muted than .edit-bar-script's own
+   text, since these sit right next to the field they name rather than
+   fronting a whole control the way "Size"/"Behavior" do. */
+.edit-bar-axis-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+/* Position/rotation (task #26) and box appearance (task #24) group wrappers
+   — plain flex rows, same gap/font/color rhythm as .edit-bar-script, just
+   holding several fields instead of one label+control pair. */
+.edit-bar-transform,
+.edit-bar-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding-inline: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+/* The box's fill-colour picker: a native <input type="color"> sized to sit
+   inline with the rest of .edit-bar-box's compact fields, unlike
+   AccentColor.tsx's larger conic-gradient swatch (a dedicated profile-colour
+   picker, not a fit for this toolbar's row of small controls). */
+.edit-bar-box-color {
+  display: inline-flex;
+  align-items: center;
+}
+.edit-bar-box-color input[type='color'] {
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: none;
+  cursor: pointer;
+}
+
 /* Narrow desktop: same collision with the bottom-left chat bar the hint pill
    has — bias to the bottom-right corner instead of the centre. */
 @media (max-width: 1200px) and (pointer: fine) {

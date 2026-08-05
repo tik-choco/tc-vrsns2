@@ -100,6 +100,9 @@ export const en = {
   'npc.voice': 'Voice',
   'npc.voiceDefault': 'Default (AI settings)',
   'npc.voiceHelp': "Clearing uses the default voice from AI settings, not the character's original tc-town voice.",
+  'npc.approach': 'Approach range',
+  'npc.approachOff': 'Off',
+  'npc.approachValue': '{n} m',
 
   // World (environment) panel
   'world.title': 'World',
@@ -143,6 +146,8 @@ export const en = {
   'objects.upload': 'Upload file',
   'objects.uploading': 'Loading file…',
   'objects.place': 'Place in front of me',
+  'objects.placeBox': 'Place a box',
+  'objects.boxName': 'Box',
   'objects.placed': 'Placed',
   'objects.remove': 'Remove',
   'objects.clear': 'Clear all',
@@ -164,12 +169,32 @@ export const en = {
   'objects.placedBy': 'placed by {name}',
   'objects.orphans': '{count} left behind by people who have gone. They stay until you leave the room, and nobody can edit them.',
 
+  // Numeric position/rotation — every placement, edited from the edit
+  // toolbar (EditToolbar.tsx); the exact-value counterpart to dragging the
+  // Move/Rotate gizmos.
+  'objects.transform': 'Position & rotation',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'Angle',
+
   // Volume / audible range — audio and video objects only, edited from the
   // edit toolbar (EditToolbar.tsx)
   'objects.volume': 'Volume',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Audible range',
   'objects.rangeValue': '{n} m',
+
+  // Box appearance — 'box' kind placements only, edited from the edit
+  // toolbar (EditToolbar.tsx)
+  'objects.box.badge': 'Box',
+  'objects.box.width': 'Width',
+  'objects.box.height': 'Height',
+  'objects.box.depth': 'Depth',
+  'objects.box.color': 'Color',
+  'objects.box.uploadTexture': 'Upload texture',
+  'objects.box.removeTexture': 'Remove texture',
+  'objects.box.tile': 'Tile size',
 
   // Drop-import overlay — dragging a file anywhere onto the app (see
   // ui/dropImport.ts for how a file is routed, ui/DropImportOverlay.tsx for
@@ -181,9 +206,11 @@ export const en = {
   'dropImport.descVideo': 'This will be placed in the world as a video screen.',
   'dropImport.descAudio': 'This will be placed in the world as a sound.',
   'dropImport.descWorld': 'This will become the environment everyone in the room sees.',
+  'dropImport.descManifest': 'This will add its objects (and environment, if it has one) to the room.',
   'dropImport.addToWorld': 'Add to World',
   'dropImport.setAsWorldEnvironment': 'Or set as the world environment instead',
   'dropImport.saveOnly': 'Save to Inventory Only',
+  'dropImport.lockedHint': 'Not available while this world is locked.',
   'dropImport.unsupportedTitle': "Can't add this file",
   'dropImport.unsupportedBody': '"{fileName}" is not an avatar, world or object file this app can use.',
 

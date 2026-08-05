@@ -94,6 +94,9 @@ export const es: Dict = {
   'npc.voice': 'Voz',
   'npc.voiceDefault': 'Predeterminada (ajustes de AI)',
   'npc.voiceHelp': "Al borrarlo se usará la voz predeterminada de los ajustes de AI, no la voz original del personaje en tc-town.",
+  'npc.approach': 'Radio de aproximación',
+  'npc.approachOff': 'Desactivado',
+  'npc.approachValue': '{n} m',
 
   // AI panel
   'settings.ai.npcPreset': 'Respuestas de NPC',
@@ -141,6 +144,8 @@ export const es: Dict = {
   'objects.upload': 'Subir archivo',
   'objects.uploading': 'Cargando archivo…',
   'objects.place': 'Colocar frente a mí',
+  'objects.placeBox': 'Colocar una caja',
+  'objects.boxName': 'Caja',
   'objects.placed': 'Colocado',
   'objects.remove': 'Quitar',
   'objects.clear': 'Quitar todo',
@@ -162,12 +167,32 @@ export const es: Dict = {
   'objects.placedBy': 'colocado por {name}',
   'objects.orphans': '{count} quedaron de personas que se fueron. Permanecen hasta que salgas de la sala y nadie puede editarlas.',
 
+  // Posición/rotación numérica — cualquier objeto colocado, se edita desde
+  // la barra de edición (EditToolbar.tsx); la alternativa de valor exacto a
+  // arrastrar los gizmos de mover/girar.
+  'objects.transform': 'Posición y rotación',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'Ángulo',
+
   // Volumen / alcance audible — solo objetos de audio y vídeo, se editan
   // desde la barra de edición (EditToolbar.tsx)
   'objects.volume': 'Volumen',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Radio audible',
   'objects.rangeValue': '{n} m',
+
+  // Apariencia de la caja — solo objetos de tipo "caja", se edita desde la
+  // barra de edición (EditToolbar.tsx)
+  'objects.box.badge': 'Caja',
+  'objects.box.width': 'Ancho',
+  'objects.box.height': 'Alto',
+  'objects.box.depth': 'Profundidad',
+  'objects.box.color': 'Color',
+  'objects.box.uploadTexture': 'Subir textura',
+  'objects.box.removeTexture': 'Quitar textura',
+  'objects.box.tile': 'Tamaño del mosaico',
 
   // Overlay de importación al soltar un archivo en cualquier parte de la app
   'dropImport.title': '¿Añadir esto a tu mundo?',
@@ -177,9 +202,11 @@ export const es: Dict = {
   'dropImport.descVideo': 'Se colocará en el mundo como una pantalla de video.',
   'dropImport.descAudio': 'Se colocará en el mundo como un sonido.',
   'dropImport.descWorld': 'Se convertirá en el entorno que ve todo el mundo en la sala.',
+  'dropImport.descManifest': 'Esto añadirá sus objetos (y el entorno, si lo tiene) a la sala.',
   'dropImport.addToWorld': 'Añadir al mundo',
   'dropImport.setAsWorldEnvironment': 'O configurarlo como el entorno del mundo',
   'dropImport.saveOnly': 'Guardar solo en el inventario',
+  'dropImport.lockedHint': 'No disponible mientras este mundo esté bloqueado.',
   'dropImport.unsupportedTitle': 'No se puede añadir este archivo',
   'dropImport.unsupportedBody': '"{fileName}" no es un archivo de avatar, mundo u objeto que esta app pueda usar.',
 

@@ -9,9 +9,30 @@
 // parsePlacedObject's own SCALE_MIN/SCALE_MAX clamp so a typed value can
 // never disagree with what a peer would accept over the wire.
 import { describe, expect, it } from 'vitest'
-import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, SCALE_MAX, SCALE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
+import {
+  AUDIBLE_RANGE_MAX,
+  AUDIBLE_RANGE_MIN,
+  BOX_SIZE_MAX,
+  BOX_SIZE_MIN,
+  BOX_TILE_MAX,
+  BOX_TILE_MIN,
+  SCALE_MAX,
+  SCALE_MIN,
+  VOLUME_MAX,
+  VOLUME_MIN,
+} from '../net/protocol'
 import { NPC_LIMITS } from '../npc/limits'
-import { clampAudibleRange, clampNpcRadius, clampScale, clampVolume } from './uiContract'
+import {
+  clampAudibleRange,
+  clampBoxSize,
+  clampBoxTile,
+  clampNpcApproachRange,
+  clampNpcRadius,
+  clampPosition,
+  clampRotation,
+  clampScale,
+  clampVolume,
+} from './uiContract'
 
 describe('clampNpcRadius', () => {
   it('passes an in-range radius through unchanged', () => {
@@ -112,5 +133,122 @@ describe('clampScale', () => {
     expect(clampScale(Number.NaN, 3)).toBe(3)
     expect(clampScale(Number.POSITIVE_INFINITY, 3)).toBe(3)
     expect(clampScale(Number.NEGATIVE_INFINITY, 3)).toBe(3)
+  })
+})
+
+describe('clampPosition', () => {
+  it('passes an in-range value through unchanged', () => {
+    expect(clampPosition(12.5, 0)).toBe(12.5)
+  })
+
+  it('clamps beyond ±500 (the interactive-edit bound, tighter than the wire POS_LIMIT)', () => {
+    expect(clampPosition(9999, 0)).toBe(500)
+    expect(clampPosition(-9999, 0)).toBe(-500)
+  })
+
+  it('accepts the exact bounds', () => {
+    expect(clampPosition(500, 0)).toBe(500)
+    expect(clampPosition(-500, 0)).toBe(-500)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampPosition(Number.NaN, 7)).toBe(7)
+    expect(clampPosition(Number.POSITIVE_INFINITY, 7)).toBe(7)
+    expect(clampPosition(Number.NEGATIVE_INFINITY, 7)).toBe(7)
+  })
+})
+
+describe('clampRotation', () => {
+  it('passes an already-normalized value through unchanged', () => {
+    expect(clampRotation(Math.PI / 2, 0)).toBeCloseTo(Math.PI / 2)
+  })
+
+  it('wraps a value past π back into range', () => {
+    expect(clampRotation(Math.PI * 1.5, 0)).toBeCloseTo(-Math.PI / 2)
+  })
+
+  it('wraps a value past -π back into range', () => {
+    expect(clampRotation(-Math.PI * 1.5, 0)).toBeCloseTo(Math.PI / 2)
+  })
+
+  it('wraps several full turns down to one', () => {
+    expect(clampRotation(Math.PI * 4 + 0.1, 0)).toBeCloseTo(0.1)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampRotation(Number.NaN, 1.2)).toBe(1.2)
+    expect(clampRotation(Number.POSITIVE_INFINITY, 1.2)).toBe(1.2)
+    expect(clampRotation(Number.NEGATIVE_INFINITY, 1.2)).toBe(1.2)
+  })
+})
+
+describe('clampBoxSize', () => {
+  it('passes an in-range size through unchanged', () => {
+    expect(clampBoxSize(2.5, 1)).toBe(2.5)
+  })
+
+  it('clamps below BOX_SIZE_MIN up to BOX_SIZE_MIN', () => {
+    expect(clampBoxSize(0, 1)).toBe(BOX_SIZE_MIN)
+    expect(clampBoxSize(-5, 1)).toBe(BOX_SIZE_MIN)
+  })
+
+  it('clamps above BOX_SIZE_MAX down to BOX_SIZE_MAX', () => {
+    expect(clampBoxSize(9999, 1)).toBe(BOX_SIZE_MAX)
+  })
+
+  it('accepts the exact bounds', () => {
+    expect(clampBoxSize(BOX_SIZE_MIN, 1)).toBe(BOX_SIZE_MIN)
+    expect(clampBoxSize(BOX_SIZE_MAX, 1)).toBe(BOX_SIZE_MAX)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampBoxSize(Number.NaN, 3)).toBe(3)
+    expect(clampBoxSize(Number.POSITIVE_INFINITY, 3)).toBe(3)
+    expect(clampBoxSize(Number.NEGATIVE_INFINITY, 3)).toBe(3)
+  })
+})
+
+describe('clampBoxTile', () => {
+  it('passes an in-range tile size through unchanged', () => {
+    expect(clampBoxTile(2, 1)).toBe(2)
+  })
+
+  it('clamps below BOX_TILE_MIN up to BOX_TILE_MIN', () => {
+    expect(clampBoxTile(0, 1)).toBe(BOX_TILE_MIN)
+  })
+
+  it('clamps above BOX_TILE_MAX down to BOX_TILE_MAX', () => {
+    expect(clampBoxTile(9999, 1)).toBe(BOX_TILE_MAX)
+  })
+
+  it('accepts the exact bounds', () => {
+    expect(clampBoxTile(BOX_TILE_MIN, 1)).toBe(BOX_TILE_MIN)
+    expect(clampBoxTile(BOX_TILE_MAX, 1)).toBe(BOX_TILE_MAX)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampBoxTile(Number.NaN, 3)).toBe(3)
+    expect(clampBoxTile(Number.POSITIVE_INFINITY, 3)).toBe(3)
+    expect(clampBoxTile(Number.NEGATIVE_INFINITY, 3)).toBe(3)
+  })
+})
+
+describe('clampNpcApproachRange', () => {
+  it('passes an in-range value through unchanged', () => {
+    expect(clampNpcApproachRange(10, NPC_LIMITS.minApproachRange)).toBe(10)
+  })
+
+  it('clamps below minApproachRange up to minApproachRange', () => {
+    expect(clampNpcApproachRange(0, NPC_LIMITS.minApproachRange)).toBe(NPC_LIMITS.minApproachRange)
+  })
+
+  it('clamps above maxApproachRange down to maxApproachRange', () => {
+    expect(clampNpcApproachRange(999, NPC_LIMITS.minApproachRange)).toBe(NPC_LIMITS.maxApproachRange)
+  })
+
+  it('falls back for non-finite input instead of storing garbage', () => {
+    expect(clampNpcApproachRange(Number.NaN, 5)).toBe(5)
+    expect(clampNpcApproachRange(Number.POSITIVE_INFINITY, 5)).toBe(5)
+    expect(clampNpcApproachRange(Number.NEGATIVE_INFINITY, 5)).toBe(5)
   })
 })

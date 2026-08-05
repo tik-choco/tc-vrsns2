@@ -4,6 +4,7 @@
 // these props and callbacks — it owns no session, world or network state.
 
 import type {
+  BoxAppearance,
   ChatMessage,
   PlacedObject,
   PlayerProfile,
@@ -12,9 +13,20 @@ import type {
 } from '../shared/types'
 import type { CharacterIndexEntry } from '../interop/townCharacters'
 import type { DiscoveredRoom } from '../net/DiscoverySession'
-import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, SCALE_MAX, SCALE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
-import type { EditTool } from '../world/ObjectEditor'
+import {
+  AUDIBLE_RANGE_MAX,
+  AUDIBLE_RANGE_MIN,
+  BOX_SIZE_MAX,
+  BOX_SIZE_MIN,
+  BOX_TILE_MAX,
+  BOX_TILE_MIN,
+  SCALE_MAX,
+  SCALE_MIN,
+  VOLUME_MAX,
+  VOLUME_MIN,
+} from '../net/protocol'
 import { NPC_LIMITS } from '../npc/limits'
+import type { EditTool } from '../world/ObjectEditor'
 import type { GenerateOutcome, GenerateProgress, GenerateRequest } from '../script/generate'
 import type { WorldManifest } from '../storage/worldManifest'
 import type { ScriptError, ScriptGraph, ScriptWindow, TriggerVolume, UiAnchor } from '../script/ir'
@@ -137,6 +149,15 @@ export type GameOverlayProps = {
   /** Resolves the saved item's cid (or null on failure) — see onUploadWorld's identical doc for why. */
   onUploadObject: (file: File) => Promise<string | null>
   onPlaceObject: (cid: string) => void
+  /**
+   * Places a default 1m box primitive in front of the local player (task
+   * #24) — build-mode's answer to onPlaceObject, but there is no catalog
+   * item to pick first: a box carries no model/media bytes at all (see
+   * PlacedObject.box's doc), so this constructs the whole placement itself.
+   * Drops straight into edit mode with the new box selected, same as
+   * onPlaceObject.
+   */
+  onPlaceBox: () => void
   onClearObjects: () => void
   // in-world editing of already-placed objects (own placements only)
   editMode: boolean
@@ -172,6 +193,14 @@ export type GameOverlayProps = {
    */
   onSetNpcVoice: (id: string, voiceName: string) => void
   /**
+   * Edits an NPC placement's approach-trigger radius (task #23 follow-up),
+   * same gating as onSetNpcRadius. `undefined` publishes the field absent —
+   * NpcBinding.approachRange's own contract is "absent means the feature is
+   * off", not some fallback distance, so EditToolbar's 'off' option must be
+   * able to reach exactly that state rather than only ever picking a number.
+   */
+  onSetNpcApproachRange: (id: string, range: number | undefined) => void
+  /**
    * Edits an 'audio'/'video' placement's own playback volume multiplier, in
    * world (R7 follow-up to the NPC radius/voice controls above — same
    * shape). Only meaningful when `selectedObject.kind` is 'audio' or
@@ -198,6 +227,38 @@ export type GameOverlayProps = {
    * player may not edit.
    */
   onSetObjectScale: (id: string, scale: number) => void
+  /**
+   * Edits any placement's world position by exact number (task #26) — the
+   * numeric counterpart to dragging the Move gizmo. Same gating as
+   * onSetObjectScale; all three axes travel together since EditToolbar's X/Y/Z
+   * fields each read the other two off `selectedObject` before calling this,
+   * so a single edited axis never clobbers the other two mid-flight.
+   */
+  onSetObjectPosition: (id: string, position: { x: number; y: number; z: number }) => void
+  /**
+   * Edits any placement's Y rotation by exact number, in RADIANS (task #26)
+   * — EditToolbar shows and accepts DEGREES and converts at the boundary, so
+   * every other layer keeps working in the radians PlacedObject.rotationY
+   * has always used. Same gating as onSetObjectScale.
+   */
+  onSetObjectRotation: (id: string, radians: number) => void
+  /**
+   * Edits a 'box' placement's appearance (task #24) — merges `patch` into
+   * the placement's current BoxAppearance, clamps the numeric fields, and
+   * publishes the result. Same gating as onSetObjectScale; meaningless (and
+   * never called) for any other kind, since only 'box' carries a `.box` at
+   * all.
+   */
+  onSetObjectBox: (id: string, patch: Partial<BoxAppearance>) => void
+  /**
+   * Publishes an image's bytes to the shared content store for use as a
+   * box's texture — the same shrink-then-publish chain onUploadObject uses,
+   * but WITHOUT a catalog entry (see useSession.uploadBoxTexture's own doc
+   * for why: a box texture is authored inline on the placement, not a
+   * reusable catalog item). Resolves the published cid, or null on failure;
+   * EditToolbar feeds a successful result straight into onSetObjectBox.
+   */
+  onUploadBoxTexture: (file: File) => Promise<string | null>
   /**
    * Runs the natural-language "describe it" generator (src/script/generate.ts)
    * against the configured model. A stateless pass-through — the UI owns no AI
@@ -318,4 +379,70 @@ export function clampAudibleRange(range: number, fallback: number): number {
 export function clampScale(scale: number, fallback: number): number {
   if (!Number.isFinite(scale)) return fallback
   return Math.min(SCALE_MAX, Math.max(SCALE_MIN, scale))
+}
+
+/**
+ * Clamps a numeric-field position edit (task #26) to the bounds an
+ * interactive edit may reach — mirrors WorldObjects.ts's own EDIT_POS_LIMIT
+ * (500), tighter than net/protocol.ts's POS_LIMIT (1000, which only exists
+ * to stop a hostile peer). Duplicated as a local constant rather than
+ * imported for the same "no three.js in this pure-function contract module"
+ * reason VOLUME_DEFAULT/AUDIBLE_RANGE_DEFAULT above give.
+ */
+const EDIT_POS_LIMIT = 500
+
+export function clampPosition(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(EDIT_POS_LIMIT, Math.max(-EDIT_POS_LIMIT, value))
+}
+
+/**
+ * Normalizes a rotation edit to (-π, π] radians. Unlike clampPosition this
+ * is not a min/max clamp — a rotation wraps rather than saturates, and
+ * EditToolbar always displays/accepts degrees in -180..180, so the stored
+ * radians value must be able to reach every point on that circle rather than
+ * getting stuck at one end of a range. `fallback` is what a non-finite input
+ * resolves to, same "correct rather than propagate" reasoning as every other
+ * clamp* here.
+ */
+export function clampRotation(radians: number, fallback: number): number {
+  if (!Number.isFinite(radians)) return fallback
+  const twoPi = Math.PI * 2
+  let normalized = radians % twoPi
+  if (normalized > Math.PI) normalized -= twoPi
+  if (normalized <= -Math.PI) normalized += twoPi
+  return normalized
+}
+
+/** BoxAppearance.textureTile's own "absent means" default (net/protocol.ts's parseBoxAppearance never sets it below 1 either) — see VOLUME_DEFAULT's doc above for why this lives here as a plain number. */
+export const BOX_TILE_DEFAULT = 1
+
+/**
+ * Clamps a box dimension (sx/sy/sz) edit to BOX_SIZE_MIN/MAX (net/protocol.ts),
+ * same shape as clampScale above.
+ */
+export function clampBoxSize(size: number, fallback: number): number {
+  if (!Number.isFinite(size)) return fallback
+  return Math.min(BOX_SIZE_MAX, Math.max(BOX_SIZE_MIN, size))
+}
+
+/**
+ * Clamps a box texture-tile edit to BOX_TILE_MIN/MAX (net/protocol.ts), same
+ * shape as clampBoxSize above.
+ */
+export function clampBoxTile(tile: number, fallback: number): number {
+  if (!Number.isFinite(tile)) return fallback
+  return Math.min(BOX_TILE_MAX, Math.max(BOX_TILE_MIN, tile))
+}
+
+/**
+ * Clamps an NPC approach-trigger radius edit to NPC_LIMITS.min/maxApproachRange,
+ * same shape as clampNpcRadius above. Unlike hearing radius, "off" (the field
+ * absent) is a real, separate state EditToolbar's select can pick — this
+ * function only ever runs on an actual number the user chose, never on the
+ * off sentinel (see useSession.setNpcApproachRange).
+ */
+export function clampNpcApproachRange(range: number, fallback: number): number {
+  if (!Number.isFinite(range)) return fallback
+  return Math.min(NPC_LIMITS.maxApproachRange, Math.max(NPC_LIMITS.minApproachRange, range))
 }

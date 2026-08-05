@@ -177,6 +177,7 @@ export function App() {
           objectError={session.objectError}
           onUploadObject={session.uploadObject}
           onPlaceObject={(cid) => void session.placeObject(cid)}
+          onPlaceBox={session.placeBox}
           onClearObjects={session.clearObjects}
           editMode={session.editMode}
           editTool={session.editTool}
@@ -187,9 +188,14 @@ export function App() {
           onSetObjectScript={session.setObjectScript}
           onSetNpcRadius={session.setNpcRadius}
           onSetNpcVoice={session.setNpcVoice}
+          onSetNpcApproachRange={session.setNpcApproachRange}
           onSetObjectVolume={session.setObjectVolume}
           onSetObjectAudibleRange={session.setObjectAudibleRange}
           onSetObjectScale={session.setObjectScale}
+          onSetObjectPosition={session.setObjectPosition}
+          onSetObjectRotation={session.setObjectRotation}
+          onSetObjectBox={session.setObjectBox}
+          onUploadBoxTexture={session.uploadBoxTexture}
           onGenerateBehaviour={session.generateBehaviour}
           scriptProblems={session.scriptProblems}
           getScriptWindows={session.getScriptWindows}

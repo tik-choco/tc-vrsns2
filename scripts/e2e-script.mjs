@@ -181,10 +181,18 @@ async function uploadAndPlace(page) {
  * trailing offset projects close to the canvas centre, and rather than
  * hard-code that this tries a small spiral of points around the centre so a
  * few pixels of geometry error (camera pitch) doesn't fail the whole run.
+ *
+ * Tag-qualified as `select.edit-bar-script-select` (see e2e-graph.mjs's own
+ * header comment for the full incident this works around): EditToolbar.tsx
+ * now has several controls sharing that class or a lookalike numeric one
+ * (the exact-size field is `.edit-bar-size-input`, position/rotation are
+ * `.edit-bar-num-input`), so a bare class-only locator is no longer
+ * guaranteed to resolve to exactly the Behavior `<select>` this scenario
+ * actually wants.
  */
 async function enterEditModeAndSelect(page) {
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
-  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+  if (await page.locator('select.edit-bar-script-select').isEnabled().catch(() => false)) {
     log('placing selected the object — no canvas click needed')
     return
   }
@@ -202,7 +210,7 @@ async function enterEditModeAndSelect(page) {
   for (const [dx, dy] of offsets) {
     await page.mouse.click(cx + dx, cy + dy)
     const selected = await page
-      .locator('.edit-bar-script-select')
+      .locator('select.edit-bar-script-select')
       .isEnabled()
       .catch(() => false)
     if (selected) {
@@ -282,7 +290,7 @@ async function main() {
 
     // --- rotate behaviour: attach it, then prove it actually runs ----------
     log('attaching the "rotate" behaviour…')
-    await page.locator('.edit-bar-script-select').selectOption('rotate')
+    await page.locator('select.edit-bar-script-select').selectOption('rotate')
     // setObjectScript is synchronous in the session hook, but give the World
     // a frame to reconcile ScriptRuntime before sampling.
     await new Promise((r) => setTimeout(r, 150))
@@ -305,7 +313,7 @@ async function main() {
 
     // --- greeter behaviour: attach it, then walk into/out of its trigger ---
     log('switching the behaviour to "greeter"…')
-    await page.locator('.edit-bar-script-select').selectOption('greeter')
+    await page.locator('select.edit-bar-script-select').selectOption('greeter')
     await new Promise((r) => setTimeout(r, 150))
 
     log('leaving edit mode…')

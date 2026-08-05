@@ -95,6 +95,9 @@ export const ru: Dict = {
   'npc.voice': 'Голос',
   'npc.voiceDefault': 'По умолчанию (настройки AI)',
   'npc.voiceHelp': 'При очистке будет использован голос по умолчанию из настроек AI, а не оригинальный голос персонажа из tc-town.',
+  'npc.approach': 'Радиус приближения',
+  'npc.approachOff': 'Выключено',
+  'npc.approachValue': '{n} м',
 
   // AI panel
   'settings.ai.npcPreset': 'Ответы NPC',
@@ -142,6 +145,8 @@ export const ru: Dict = {
   'objects.upload': 'Загрузить файл',
   'objects.uploading': 'Загрузка файла…',
   'objects.place': 'Поставить передо мной',
+  'objects.placeBox': 'Поставить коробку',
+  'objects.boxName': 'Коробка',
   'objects.placed': 'Размещено',
   'objects.remove': 'Удалить',
   'objects.clear': 'Очистить всё',
@@ -163,12 +168,32 @@ export const ru: Dict = {
   'objects.placedBy': 'поставил(а) {name}',
   'objects.orphans': '{count} осталось от ушедших. Они видны, пока вы не выйдете из комнаты, и никто не может их изменить.',
 
+  // Числовые позиция/поворот — для любого размещённого объекта,
+  // настраивается на панели редактирования (EditToolbar.tsx) — точная
+  // альтернатива перетаскиванию гизмо перемещения/поворота.
+  'objects.transform': 'Позиция и поворот',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'Угол',
+
   // Громкость / дальность звука — только для аудио- и видеообъектов,
   // настраивается на панели редактирования (EditToolbar.tsx)
   'objects.volume': 'Громкость',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Дальность звука',
   'objects.rangeValue': '{n} м',
+
+  // Внешний вид коробки — только объекты типа «коробка», настраивается на
+  // панели редактирования (EditToolbar.tsx)
+  'objects.box.badge': 'Коробка',
+  'objects.box.width': 'Ширина',
+  'objects.box.height': 'Высота',
+  'objects.box.depth': 'Глубина',
+  'objects.box.color': 'Цвет',
+  'objects.box.uploadTexture': 'Загрузить текстуру',
+  'objects.box.removeTexture': 'Удалить текстуру',
+  'objects.box.tile': 'Размер плитки',
 
   // Оверлей импорта при перетаскивании файла в любое место приложения
   'dropImport.title': 'Добавить это в ваш мир?',
@@ -178,9 +203,11 @@ export const ru: Dict = {
   'dropImport.descVideo': 'Это будет размещено в мире как видеоэкран.',
   'dropImport.descAudio': 'Это будет размещено в мире как звук.',
   'dropImport.descWorld': 'Это станет окружением, которое видят все в комнате.',
+  'dropImport.descManifest': 'Это добавит в комнату его объекты (и окружение, если оно есть).',
   'dropImport.addToWorld': 'Добавить в мир',
   'dropImport.setAsWorldEnvironment': 'Или задать как окружение мира',
   'dropImport.saveOnly': 'Сохранить только в инвентарь',
+  'dropImport.lockedHint': 'Недоступно, пока этот мир заблокирован.',
   'dropImport.unsupportedTitle': 'Этот файл нельзя добавить',
   'dropImport.unsupportedBody': '«{fileName}» не является файлом аватара, мира или объекта, который поддерживает это приложение.',
 

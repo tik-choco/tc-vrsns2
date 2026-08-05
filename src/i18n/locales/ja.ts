@@ -98,6 +98,9 @@ export const ja: Dict = {
   'npc.voice': 'ボイス',
   'npc.voiceDefault': 'デフォルト（AI設定）',
   'npc.voiceHelp': 'クリアするとAI設定のデフォルトの声になります。tc-townのキャラクター本来の声には戻りません。',
+  'npc.approach': '接近範囲',
+  'npc.approachOff': 'オフ',
+  'npc.approachValue': '{n} m',
 
   // World panel
   'world.title': 'ワールド',
@@ -141,6 +144,8 @@ export const ja: Dict = {
   'objects.upload': 'ファイルをアップロード',
   'objects.uploading': 'ファイルを読み込み中…',
   'objects.place': '目の前に配置',
+  'objects.placeBox': 'ボックスを配置',
+  'objects.boxName': 'ボックス',
   'objects.placed': '配置済み',
   'objects.remove': '削除',
   'objects.clear': 'すべて削除',
@@ -162,11 +167,29 @@ export const ja: Dict = {
   'objects.placedBy': '配置：{name}',
   'objects.orphans': '退室した人が残したものが{count}個あります。ルームを出るまで表示されますが、誰も編集できません。',
 
+  // 位置・回転の数値指定 — すべての配置物が対象。編集ツールバー（EditToolbar.tsx）で
+  // 設定。移動／回転ギズモをドラッグする代わりに、正確な数値で指定できる。
+  'objects.transform': '位置と回転',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': '角度',
+
   // 音量／聞こえる距離 — 音声・動画オブジェクト専用。編集ツールバー（EditToolbar.tsx）で設定
   'objects.volume': '音量',
   'objects.volumeValue': '{n}%',
   'objects.range': '聞こえる距離',
   'objects.rangeValue': '{n} m',
+
+  // ボックスの外観 — 「ボックス」種類の配置物専用。編集ツールバー（EditToolbar.tsx）で設定
+  'objects.box.badge': 'ボックス',
+  'objects.box.width': '幅',
+  'objects.box.height': '高さ',
+  'objects.box.depth': '奥行き',
+  'objects.box.color': '色',
+  'objects.box.uploadTexture': 'テクスチャをアップロード',
+  'objects.box.removeTexture': 'テクスチャを削除',
+  'objects.box.tile': 'タイルサイズ',
 
   // ドロップインポートのオーバーレイ — アプリのどこかにファイルをドロップしたとき
   'dropImport.title': 'ワールドに追加しますか？',
@@ -176,9 +199,11 @@ export const ja: Dict = {
   'dropImport.descVideo': '動画としてワールドに配置されます。',
   'dropImport.descAudio': 'サウンドとしてワールドに配置されます。',
   'dropImport.descWorld': 'ルームにいる全員に見える環境になります。',
+  'dropImport.descManifest': 'このファイルのオブジェクト（環境があれば環境も）がルームに追加されます。',
   'dropImport.addToWorld': 'ワールドに追加',
   'dropImport.setAsWorldEnvironment': '代わりにワールドの環境として設定する',
   'dropImport.saveOnly': 'インベントリにのみ保存',
+  'dropImport.lockedHint': 'このワールドはロックされているため、今は追加できません。',
   'dropImport.unsupportedTitle': 'このファイルは追加できません',
   'dropImport.unsupportedBody': '「{fileName}」はアバター・ワールド・オブジェクトのいずれとしても扱えないファイルです。',
 

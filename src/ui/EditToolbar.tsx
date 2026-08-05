@@ -6,14 +6,52 @@
 // edited and gate world input, and the behaviour picker below is a native
 // <select> for the same reason: no backdrop, no extra input-gating wiring,
 // and it never steals the global keys GameOverlay listens for.
-import { useEffect, useState } from 'preact/hooks'
-import { Move3d, Rotate3d, Scale3d, Trash2, Check, Wand2, Ear, Mic, Volume2, Waves, Ruler, AlertTriangle } from 'lucide-preact'
+import { useEffect, useRef, useState } from 'preact/hooks'
+import {
+  Move3d,
+  Rotate3d,
+  RotateCw,
+  Scale3d,
+  Trash2,
+  Check,
+  Wand2,
+  Ear,
+  Mic,
+  Volume2,
+  Waves,
+  Ruler,
+  AlertTriangle,
+  Box as BoxIcon,
+  Palette,
+  Image as ImageIcon,
+  ImageOff,
+  Grid3x3,
+  Compass,
+} from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
 import { useTtsVoices } from '../lib/ttsVoices'
-import { AUDIBLE_RANGE_MAX, AUDIBLE_RANGE_MIN, SCALE_MAX, SCALE_MIN, VOLUME_MAX, VOLUME_MIN } from '../net/protocol'
+import {
+  AUDIBLE_RANGE_MAX,
+  AUDIBLE_RANGE_MIN,
+  BOX_SIZE_MAX,
+  BOX_SIZE_MIN,
+  BOX_TILE_MAX,
+  BOX_TILE_MIN,
+  SCALE_MAX,
+  SCALE_MIN,
+  VOLUME_MAX,
+  VOLUME_MIN,
+} from '../net/protocol'
 import { NPC_LIMITS } from '../npc/limits'
 import { presetIdOf, SCRIPT_PRESETS, type ScriptPresetId } from '../script/presets'
-import { AUDIBLE_RANGE_DEFAULT, VOLUME_DEFAULT, type EditTool, type GameOverlayProps } from './uiContract'
+import {
+  AUDIBLE_RANGE_DEFAULT,
+  BOX_TILE_DEFAULT,
+  clampRotation,
+  VOLUME_DEFAULT,
+  type EditTool,
+  type GameOverlayProps,
+} from './uiContract'
 
 type Props = Pick<
   GameOverlayProps,
@@ -25,9 +63,14 @@ type Props = Pick<
   | 'onSetObjectScript'
   | 'onSetNpcRadius'
   | 'onSetNpcVoice'
+  | 'onSetNpcApproachRange'
   | 'onSetObjectVolume'
   | 'onSetObjectAudibleRange'
   | 'onSetObjectScale'
+  | 'onSetObjectPosition'
+  | 'onSetObjectRotation'
+  | 'onSetObjectBox'
+  | 'onUploadBoxTexture'
   | 'scriptProblems'
 > & {
   /**
@@ -77,6 +120,18 @@ const RADIUS_STEPS = [3, 6, 10, 15, 20, 30].filter(
 )
 
 /**
+ * Coarse presets for an NPC's approach-trigger radius (task #23 follow-up) —
+ * same "no free-text field, filter against the real bounds" reasoning as
+ * RADIUS_STEPS above. Unlike hearing radius there is also an 'off' state
+ * (the field absent, the walk-up behaviour disabled entirely) — that is
+ * rendered as its own fixed option, never one of these steps, since 0 is not
+ * a legal approachRange (NPC_LIMITS.minApproachRange is 1).
+ */
+const APPROACH_STEPS = [3, 5, 8, 12, 20, 30].filter(
+  (r) => r >= NPC_LIMITS.minApproachRange && r <= NPC_LIMITS.maxApproachRange,
+)
+
+/**
  * Coarse presets for a volume edit — same "no free-text field encouraging an
  * oddly precise value nobody can perceive the difference of" reasoning as
  * RADIUS_STEPS, filtered against VOLUME_MIN/MAX so a future change to those
@@ -107,6 +162,77 @@ const RANGE_STEPS = [1, 2, AUDIBLE_RANGE_DEFAULT, 6, 10, 20, 40, 100].filter(
  */
 function formatScale(scale: number): string {
   return String(Math.round(scale * 100) / 100)
+}
+
+/**
+ * Bound shown on the X/Y/Z position fields' native min/max (task #26) —
+ * mirrors uiContract.ts's own EDIT_POS_LIMIT (500), which is the bound that
+ * actually gets enforced at commit time (setObjectPosition's clampPosition).
+ * Duplicated here as a plain number for the same reason SCALE_MIN/MAX are
+ * imported straight from net/protocol.ts rather than re-derived: this is
+ * display-layer metadata, not a second source of truth — a browser's native
+ * number-input min/max is advisory anyway, so the real guard lives session-side.
+ */
+const EDIT_POS_LIMIT = 500
+
+/** Generalizes formatScale's rounding to an arbitrary decimal count — the box dimension/position fields want 2 decimals (matching formatScale), the rotation field wants whole degrees (0). */
+function formatNumber(value: number, decimals = 2): string {
+  const factor = 10 ** decimals
+  return String(Math.round(value * factor) / factor)
+}
+
+function radToDeg(radians: number): number {
+  return (radians * 180) / Math.PI
+}
+
+function degToRad(degrees: number): number {
+  return (degrees * Math.PI) / 180
+}
+
+/**
+ * One draft-state numeric field, generalized from the scale field's own
+ * idiom above (see scaleDraft's doc comment on EditToolbar for the full
+ * reasoning: an input bound straight to a formatted prop re-clobbers every
+ * keystroke against the last COMMITTED value, so typing a decimal would get
+ * stomped mid-type). Box dimensions/tile, position and rotation each need
+ * their own independent instance of this — editing one field must never
+ * clobber whatever is mid-type in another — so this is called once per
+ * field below, unconditionally (Rules of Hooks: it must run every render
+ * regardless of whether that field is currently visible, exactly like
+ * scaleDraft already does for a null selection).
+ */
+function useNumberDraft(
+  resetKey: unknown,
+  current: number,
+  commit: (value: number) => void,
+  decimals = 2,
+): {
+  value: string
+  onInput: (e: Event) => void
+  onBlur: () => void
+  onKeyDown: (e: KeyboardEvent) => void
+} {
+  const [draft, setDraft] = useState<string | null>(null)
+  useEffect(() => setDraft(null), [resetKey])
+  const onInput = (e: Event) => setDraft((e.target as HTMLInputElement).value)
+  const onBlur = () => {
+    if (draft !== null) {
+      const trimmed = draft.trim()
+      const parsed = Number(trimmed)
+      if (trimmed !== '' && Number.isFinite(parsed)) commit(parsed)
+    }
+    setDraft(null)
+  }
+  const onKeyDown = (e: KeyboardEvent) => {
+    const input = e.target as HTMLInputElement
+    if (e.key === 'Enter') {
+      input.blur() // commits via onBlur above
+    } else if (e.key === 'Escape') {
+      setDraft(null) // discard first, so the blur below is a no-op commit
+      input.blur()
+    }
+  }
+  return { value: draft ?? formatNumber(current, decimals), onInput, onBlur, onKeyDown }
 }
 
 export function EditToolbar(props: Props) {
@@ -179,6 +305,80 @@ export function EditToolbar(props: Props) {
 
   const scaleValue = scaleDraft ?? (selected ? formatScale(selected.scale) : '')
 
+  // --- position / rotation (task #26) ----------------------------------
+  // Each axis is its own independent draft field (useNumberDraft), same
+  // reasoning as scaleDraft above but three times over: editing X must never
+  // clobber whatever Y or Z is mid-type. Every commit reads the OTHER two
+  // axes off `selected` at call time, so a single edited axis publishes the
+  // full, current {x,y,z} triple onSetObjectPosition expects rather than a
+  // partial one.
+  const posXDraft = useNumberDraft(selected?.id, selected?.x ?? 0, (v) => {
+    if (selected) props.onSetObjectPosition(selected.id, { x: v, y: selected.y, z: selected.z })
+  })
+  const posYDraft = useNumberDraft(selected?.id, selected?.y ?? 0, (v) => {
+    if (selected) props.onSetObjectPosition(selected.id, { x: selected.x, y: v, z: selected.z })
+  })
+  const posZDraft = useNumberDraft(selected?.id, selected?.z ?? 0, (v) => {
+    if (selected) props.onSetObjectPosition(selected.id, { x: selected.x, y: selected.y, z: v })
+  })
+  // Displayed/typed in DEGREES, -180..180 (clampRotation normalizes whatever
+  // selected.rotationY currently holds — a wire value can be as wide as
+  // ±4π — down to that single revolution before converting); stored and
+  // committed in RADIANS, matching PlacedObject.rotationY's own unit.
+  const rotationDegrees = radToDeg(clampRotation(selected?.rotationY ?? 0, 0))
+  const rotationDraft = useNumberDraft(
+    selected?.id,
+    rotationDegrees,
+    (v) => {
+      if (selected) props.onSetObjectRotation(selected.id, degToRad(v))
+    },
+    0,
+  )
+
+  // --- box appearance (task #24, kind 'box' only) ------------------------
+  const boxAppearance = selected?.kind === 'box' ? selected.box : undefined
+  const boxWidthDraft = useNumberDraft(selected?.id, boxAppearance?.sx ?? 1, (v) => {
+    if (selected) props.onSetObjectBox(selected.id, { sx: v })
+  })
+  const boxHeightDraft = useNumberDraft(selected?.id, boxAppearance?.sy ?? 1, (v) => {
+    if (selected) props.onSetObjectBox(selected.id, { sy: v })
+  })
+  const boxDepthDraft = useNumberDraft(selected?.id, boxAppearance?.sz ?? 1, (v) => {
+    if (selected) props.onSetObjectBox(selected.id, { sz: v })
+  })
+  const boxTileDraft = useNumberDraft(selected?.id, boxAppearance?.textureTile ?? BOX_TILE_DEFAULT, (v) => {
+    if (selected) props.onSetObjectBox(selected.id, { textureTile: v })
+  })
+  const boxColor = boxAppearance?.color ?? '#9e9e9e'
+  const onBoxColorInput = (e: Event) => {
+    if (selected) props.onSetObjectBox(selected.id, { color: (e.target as HTMLInputElement).value })
+  }
+
+  // Texture upload: read the file, publish it (useSession.uploadBoxTexture —
+  // shrink-then-publish, no catalog entry, see that function's own doc),
+  // then feed the resulting cid into setObjectBox. textureBusy is purely
+  // local UI state (disables the button mid-upload); it never needs to
+  // survive a re-selection the way the drafts above do.
+  const [textureBusy, setTextureBusy] = useState(false)
+  const textureInputRef = useRef<HTMLInputElement>(null)
+  const onTextureButtonClick = () => textureInputRef.current?.click()
+  const onTextureChosen = async (e: Event) => {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file || !selected) return
+    setTextureBusy(true)
+    try {
+      const cid = await props.onUploadBoxTexture(file)
+      if (cid) props.onSetObjectBox(selected.id, { textureCid: cid })
+    } finally {
+      setTextureBusy(false)
+    }
+  }
+  const onRemoveTexture = () => {
+    if (selected) props.onSetObjectBox(selected.id, { textureCid: '' })
+  }
+
   const onPick = (e: Event) => {
     if (!selected) return
     const value = (e.target as HTMLSelectElement).value as PickerValue
@@ -231,6 +431,21 @@ export function EditToolbar(props: Props) {
   // back to the empty option — same "stay honest about the stored value"
   // reasoning as radius.
   const voiceIsCustom = npcVoice !== '' && !ttsVoices.includes(npcVoice)
+
+  // Only rendered when selected.npc is set (task #23 follow-up), same guard
+  // reasoning as onRadiusChange/onVoiceChange above. 'off' publishes the
+  // field absent — NpcBinding.approachRange's own contract, see
+  // onSetNpcApproachRange's doc.
+  const onApproachChange = (e: Event) => {
+    if (!selected) return
+    const value = (e.target as HTMLSelectElement).value
+    props.onSetNpcApproachRange(selected.id, value === 'off' ? undefined : Number(value))
+  }
+
+  const npcApproachRange = selected?.npc?.approachRange
+  const approachValue = npcApproachRange == null ? 'off' : String(npcApproachRange)
+  // Same "stay honest about the stored value" reasoning as radiusIsCustom above.
+  const approachIsCustom = npcApproachRange != null && !APPROACH_STEPS.includes(npcApproachRange)
 
   // Volume/audible-range controls are gated on kind, not on an optional
   // field being present (unlike selected?.npc above) — every 'audio'/'video'
@@ -294,7 +509,7 @@ export function EditToolbar(props: Props) {
         <Ruler size={15} aria-hidden="true" />
         <span class="btn-text-collapse">{t('objects.size')}</span>
         <input
-          class="edit-bar-script-select"
+          class="edit-bar-size-input"
           type="number"
           inputmode="decimal"
           step="0.1"
@@ -307,6 +522,159 @@ export function EditToolbar(props: Props) {
           onKeyDown={onScaleKeyDown}
         />
       </label>
+      {/* Numeric position + rotation (task #26) — the exact-value counterpart
+          to dragging the Move/Rotate gizmos. Shown for any selection, same
+          "every placement has this" reasoning as the size field above.
+          Rotation is displayed/typed in DEGREES (-180..180); the stored/
+          broadcast value stays in radians, matching PlacedObject.rotationY —
+          see rotationDraft's own comment for the conversion. */}
+      <div class="edit-bar-transform" role="group" aria-label={t('objects.transform')}>
+        <Move3d size={15} aria-hidden="true" />
+        <span class="edit-bar-axis-label">{t('objects.posX')}</span>
+        <input
+          class="edit-bar-num-input edit-bar-pos-x"
+          type="number"
+          inputmode="decimal"
+          step="0.1"
+          min={-EDIT_POS_LIMIT}
+          max={EDIT_POS_LIMIT}
+          disabled={!selected}
+          value={posXDraft.value}
+          onInput={posXDraft.onInput}
+          onBlur={posXDraft.onBlur}
+          onKeyDown={posXDraft.onKeyDown}
+        />
+        <span class="edit-bar-axis-label">{t('objects.posY')}</span>
+        <input
+          class="edit-bar-num-input edit-bar-pos-y"
+          type="number"
+          inputmode="decimal"
+          step="0.1"
+          min={-EDIT_POS_LIMIT}
+          max={EDIT_POS_LIMIT}
+          disabled={!selected}
+          value={posYDraft.value}
+          onInput={posYDraft.onInput}
+          onBlur={posYDraft.onBlur}
+          onKeyDown={posYDraft.onKeyDown}
+        />
+        <span class="edit-bar-axis-label">{t('objects.posZ')}</span>
+        <input
+          class="edit-bar-num-input edit-bar-pos-z"
+          type="number"
+          inputmode="decimal"
+          step="0.1"
+          min={-EDIT_POS_LIMIT}
+          max={EDIT_POS_LIMIT}
+          disabled={!selected}
+          value={posZDraft.value}
+          onInput={posZDraft.onInput}
+          onBlur={posZDraft.onBlur}
+          onKeyDown={posZDraft.onKeyDown}
+        />
+        <RotateCw size={15} aria-hidden="true" />
+        <span class="edit-bar-axis-label">{t('objects.rotationDeg')}</span>
+        <input
+          class="edit-bar-num-input edit-bar-rot"
+          type="number"
+          inputmode="decimal"
+          step="1"
+          min={-180}
+          max={180}
+          disabled={!selected}
+          value={rotationDraft.value}
+          onInput={rotationDraft.onInput}
+          onBlur={rotationDraft.onBlur}
+          onKeyDown={rotationDraft.onKeyDown}
+        />
+      </div>
+      {/* Box appearance (task #24) — only meaningful for a 'box' placement:
+          it's the only kind that carries BoxAppearance at all. */}
+      {selected?.kind === 'box' && (
+        <div class="edit-bar-box" role="group" aria-label={t('objects.box.badge')}>
+          <BoxIcon size={15} aria-hidden="true" />
+          <span class="cat-format">{t('objects.box.badge')}</span>
+          <span class="edit-bar-axis-label">{t('objects.box.width')}</span>
+          <input
+            class="edit-bar-num-input edit-bar-box-w"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={BOX_SIZE_MIN}
+            max={BOX_SIZE_MAX}
+            value={boxWidthDraft.value}
+            onInput={boxWidthDraft.onInput}
+            onBlur={boxWidthDraft.onBlur}
+            onKeyDown={boxWidthDraft.onKeyDown}
+          />
+          <span class="edit-bar-axis-label">{t('objects.box.height')}</span>
+          <input
+            class="edit-bar-num-input edit-bar-box-h"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={BOX_SIZE_MIN}
+            max={BOX_SIZE_MAX}
+            value={boxHeightDraft.value}
+            onInput={boxHeightDraft.onInput}
+            onBlur={boxHeightDraft.onBlur}
+            onKeyDown={boxHeightDraft.onKeyDown}
+          />
+          <span class="edit-bar-axis-label">{t('objects.box.depth')}</span>
+          <input
+            class="edit-bar-num-input edit-bar-box-d"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={BOX_SIZE_MIN}
+            max={BOX_SIZE_MAX}
+            value={boxDepthDraft.value}
+            onInput={boxDepthDraft.onInput}
+            onBlur={boxDepthDraft.onBlur}
+            onKeyDown={boxDepthDraft.onKeyDown}
+          />
+          <label class="edit-bar-box-color" title={t('objects.box.color')}>
+            <Palette size={15} aria-hidden="true" />
+            <input type="color" value={boxColor} onInput={onBoxColorInput} />
+          </label>
+          <button
+            type="button"
+            class="btn btn-ghost btn-icon-text"
+            disabled={textureBusy}
+            onClick={onTextureButtonClick}
+          >
+            <ImageIcon size={15} aria-hidden="true" />
+            <span class="btn-text-collapse">{t('objects.box.uploadTexture')}</span>
+          </button>
+          <input
+            ref={textureInputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => void onTextureChosen(e)}
+          />
+          {boxAppearance?.textureCid && (
+            <button type="button" class="btn btn-ghost btn-icon-text" onClick={onRemoveTexture}>
+              <ImageOff size={15} aria-hidden="true" />
+              <span class="btn-text-collapse">{t('objects.box.removeTexture')}</span>
+            </button>
+          )}
+          <Grid3x3 size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('objects.box.tile')}</span>
+          <input
+            class="edit-bar-num-input edit-bar-box-tile"
+            type="number"
+            inputmode="decimal"
+            step="0.1"
+            min={BOX_TILE_MIN}
+            max={BOX_TILE_MAX}
+            value={boxTileDraft.value}
+            onInput={boxTileDraft.onInput}
+            onBlur={boxTileDraft.onBlur}
+            onKeyDown={boxTileDraft.onKeyDown}
+          />
+        </div>
+      )}
       <label class="edit-bar-script">
         <Wand2 size={15} aria-hidden="true" />
         <span class="btn-text-collapse">{t('objects.script.label')}</span>
@@ -361,6 +729,23 @@ export function EditToolbar(props: Props) {
             {ttsVoices.map((voice) => (
               <option key={voice} value={voice}>
                 {voice}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {selected?.npc && (
+        <label class="edit-bar-script">
+          <Compass size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('npc.approach')}</span>
+          <select class="edit-bar-script-select" value={approachValue} onChange={onApproachChange}>
+            <option value="off">{t('npc.approachOff')}</option>
+            {approachIsCustom && (
+              <option value={npcApproachRange}>{t('npc.approachValue', { n: npcApproachRange as number })}</option>
+            )}
+            {APPROACH_STEPS.map((r) => (
+              <option key={r} value={r}>
+                {t('npc.approachValue', { n: r })}
               </option>
             ))}
           </select>

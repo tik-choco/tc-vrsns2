@@ -161,10 +161,18 @@ async function uploadAndPlace(page, labels) {
 }
 
 /** Placing enters edit mode with the new object selected; the spiral click is
- *  the fallback — same approach as e2e-script.mjs, see its header comment. */
+ *  the fallback — same approach as e2e-script.mjs, see its header comment.
+ *
+ *  Tag-qualified as `select.edit-bar-script-select` (see e2e-graph.mjs's own
+ *  header comment for the full incident this works around): EditToolbar.tsx
+ *  now has several controls sharing that class or a lookalike numeric one
+ *  (the exact-size field is `.edit-bar-size-input`, position/rotation are
+ *  `.edit-bar-num-input`), so a bare class-only locator is no longer
+ *  guaranteed to resolve to exactly the Behavior `<select>` this scenario
+ *  actually wants. */
 async function enterEditModeAndSelect(page) {
   await page.locator('.edit-bar').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
-  if (await page.locator('.edit-bar-script-select').isEnabled().catch(() => false)) {
+  if (await page.locator('select.edit-bar-script-select').isEnabled().catch(() => false)) {
     log('placing selected the object — no canvas click needed')
     return
   }
@@ -182,7 +190,7 @@ async function enterEditModeAndSelect(page) {
   for (const [dx, dy] of offsets) {
     await page.mouse.click(cx + dx, cy + dy)
     const selected = await page
-      .locator('.edit-bar-script-select')
+      .locator('select.edit-bar-script-select')
       .isEnabled()
       .catch(() => false)
     if (selected) {
@@ -209,7 +217,7 @@ async function placeAndSelectObject(page, room, name, labels = EN_LABELS) {
 
 /** Picks "Describe it…" from the Behavior select, which opens BehaviourDialog. */
 async function openBehaviourDialog(page) {
-  await page.locator('.edit-bar-script-select').selectOption('describe')
+  await page.locator('select.edit-bar-script-select').selectOption('describe')
   await page.locator('.behaviour-dialog').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
 }
 

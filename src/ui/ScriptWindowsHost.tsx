@@ -9,7 +9,7 @@
 //
 // But that re-render only happens while there is something to position. Most
 // rooms contain no scripts at all, and World.tick() already early-outs to zero
-// per-frame cost for them (see its `hasScripts` flag); a rAF loop that bumped
+// per-frame cost for them (see its `hasActiveObjects` flag); a rAF loop that bumped
 // component state unconditionally would put a permanent 60 Hz Preact
 // reconciliation back on top of that for a feature those rooms never use.
 // Publishing a fresh array only when windows are open — plus one final empty

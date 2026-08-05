@@ -95,6 +95,9 @@ export const de: Dict = {
   'npc.voice': 'Stimme',
   'npc.voiceDefault': 'Standard (AI-Einstellungen)',
   'npc.voiceHelp': 'Wird die Auswahl geleert, gilt die Standardstimme aus den AI-Einstellungen, nicht die ursprüngliche tc-town-Stimme dieser Figur.',
+  'npc.approach': 'Annäherungsradius',
+  'npc.approachOff': 'Aus',
+  'npc.approachValue': '{n} m',
 
   // AI panel
   'settings.ai.npcPreset': 'NPC-Antworten',
@@ -142,6 +145,8 @@ export const de: Dict = {
   'objects.upload': 'Datei hochladen',
   'objects.uploading': 'Datei wird geladen…',
   'objects.place': 'Vor mir platzieren',
+  'objects.placeBox': 'Box platzieren',
+  'objects.boxName': 'Box',
   'objects.placed': 'Platziert',
   'objects.remove': 'Entfernen',
   'objects.clear': 'Alle entfernen',
@@ -163,12 +168,32 @@ export const de: Dict = {
   'objects.placedBy': 'platziert von {name}',
   'objects.orphans': '{count} stammen von Leuten, die gegangen sind. Sie bleiben, bis du den Raum verlässt, und niemand kann sie bearbeiten.',
 
+  // Numerische Position/Drehung — für jedes platzierte Objekt, eingestellt
+  // über die Bearbeitungsleiste (EditToolbar.tsx); die exakte Alternative
+  // zum Ziehen der Verschieben-/Drehen-Gizmos.
+  'objects.transform': 'Position & Drehung',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'Winkel',
+
   // Lautstärke / Hörweite — nur bei Audio- und Video-Objekten, eingestellt
   // über die Bearbeitungsleiste (EditToolbar.tsx)
   'objects.volume': 'Lautstärke',
   'objects.volumeValue': '{n}%',
   'objects.range': 'Hörweite',
   'objects.rangeValue': '{n} m',
+
+  // Box-Erscheinungsbild — nur bei Objekten vom Typ „Box“, eingestellt über
+  // die Bearbeitungsleiste (EditToolbar.tsx)
+  'objects.box.badge': 'Box',
+  'objects.box.width': 'Breite',
+  'objects.box.height': 'Höhe',
+  'objects.box.depth': 'Tiefe',
+  'objects.box.color': 'Farbe',
+  'objects.box.uploadTexture': 'Textur hochladen',
+  'objects.box.removeTexture': 'Textur entfernen',
+  'objects.box.tile': 'Kachelgröße',
 
   // Drop-Import-Overlay — eine Datei irgendwo in der App fallenlassen
   'dropImport.title': 'Das zu deiner Welt hinzufügen?',
@@ -178,9 +203,11 @@ export const de: Dict = {
   'dropImport.descVideo': 'Das wird als Videobildschirm in der Welt platziert.',
   'dropImport.descAudio': 'Das wird als Klang in der Welt platziert.',
   'dropImport.descWorld': 'Das wird zur Umgebung, die alle im Raum sehen.',
+  'dropImport.descManifest': 'Das fügt ihre Objekte (und die Umgebung, falls vorhanden) zum Raum hinzu.',
   'dropImport.addToWorld': 'Zur Welt hinzufügen',
   'dropImport.setAsWorldEnvironment': 'Oder stattdessen als Weltumgebung festlegen',
   'dropImport.saveOnly': 'Nur im Inventar speichern',
+  'dropImport.lockedHint': 'Nicht verfügbar, solange diese Welt gesperrt ist.',
   'dropImport.unsupportedTitle': 'Diese Datei kann nicht hinzugefügt werden',
   'dropImport.unsupportedBody': '„{fileName}“ ist keine Avatar-, Welt- oder Objektdatei, die diese App verwenden kann.',
 

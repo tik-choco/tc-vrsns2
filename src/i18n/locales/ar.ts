@@ -94,6 +94,9 @@ export const ar: Dict = {
   'npc.voice': 'الصوت',
   'npc.voiceDefault': 'افتراضي (إعدادات AI)',
   'npc.voiceHelp': 'يؤدي المسح إلى استخدام الصوت الافتراضي من إعدادات AI، وليس الصوت الأصلي للشخصية في tc-town.',
+  'npc.approach': 'نطاق الاقتراب',
+  'npc.approachOff': 'إيقاف',
+  'npc.approachValue': '{n} م',
 
   // AI panel
   'settings.ai.npcPreset': 'ردود الشخصيات (NPC)',
@@ -141,6 +144,8 @@ export const ar: Dict = {
   'objects.upload': 'رفع ملف',
   'objects.uploading': 'جارٍ تحميل الملف…',
   'objects.place': 'ضعه أمامي',
+  'objects.placeBox': 'وضع صندوق',
+  'objects.boxName': 'صندوق',
   'objects.placed': 'تم الوضع',
   'objects.remove': 'إزالة',
   'objects.clear': 'مسح الكل',
@@ -162,12 +167,30 @@ export const ar: Dict = {
   'objects.placedBy': 'وضعه {name}',
   'objects.orphans': '{count} تركها أشخاص غادروا. تبقى حتى تخرج من الغرفة ولا يمكن لأحد تعديلها.',
 
+  // الموضع/الدوران الرقمي — لأي عنصر موضوع، يُضبط من شريط التحرير
+  // (EditToolbar.tsx) — البديل الدقيق لسحب أدوات التحريك/التدوير.
+  'objects.transform': 'الموضع والدوران',
+  'objects.posX': 'X',
+  'objects.posY': 'Y',
+  'objects.posZ': 'Z',
+  'objects.rotationDeg': 'الزاوية',
+
   // مستوى الصوت / نطاق السماع — لعناصر الصوت والفيديو فقط، يُضبطان من شريط
   // التحرير (EditToolbar.tsx)
   'objects.volume': 'مستوى الصوت',
   'objects.volumeValue': '{n}%',
   'objects.range': 'نطاق السماع',
   'objects.rangeValue': '{n} م',
+
+  // مظهر الصندوق — لعناصر "الصندوق" فقط، يُضبط من شريط التحرير (EditToolbar.tsx)
+  'objects.box.badge': 'صندوق',
+  'objects.box.width': 'العرض',
+  'objects.box.height': 'الارتفاع',
+  'objects.box.depth': 'العمق',
+  'objects.box.color': 'اللون',
+  'objects.box.uploadTexture': 'رفع الملمس',
+  'objects.box.removeTexture': 'إزالة الملمس',
+  'objects.box.tile': 'حجم البلاط',
 
   // نافذة استيراد السحب والإفلات — عند إسقاط ملف في أي مكان من التطبيق
   'dropImport.title': 'هل تريد إضافة هذا إلى عالمك؟',
@@ -177,9 +200,11 @@ export const ar: Dict = {
   'dropImport.descVideo': 'سيتم وضعه في العالم كشاشة فيديو.',
   'dropImport.descAudio': 'سيتم وضعه في العالم كصوت.',
   'dropImport.descWorld': 'سيصبح البيئة التي يراها الجميع في الغرفة.',
+  'dropImport.descManifest': 'سيضيف هذا عناصره (والبيئة إن وُجدت) إلى الغرفة.',
   'dropImport.addToWorld': 'إضافة إلى العالم',
   'dropImport.setAsWorldEnvironment': 'أو تعيينه كبيئة العالم بدلاً من ذلك',
   'dropImport.saveOnly': 'الحفظ في المخزون فقط',
+  'dropImport.lockedHint': 'غير متاح أثناء قفل هذا العالم.',
   'dropImport.unsupportedTitle': 'تعذّرت إضافة هذا الملف',
   'dropImport.unsupportedBody': '"{fileName}" ليس ملف أفاتار أو عالم أو عنصر يمكن لهذا التطبيق استخدامه.',
 
