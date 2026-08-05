@@ -187,6 +187,7 @@ export const ar: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'نطاق السماع',
   'objects.rangeValue': '{n} م',
+  'objects.rangeExact': 'نطاق السماع (م)',
 
   // مظهر الصندوق — لعناصر "الصندوق" فقط، يُضبط من شريط التحرير (EditToolbar.tsx)
   'objects.box.badge': 'صندوق',

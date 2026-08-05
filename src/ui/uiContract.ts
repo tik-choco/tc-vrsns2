@@ -344,16 +344,28 @@ export function clampNpcRadius(radius: number, fallback: number): number {
 /**
  * PlacedObject.volume/audibleRange's own "absent means" defaults — see their
  * doc comments in shared/types.ts, and WorldObjects.ts's DEFAULT_VOLUME /
- * AUDIO_REF_DISTANCE, which is where they are actually applied to a
+ * AUDIO_DEFAULT_RANGE, which is where they are actually applied to a
  * placement's live PositionalAudio. Duplicated here as plain numbers
  * (rather than imported) because WorldObjects.ts pulls in three.js and the
  * glTF loader — a runtime dependency this presentational contract module,
  * pulled into pure-function tests, must not carry. Used as clampVolume/
  * clampAudibleRange's NaN fallback and as EditToolbar's display fallback for
  * a placement that never explicitly set the field.
+ *
+ * AUDIBLE_RANGE_DEFAULT's meaning changed along with the panner model: it
+ * used to be a plain three.js PositionalAudio ref distance (a falloff knob
+ * with no hard edge), so 4 was a reasonable "sounds like a real object"
+ * value. Now that WorldObjects drives a linear distance model — full volume
+ * within a quarter of this radius, a linear fade beyond it, and total
+ * silence past it (see the range-sphere visual shown while such a placement
+ * is selected) — this number is a hard audibility cutoff, not a taper. Left
+ * at 4 it would have gone mute for any legacy placement more than a couple
+ * of meters from its source, i.e. across most of an ordinary room, so the
+ * default was raised to 12 to keep those placements audible at a normal
+ * conversational distance without every existing room needing an edit.
  */
 export const VOLUME_DEFAULT = 1
-export const AUDIBLE_RANGE_DEFAULT = 4
+export const AUDIBLE_RANGE_DEFAULT = 12
 
 /**
  * Clamps a volume-multiplier edit to VOLUME_MIN/MAX (net/protocol.ts) before

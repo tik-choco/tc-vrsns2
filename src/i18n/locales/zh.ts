@@ -186,6 +186,7 @@ export const zh: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': '可听范围',
   'objects.rangeValue': '{n} 米',
+  'objects.rangeExact': '可听范围（米）',
 
   // 方块外观 — 仅“方块”类型的放置物，通过编辑工具栏（EditToolbar.tsx）设置
   'objects.box.badge': '方块',

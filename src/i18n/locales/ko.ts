@@ -186,6 +186,7 @@ export const ko: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': '가청 거리',
   'objects.rangeValue': '{n}m',
+  'objects.rangeExact': '가청 거리 (m)',
 
   // 박스 외형 — '박스' 오브젝트 전용, 편집 도구모음(EditToolbar.tsx)에서 설정
   'objects.box.badge': '박스',

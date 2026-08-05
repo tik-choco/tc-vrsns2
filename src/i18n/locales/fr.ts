@@ -189,6 +189,7 @@ export const fr: Dict = {
   'objects.volumeValue': '{n} %',
   'objects.range': 'Rayon audible',
   'objects.rangeValue': '{n} m',
+  'objects.rangeExact': 'Rayon audible (m)',
 
   // Apparence de la boîte — objets de type « boîte » uniquement, réglée
   // depuis la barre d'édition (EditToolbar.tsx)

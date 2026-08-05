@@ -189,6 +189,7 @@ export const id: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'Radius terdengar',
   'objects.rangeValue': '{n} m',
+  'objects.rangeExact': 'Radius terdengar (m)',
 
   // Tampilan kotak — khusus objek jenis "kotak", diatur dari toolbar edit
   // (EditToolbar.tsx)

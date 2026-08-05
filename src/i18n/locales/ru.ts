@@ -189,6 +189,7 @@ export const ru: Dict = {
   'objects.volumeValue': '{n}%',
   'objects.range': 'Дальность звука',
   'objects.rangeValue': '{n} м',
+  'objects.rangeExact': 'Дальность звука (м)',
 
   // Внешний вид коробки — только объекты типа «коробка», настраивается на
   // панели редактирования (EditToolbar.tsx)

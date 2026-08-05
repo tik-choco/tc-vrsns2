@@ -15,6 +15,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { BoxAppearance, ObjectState, PlacedKind, PlacedObject } from '../shared/types'
+import { AudioRangeIndicator, placementFalloff } from './audioRangeIndicator'
 import type { WalkableBox } from './boxGround'
 import { normalizeAngle } from './CharacterController'
 import { isMediaKind } from './mediaFormat'
@@ -72,13 +73,35 @@ const SPEAKER_WIDTH = 0.34
 const SPEAKER_HEIGHT = 0.56
 const SPEAKER_DEPTH = 0.26
 /**
- * Distance (world units) over which positional audio stays at full volume —
- * the default ref distance for a placement that carries no
- * PlacedObject.audibleRange (every placement before that field existed, and
- * any that simply never set it).
+ * Default audible range (world units) for a PLACEMENT that carries no
+ * PlacedObject.audibleRange — every placement from before that field existed,
+ * and any that simply never set it. With the linear falloff model this is a
+ * HARD boundary — beyond it the sound is completely inaudible, not just
+ * faint — so it is deliberately much larger than the 4 that used to be the
+ * ref distance here: that value was tuned for an inverse-falloff model where
+ * "ref distance" only meant "stops being full volume" and sound kept
+ * carrying (quietly) far past it. A flat 4 m hard cutoff would mute every
+ * legacy placement across most of an ordinary room, which is a regression the
+ * field's absence must not cause.
  */
-const AUDIO_REF_DISTANCE = 4
-const AUDIO_ROLLOFF = 1.4
+const AUDIO_DEFAULT_RANGE = 12
+/**
+ * The pre-boundary falloff, kept EXACTLY as it was, for the sounds that are
+ * not placements: script `sound` effects and NPC speech (see
+ * attachOneShotAudio). Those have no audibleRange field to set, no
+ * range sphere to match, and callers tuned against the old curve — most
+ * pointedly NPC_LIMITS.ttsMaxDistance, which skips synthesizing speech for a
+ * listener beyond 40 m precisely because the voice is already negligible out
+ * there. Giving one-shots the placement model instead would have made that
+ * gate wrong (silence at 12 m, so every listener between 12 and 40 m would
+ * pay for a synthesis nobody can hear, out of a budget of only two at a
+ * time) and would have silently muted any existing behaviour script whose
+ * sound was meant to carry across a courtyard. A boundary you can see and
+ * drag is a feature of placements; it is not something to impose on content
+ * that never asked for it.
+ */
+const ONE_SHOT_REF_DISTANCE = 4
+const ONE_SHOT_ROLLOFF = 1.4
 /**
  * Default gain for a placement that carries no PlacedObject.volume — unity,
  * i.e. the source media's own unaltered level. This is also what a bare
@@ -241,6 +264,27 @@ export class WorldObjects {
    * drops the event, same as the other optional listeners in this class.
    */
   private rebuiltListener: ((id: string) => void) | null = null
+  /**
+   * The scene-level "how far does this sound reach" visual (see its own
+   * file's doc) — one instance, shown at whichever single placement
+   * currently has audio-range focus (see setAudioRangeFocus). Built eagerly
+   * in the constructor (it needs nothing but this.scene) rather than
+   * lazily on first focus: it starts hidden either way, so there is no
+   * visible cost to having it exist, and eager construction means
+   * setAudioRangeFocus never has to handle a "not built yet" case.
+   */
+  private audioRangeIndicator: AudioRangeIndicator
+  /**
+   * Id of the placement audioRangeIndicator is currently focused on, or null
+   * for none. Kept even for a frame where `entry` is momentarily missing
+   * (see update()'s handling) so a rebuild of the SAME id (syncRemote's
+   * remove-then-readd path for a changed 'box' appearance — not applicable
+   * to audio/video today, but the same reconciliation shape a future kind
+   * change could take) picks the focus back up rather than losing it, the
+   * same "selection survives a rebuild" spirit as rebuiltListener/
+   * ObjectEditor.reattach.
+   */
+  private audioRangeFocusId: string | null = null
 
   /**
    * `listener` (the AudioListener mounted on the camera) enables positional
@@ -250,6 +294,7 @@ export class WorldObjects {
   constructor(scene: THREE.Scene, listener: THREE.AudioListener | null = null) {
     this.scene = scene
     this.listener = listener
+    this.audioRangeIndicator = new AudioRangeIndicator(scene)
   }
 
   /**
@@ -580,13 +625,22 @@ export class WorldObjects {
    * that touched some other field only (a script attach, a move). A no-op
    * for an id that isn't tracked, or one with no live PositionalAudio (any
    * kind but 'video'/'audio', or the world had no AudioListener when it was
-   * built — see attachPositionalAudio).
+   * built — see attachPlacementAudio).
+   *
+   * Only the EAR is this method's business. The drawn sphere is not retuned
+   * here on purpose: applyAudioRangeFocus() re-reads its radius from
+   * `entry.state` every frame, and syncRemote hands this method a state it
+   * has already written there (via applyTransform, immediately above the
+   * call), so the picture is correct on the very next frame with no second
+   * update path that could disagree with the first.
    */
   retuneAudio(id: string, volume?: number, audibleRange?: number): void {
     const sound = this.objects.get(id)?.sound
     if (!sound) return
+    const falloff = placementFalloff(audibleRange ?? AUDIO_DEFAULT_RANGE)
     sound.setVolume(volume ?? DEFAULT_VOLUME)
-    sound.setRefDistance(audibleRange ?? AUDIO_REF_DISTANCE)
+    sound.setRefDistance(falloff.refDistance)
+    sound.setMaxDistance(falloff.maxDistance)
   }
 
   /**
@@ -685,6 +739,42 @@ export class WorldObjects {
   }
 
   /**
+   * Sets which single placement (if any) the audio-range indicator (see
+   * audioRangeIndicator's own file) is shown for — the seam World wires to
+   * "the current object-edit selection is an audio-carrying placement" (see
+   * World's constructor wrapping of ObjectEditor.onSelectionChange). Always
+   * records `id` as the focus (see audioRangeFocusId's own doc for why even
+   * an id that doesn't currently resolve is still tracked), then delegates
+   * the actual show/hide/position decision to applyAudioRangeFocus() — the
+   * same logic update() runs every frame to keep a live focus riding its
+   * placement, so establishing a NEW focus and refreshing an EXISTING one
+   * are exactly the same code path.
+   */
+  setAudioRangeFocus(id: string | null): void {
+    this.audioRangeFocusId = id
+    this.applyAudioRangeFocus()
+  }
+
+  /**
+   * Current audio-range focus (see setAudioRangeFocus/audioRangeFocusId),
+   * for e2e observability (src/lib/debugHook.ts): a test drives an
+   * audibleRange edit and asserts the indicator followed, without any way to
+   * inspect a THREE scene's visual state directly from outside. Null
+   * whenever nothing is focused OR the focused id doesn't currently resolve
+   * to a live 'audio'/'video' entry — i.e. exactly whenever
+   * audioRangeIndicator itself is hidden (see applyAudioRangeFocus), so this
+   * never reports a focus the sphere isn't actually showing.
+   */
+  getAudioRangeFocus(): { id: string; range: number } | null {
+    const id = this.audioRangeFocusId
+    if (!id) return null
+    const entry = this.objects.get(id)
+    const isAudible = entry !== undefined && (entry.state.kind === 'audio' || entry.state.kind === 'video')
+    if (!entry || !isAudible) return null
+    return { id, range: entry.state.audibleRange ?? AUDIO_DEFAULT_RANGE }
+  }
+
+  /**
    * True while `id`'s owner-driven approach walk currently has it away from
    * its authored home position (anything but the 'home' phase — see
    * npcPresence.ts's NpcApproachMode). World.emitObjectStates reads this to
@@ -727,7 +817,7 @@ export class WorldObjects {
    * Plays a one-shot positional sound at a placed object, for a script's
    * `sound` effect (see ScriptEffect in net/protocol.ts). Reuses the exact
    * PositionalAudio-on-AudioListener pipeline built for placed video/audio
-   * (attachPositionalAudio) rather than a second audio path, and the same
+   * rather than a second audio path, and the same
    * autoplay handling (startMedia): a script can fire this with no user
    * gesture on this tab, so playback must start muted and never throw or
    * leave the AudioContext stuck suspended. A no-op if the object is gone or
@@ -735,10 +825,11 @@ export class WorldObjects {
    * object's own scene node, so the sound tracks it if it moves, and is torn
    * down when playback ends.
    *
-   * Deliberately calls attachPositionalAudio with no volume/audibleRange —
+   * Deliberately goes through attachOneShotAudio, NOT attachPlacementAudio:
    * this plays a one-shot effect (or, via voiceAnchor, an NPC's speech), not
-   * the object's own placed media, so it must not inherit that placement's
-   * PlacedObject.volume/audibleRange (see attachPositionalAudio's doc).
+   * the object's own placed media, so it must neither inherit that
+   * placement's PlacedObject.volume/audibleRange nor acquire the hard silence
+   * boundary a placement's audible range means (see that method's doc).
    */
   playOneShot(objectId: string, bytes: Uint8Array, mime?: string): void {
     const entry = this.objects.get(objectId)
@@ -747,7 +838,7 @@ export class WorldObjects {
     const url = blobUrl(bytes, mime)
     const audio = document.createElement('audio')
     audio.src = url
-    const sound = this.attachPositionalAudio(object, audio)
+    const sound = this.attachOneShotAudio(object, audio)
     if (!sound) {
       URL.revokeObjectURL(url)
       return
@@ -764,13 +855,21 @@ export class WorldObjects {
   /**
    * Animates the "now playing" pulse on audio markers, advances every NPC's
    * presence (idle + gaze + bubble/lipsync + body-turn intent — see
-   * NpcView.update), and steps any pending faceTowards() turn. `players` is
-   * every player position this peer currently knows about (local + remotes,
-   * from World.collectNearbyPlayers) — passed through to every NPC's own
-   * nearest-player pick; cheap and harmless when there are no NPCs tracked.
-   * Safe to call every frame.
+   * NpcView.update), steps any pending faceTowards() turn, and keeps a live
+   * audio-range focus (see setAudioRangeFocus) riding its placement.
+   * `players` is every player position this peer currently knows about
+   * (local + remotes, from World.collectNearbyPlayers) — passed through to
+   * every NPC's own nearest-player pick; cheap and harmless when there are
+   * no NPCs tracked. Safe to call every frame.
    */
   update(delta: number, players: readonly Vec3[] = []): void {
+    // Runs even with zero tracked objects (audioRangeFocusId can only be set
+    // to an id that WAS tracked; applyAudioRangeFocus() hides correctly the
+    // instant that id stops resolving, which an empty map trivially
+    // satisfies) — a single null check the overwhelming majority of frames,
+    // since no placement has focus at all outside an active edit-mode
+    // selection.
+    this.applyAudioRangeFocus()
     if (this.objects.size === 0) return
     this.elapsed += delta
     const pulse = 1 + Math.sin(this.elapsed * 3) * 0.12
@@ -897,12 +996,48 @@ export class WorldObjects {
     }
   }
 
+  /**
+   * The one place that actually decides whether audioRangeIndicator is
+   * shown, and where — called both from setAudioRangeFocus() (a NEW focus,
+   * or an explicit clear) and from update() (every frame, to keep an
+   * EXISTING focus riding its placement, since a gizmo drag or a script's
+   * own transform effects can move that placement's origin at any time).
+   *
+   * `entry` missing covers both "nothing is focused" (audioRangeFocusId
+   * null) and "the focused placement is momentarily gone" — e.g. syncRemote
+   * mid-rebuild (see rebuiltListener's doc for the shape of that gap). This
+   * hides the sphere but — critically — never touches audioRangeFocusId
+   * itself; only setAudioRangeFocus() ever changes what id is tracked (see
+   * its own doc), so the SAME id reappearing on a later frame is picked
+   * back up automatically the next time this runs, with no separate
+   * "resume" path to keep in sync.
+   *
+   * Re-reads BOTH the position and the radius from `entry` every single
+   * time, rather than setting the radius once on the frame the sphere
+   * appears: an "only on the way in" shortcut would show a stale radius
+   * after any range change that didn't happen to also hide and re-show the
+   * sphere. Three scalar writes on a frame where something is focused at
+   * all, in exchange for the whole class of "the picture is out of date"
+   * bugs, is not a trade worth thinking about twice.
+   */
+  private applyAudioRangeFocus(): void {
+    const id = this.audioRangeFocusId
+    const entry = id ? this.objects.get(id) : undefined
+    const isAudible = entry !== undefined && (entry.state.kind === 'audio' || entry.state.kind === 'video')
+    if (!entry || !isAudible) {
+      this.audioRangeIndicator.hide()
+      return
+    }
+    this.audioRangeIndicator.show(entry.object.position, entry.state.audibleRange ?? AUDIO_DEFAULT_RANGE)
+  }
+
   clearAll(): void {
     for (const id of [...this.objects.keys()]) this.remove(id)
   }
 
   dispose(): void {
     this.clearAll()
+    this.audioRangeIndicator.dispose()
   }
 
   // --- builders -------------------------------------------------------------
@@ -1027,7 +1162,7 @@ export class WorldObjects {
     texture.colorSpace = THREE.SRGBColorSpace
     const aspect = ratioOf(video.videoWidth, video.videoHeight)
     const panel = makePanel(texture, aspect)
-    const sound = this.attachPositionalAudio(panel.object, video, volume, audibleRange)
+    const sound = this.attachPlacementAudio(panel.object, video, volume, audibleRange)
     startMedia(video, this.listener)
 
     return {
@@ -1058,7 +1193,7 @@ export class WorldObjects {
     }
 
     const marker = makeSpeakerMarker()
-    const sound = this.attachPositionalAudio(marker.object, audio, volume, audibleRange)
+    const sound = this.attachPlacementAudio(marker.object, audio, volume, audibleRange)
     startMedia(audio, this.listener)
 
     return {
@@ -1184,30 +1319,67 @@ export class WorldObjects {
   }
 
   /**
-   * Route a media element's sound through a PositionalAudio parented to the
-   * object, so it attenuates with distance from the camera's listener. Returns
-   * null when the world has no listener (audio simply stays silent).
+   * Route a PLACEMENT's own media (buildVideo/buildAudio, kind
+   * 'video'/'audio') through a PositionalAudio parented to it, so the sound
+   * attenuates with distance from the camera's listener and goes completely
+   * silent past `audibleRange` — the boundary AudioRangeIndicator draws while
+   * that placement is selected. `volume`/`audibleRange` are the placement's
+   * own PlacedObject fields; absent means DEFAULT_VOLUME/AUDIO_DEFAULT_RANGE.
+   * Returns null when the world has no listener (audio simply stays silent).
    *
-   * `volume`/`audibleRange` are a PLACEMENT's own PlacedObject.volume/
-   * audibleRange (kind 'audio'/'video') — buildVideo/buildAudio are the only
-   * callers that ever pass them. playOneShot (script `sound` effects, NPC
-   * speech) deliberately calls this with neither argument: those sounds are
-   * not placements and must not inherit a placement's mix, so they always get
-   * DEFAULT_VOLUME/AUDIO_REF_DISTANCE here, same as every placement did
-   * before these fields existed.
+   * Linear distance model, not three's default inverse-ish one: an
+   * audibleRange is meant to be a boundary a player can walk OUT of earshot
+   * of, not merely "where it starts fading" while still carrying faintly
+   * forever (see AUDIO_DEFAULT_RANGE's doc). The exact panner distances come
+   * from placementFalloff() — see its doc for why they, and not a formula
+   * repeated here, are what keeps the ear and the drawn sphere describing the
+   * same zone.
    */
-  private attachPositionalAudio(
+  private attachPlacementAudio(
     parent: THREE.Object3D,
     element: HTMLMediaElement,
     volume?: number,
     audibleRange?: number,
   ): THREE.PositionalAudio | null {
+    const sound = this.createPositionalAudio(parent, element)
+    if (!sound) return null
+    const falloff = placementFalloff(audibleRange ?? AUDIO_DEFAULT_RANGE)
+    sound.setDistanceModel('linear')
+    sound.setRolloffFactor(falloff.rolloffFactor)
+    sound.setRefDistance(falloff.refDistance)
+    sound.setMaxDistance(falloff.maxDistance)
+    sound.setVolume(volume ?? DEFAULT_VOLUME)
+    return sound
+  }
+
+  /**
+   * Route a one-shot — a script `sound` effect or a line of NPC speech (see
+   * playOneShot) — through a PositionalAudio on three's DEFAULT inverse
+   * distance model, i.e. exactly the falloff every sound in this world had
+   * before placements gained an audible range at all.
+   *
+   * Deliberately NOT the placement model above: see ONE_SHOT_REF_DISTANCE's
+   * doc for why a hard boundary is a thing a placement opts into (and can
+   * see, and can drag), never something to impose on a sound that has no
+   * range field, no indicator, and callers already tuned against this curve.
+   * A one-shot also never inherits a placement's `volume` even when it plays
+   * from one — it is not that placement's media, so it always plays at
+   * DEFAULT_VOLUME.
+   */
+  private attachOneShotAudio(parent: THREE.Object3D, element: HTMLMediaElement): THREE.PositionalAudio | null {
+    const sound = this.createPositionalAudio(parent, element)
+    if (!sound) return null
+    sound.setRefDistance(ONE_SHOT_REF_DISTANCE)
+    sound.setRolloffFactor(ONE_SHOT_ROLLOFF)
+    sound.setVolume(DEFAULT_VOLUME)
+    return sound
+  }
+
+  /** The half both attach*Audio methods share: the listener check, the media-element wiring, and parenting. Distance model is the caller's business — that is the entire difference between them. */
+  private createPositionalAudio(parent: THREE.Object3D, element: HTMLMediaElement): THREE.PositionalAudio | null {
     if (!this.listener) return null
     const sound = new THREE.PositionalAudio(this.listener)
     sound.setMediaElementSource(element)
-    sound.setRefDistance(audibleRange ?? AUDIO_REF_DISTANCE)
-    sound.setRolloffFactor(AUDIO_ROLLOFF)
-    sound.setVolume(volume ?? DEFAULT_VOLUME)
     parent.add(sound)
     return sound
   }

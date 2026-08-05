@@ -192,7 +192,7 @@ export const SCALE_MAX = 100
 /**
  * Bounds for a placement's own volume multiplier (PlacedObject.volume, kind
  * 'audio'/'video' only). 1 is unchanged source loudness — see
- * WorldObjects.attachPositionalAudio's default, applied when this field is
+ * WorldObjects.attachPlacementAudio's default, applied when this field is
  * absent so an existing placement plays exactly as it always has. The
  * ceiling allows a modest boost for a source clip recorded too quietly to
  * balance against louder placements in the same scene.
@@ -201,11 +201,14 @@ export const VOLUME_MIN = 0
 export const VOLUME_MAX = 2
 /**
  * Bounds, in world units, for a placement's audible range (PlacedObject.
- * audibleRange, kind 'audio'/'video' only) — the positional-audio ref
- * distance WorldObjects.attachPositionalAudio sets, i.e. how far the sound
- * carries at full volume before it starts falling off. Absent means
- * WorldObjects' own default ref distance, matching every placement from
- * before this field existed.
+ * audibleRange, kind 'audio'/'video' only) — a HARD audible boundary, not
+ * merely where falloff begins: WorldObjects.attachPlacementAudio plays the
+ * source at full volume out to a quarter of this distance
+ * (AUDIO_FULL_FRACTION), fades it linearly across the rest, and it is
+ * completely silent beyond it, matching exactly what
+ * AudioRangeIndicator draws as the sphere's outer boundary. Absent means
+ * WorldObjects' own default range (AUDIO_DEFAULT_RANGE), matching every
+ * placement from before this field existed.
  */
 export const AUDIBLE_RANGE_MIN = 0.5
 export const AUDIBLE_RANGE_MAX = 100

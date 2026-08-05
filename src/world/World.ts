@@ -123,6 +123,14 @@ export class World {
   private scriptOutputListener: ((result: ScriptTickResult) => void) | null = null
   /** The caller's onObjectEdited callback, invoked after this class's own script sync. */
   private objectEditedListener: ((state: PlacedObject) => void) | null = null
+  /**
+   * The caller's onObjectSelected callback — same layering as
+   * objectEditedListener above: this class wraps ObjectEditor.
+   * onSelectionChange itself (in the constructor) so an audio/video
+   * selection always drives WorldObjects.setAudioRangeFocus regardless of
+   * whether a caller has registered anything here, then invokes this.
+   */
+  private objectSelectedListener: ((state: PlacedObject | null) => void) | null = null
   /** Cached from setLocalProfile: what event/onTriggerEnter and onInteract hand a script for "who". */
   private localProfileName = ''
 
@@ -271,6 +279,18 @@ export class World {
     this.objectEditor.onCommit = (state) => {
       this.syncScripts()
       this.objectEditedListener?.(state)
+    }
+    // Wrap the editor's own selection-change callback the same way onCommit
+    // is wrapped just above: whichever placement is selected drives the
+    // audio-range indicator (see WorldObjects.setAudioRangeFocus's doc) for
+    // an 'audio'/'video' placement, hidden for anything else — and this must
+    // run on EVERY selection change, not only when a caller has registered
+    // something via onObjectSelected() below (the world/UI wiring using
+    // this class may not always have — the indicator still has to work).
+    this.objectEditor.onSelectionChange = (state) => {
+      const audible = state !== null && (state.kind === 'audio' || state.kind === 'video')
+      this.worldObjects.setAudioRangeFocus(audible ? state.id : null)
+      this.objectSelectedListener?.(state)
     }
 
     this.scriptRuntime = new ScriptRuntime(
@@ -702,6 +722,13 @@ export class World {
   setEditMode(enabled: boolean): void {
     this.objectEditor.setEnabled(enabled)
     this.cameraController.setEditMode(enabled)
+    // Defensive: setEnabled(false) already clears the selection, which
+    // normally drives the audio-range focus to null through the
+    // onSelectionChange wrapping above — but that only FIRES on an actual
+    // change (ObjectEditor.select() no-ops when already null), so this
+    // covers leaving edit mode via any path that doesn't go through a
+    // selection change at all.
+    if (!enabled) this.worldObjects.setAudioRangeFocus(null)
   }
 
   /** The placements the local player owns, i.e. the only ones it may edit. */
@@ -717,9 +744,24 @@ export class World {
     this.objectEditor.select(id)
   }
 
-  /** Notified when the edited selection changes (null = nothing selected). */
+  /**
+   * Notified when the edited selection changes (null = nothing selected).
+   * Fires after this class's own reaction to the same change (see the
+   * constructor's wrapping of objectEditor.onSelectionChange) — same
+   * ordering as onObjectEdited relative to onCommit.
+   */
   onObjectSelected(cb: (state: PlacedObject | null) => void): void {
-    this.objectEditor.onSelectionChange = cb
+    this.objectSelectedListener = cb
+  }
+
+  /**
+   * The audio-range indicator's current focus (id + effective range), or
+   * null while nothing 'audio'/'video' is selected — see WorldObjects.
+   * getAudioRangeFocus's doc. Exposed here purely for e2e observability
+   * (src/lib/debugHook.ts); nothing in this class itself reads it.
+   */
+  getAudioRangeFocus(): { id: string; range: number } | null {
+    return this.worldObjects.getAudioRangeFocus()
   }
 
   /**
