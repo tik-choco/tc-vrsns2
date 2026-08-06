@@ -3420,3 +3420,116 @@ body {
   color: var(--text-dim);
   line-height: 1.4;
 }
+
+/* --- Mobile viewport hardening --------------------------------------------
+   Touch devices already get the dedicated control column, including menu and
+   microphone actions. Keeping the desktop copies in the HUD made both menu
+   buttons appear in the same top-right area and unnecessarily reduced the
+   room left for status pills. */
+@media (pointer: coarse) {
+  .hud-menu-btn,
+  .hud-cluster > .voice-pill {
+    display: none;
+  }
+
+  /* The edit toolbar can contain several authoring groups. Keep the whole
+     surface reachable on short landscape phones instead of letting its top
+     or inline edges extend beyond the viewport. */
+  .edit-bar {
+    inline-size: max-content;
+    max-inline-size: calc(100% - var(--sp-4) - var(--sp-4) - var(--sa-l) - var(--sa-r));
+    max-block-size: calc(100% - 5.25rem - var(--sa-t) - var(--sa-b));
+    overflow: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Full-screen sheets must allow every nested flex/grid child to shrink.
+     This is especially important for translated labels and generated/script
+     content, whose intrinsic width is not known in advance. */
+  .panel,
+  .panel-header,
+  .panel-heading,
+  .panel-body,
+  .catalog,
+  .catalog-browse,
+  .catalog-preview,
+  .menu-dock,
+  .menu-grid,
+  .menu-item {
+    min-inline-size: 0;
+  }
+
+  .panel-body {
+    padding: var(--sp-4);
+    overflow-x: auto;
+    overscroll-behavior: contain;
+  }
+
+  .panel-heading,
+  .panel-title,
+  .panel-subtitle,
+  .menu-item-label {
+    overflow-wrap: anywhere;
+  }
+
+  /* Centering a tall menu clips both ends in a short viewport. Starting at
+     the safe-area edge and scrolling keeps the close button and every item
+     reachable in portrait and landscape. */
+  .menu-dock {
+    justify-content: flex-start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .menu-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .menu-item-label {
+    max-inline-size: 100%;
+    text-align: center;
+  }
+
+  /* Input/button rows may be wider than a phone once a translated button
+     label is included. Allow controls to move to a second line. */
+  .field-row,
+  .objects-footer,
+  .town-char-row {
+    flex-wrap: wrap;
+  }
+  .field-row > .btn {
+    flex: 1 1 auto;
+  }
+
+  /* The graph editor's desktop split leaves the inspector only ~34vw wide,
+     while vector inputs need considerably more. Stack it below the canvas
+     on phones so neither side is rendered off-screen. These declarations
+     live after the graph-editor base rules intentionally. */
+  .graph-editor-panel {
+    inline-size: 100%;
+    block-size: 100%;
+    max-block-size: none;
+  }
+  .graph-editor-toolbar {
+    flex-wrap: wrap;
+    padding-inline: var(--sp-4);
+  }
+  .graph-editor-toolbar-actions {
+    flex-wrap: wrap;
+  }
+  .graph-editor-body {
+    flex-direction: column;
+  }
+  .graph-editor-canvas-wrap {
+    flex: 1 1 48%;
+    min-block-size: 12rem;
+  }
+  .graph-editor-inspector {
+    inline-size: 100%;
+    max-block-size: 45%;
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--border);
+  }
+  .ginspector-vec3 {
+    flex-wrap: wrap;
+  }
+}
