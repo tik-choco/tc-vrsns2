@@ -1453,8 +1453,14 @@ export function useSession(): SessionApi {
           ? Math.hypot(placement.x - pose.x, placement.y - pose.y, placement.z - pose.z)
           : 0
         if (distance > NPC_LIMITS.ttsMaxDistance) return
-        void retrieveSpeech(speech.cid).then((bytes) => {
-          if (!bytes || latestNpcUtterance.current.get(speech.objectId) !== speech.utteranceId) return
+        const isCurrent = () =>
+          sessionRef.current === session &&
+          objects.current.isOwnedBy(speech.objectId, fromId) &&
+          latestNpcUtterance.current.get(speech.objectId) === speech.utteranceId
+        void retrieveSpeech(speech.cid, { isCurrent }).then((bytes) => {
+          // Recheck after the asynchronous fetch as well: a retry may span an
+          // owner disconnect/rejoin or a newer line from the same NPC.
+          if (!bytes || !isCurrent()) return
           const clip = { bytes, mime: speech.mime }
           if (!npcVoiceRef.current.useSharedClip(speech.objectId, clip, distance)) return
           worldRef.current?.playNpcSpeech(speech.objectId, speech.text, bytes, speech.mime)
