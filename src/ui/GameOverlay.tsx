@@ -848,7 +848,12 @@ export function GameOverlay(props: GameOverlayProps) {
 
       {/* Main menu */}
       {menuOpen && (
-        <div class="menu-backdrop" onClick={() => setMenuOpen(false)}>
+        <div
+          class="menu-backdrop"
+          onPointerDown={(event) => {
+            if (event.button === 0 && event.target === event.currentTarget) setMenuOpen(false)
+          }}
+        >
           <nav class="menu-dock" aria-label={t('menu.title')} onClick={(e) => e.stopPropagation()}>
             <div class="menu-dock-head">
               <h2 class="menu-dock-title">{t('menu.title')}</h2>

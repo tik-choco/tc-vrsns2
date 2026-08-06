@@ -895,9 +895,11 @@ export function useSession(): SessionApi {
    * (it has no idea when the audio ran out), and the audible route is a
    * separate HTMLAudioElement inside WorldObjects. NPC_SILENCE_HOLD_MS is
    * comfortably longer than the gaps between words, so a pause mid-sentence
-   * never reads as the end of the line. Once it does fire, stop() disposes
-   * the analysis graph and freezes `seq`, which is exactly the signal the
-   * world layer's own staleness timer needs to close the mouth.
+   * never reads as the end of the line. Once it does fire, finishPlayback()
+   * disposes the analysis graph and freezes `seq`, which is exactly the
+   * signal the world layer's own staleness timer needs to close the mouth.
+   * It must not call stop(): a preempting line may already be synthesizing
+   * while this pump is observing the previous line's disposed source.
    */
   const pumpNpcLevels = useCallback(() => {
     npcLevelPump.current = null
@@ -910,7 +912,7 @@ export function useSession(): SessionApi {
       if (reading.level > NPC_SILENCE_LEVEL) {
         npcSpeakingIds.current.set(objectId, now)
       } else if (now - lastAudibleAt > NPC_SILENCE_HOLD_MS) {
-        npcVoiceRef.current.stop(objectId)
+        npcVoiceRef.current.finishPlayback(objectId)
         npcSpeakingIds.current.delete(objectId)
       }
     }
