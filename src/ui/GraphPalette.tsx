@@ -68,7 +68,12 @@ export function GraphPalette({ onAdd, onClose }: Props) {
   }
 
   return (
-    <div class="gpalette-backdrop" onClick={onClose}>
+    <div
+      class="gpalette-backdrop"
+      onPointerDown={(event) => {
+        if (event.button === 0 && event.target === event.currentTarget) onClose()
+      }}
+    >
       <div
         class="gpalette"
         role="dialog"

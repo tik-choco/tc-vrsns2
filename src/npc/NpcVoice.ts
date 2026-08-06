@@ -186,6 +186,16 @@ export class NpcVoice {
     this.stopPlayback(objectId)
   }
 
+  /**
+   * Releases only the completed playback/analysis source. Unlike stop(), this
+   * deliberately leaves an in-flight synthesis alone: the session's silence
+   * detector can still be winding down the previous clip after a preempting
+   * speak() has already started synthesizing its replacement.
+   */
+  finishPlayback(objectId: string): void {
+    this.stopPlayback(objectId)
+  }
+
   /** Stops and forgets objectId entirely — call when its placement is removed, so a long session doesn't accumulate state for NPCs that no longer exist. */
   remove(objectId: string): void {
     this.stop(objectId)

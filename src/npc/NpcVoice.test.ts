@@ -291,6 +291,23 @@ describe('stop / remove / reset', () => {
     expect(await call).toBeNull()
   })
 
+  it('finishPlayback() does not abort a replacement synthesis still in flight', async () => {
+    const firstSource = makeSource()
+    const replacement = deferred<TtsClip | null>()
+    const synthesize = vi.fn().mockResolvedValueOnce(clip('a')).mockReturnValueOnce(replacement.promise)
+    const { deps } = makeDeps({ synthesize, analyze: () => firstSource })
+    const voice = new NpcVoice(deps)
+
+    await voice.speak('npc-1', { text: 'first' }, 1)
+    const replacementCall = voice.speak('npc-1', { text: 'replacement' }, 1)
+    voice.finishPlayback('npc-1')
+
+    const replacementSignal = synthesize.mock.calls[1][1] as AbortSignal
+    expect(replacementSignal.aborted).toBe(false)
+    replacement.resolve(clip('b'))
+    expect(await replacementCall).toEqual(clip('b'))
+  })
+
   it('remove() forgets the NPC entirely, so a later speak() starts fresh', async () => {
     const { deps } = makeDeps({ analyze: () => makeSource([0.9]) })
     const voice = new NpcVoice(deps)

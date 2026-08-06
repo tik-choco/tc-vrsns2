@@ -139,7 +139,12 @@ export function GraphEditor(props: Props) {
   }
 
   return (
-    <div class="panel-backdrop" onClick={requestClose}>
+    <div
+      class="panel-backdrop"
+      onPointerDown={(event) => {
+        if (event.button === 0 && event.target === event.currentTarget) requestClose()
+      }}
+    >
       <section
         class="panel panel-wide graph-editor-panel"
         role="dialog"
