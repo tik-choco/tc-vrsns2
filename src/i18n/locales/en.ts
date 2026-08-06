@@ -103,6 +103,8 @@ export const en = {
   'npc.approach': 'Approach range',
   'npc.approachOff': 'Off',
   'npc.approachValue': '{n} m',
+  'npc.chase': 'Chase range',
+  'npc.chaseAuto': 'Auto',
   'npc.dialogue': 'Dialogue',
   'npc.dialogueEdit': 'Dialogue…',
   'npc.dialogueTitle': 'NPC dialogue',

@@ -101,6 +101,8 @@ export const ja: Dict = {
   'npc.approach': '接近範囲',
   'npc.approachOff': 'オフ',
   'npc.approachValue': '{n} m',
+  'npc.chase': '追跡範囲',
+  'npc.chaseAuto': '自動',
   'npc.dialogue': 'セリフ',
   'npc.dialogueEdit': 'セリフ…',
   'npc.dialogueTitle': 'NPCのセリフ',

@@ -9,6 +9,9 @@ export const NPC_LIMITS = {
   /** Bounds for NpcBinding.approachRange — how close a player must get before the owning peer walks the NPC toward them. No default: absent means the feature is off, not "use some fallback distance". */
   minApproachRange: 1,
   maxApproachRange: 30,
+  /** Bounds for NpcBinding.chaseRange — per-NPC override of how far from home an engaged NPC will still chase a player. Absent means approachRange x CHASE_LEASH_FACTOR (see engagedChaseRange). */
+  minChaseRange: 1,
+  maxChaseRange: 30,
   /** Per-NPC minimum gap between replies. */
   cooldownMs: 3000,
   /**

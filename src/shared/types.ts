@@ -152,6 +152,17 @@ export type NpcBinding = {
    */
   approachRange?: number
   /**
+   * Chase-leash radius in metres, from the NPC's HOME position: how far an
+   * already-engaged NPC (one that has left home to approach or chase) will
+   * still follow a player before giving up and returning — per-NPC override
+   * of the default leash (approachRange x CHASE_LEASH_FACTOR, see
+   * engagedChaseRange in src/world/npcPresence.ts). Absent means that
+   * default, so a placement from before this field existed behaves exactly
+   * as it always has. Meaningless without approachRange, which gates the
+   * whole approach/chase feature.
+   */
+  chaseRange?: number
+  /**
    * Which brain answers for this NPC. Absent means 'ai' — the behaviour every
    * placement had before this field existed, so an old placement (or an old
    * peer's) keeps working untouched.

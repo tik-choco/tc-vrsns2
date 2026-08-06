@@ -714,6 +714,7 @@ export function GameOverlay(props: GameOverlayProps) {
           onSetNpcRadius={props.onSetNpcRadius}
           onSetNpcVoice={props.onSetNpcVoice}
           onSetNpcApproachRange={props.onSetNpcApproachRange}
+          onSetNpcChaseRange={props.onSetNpcChaseRange}
           onSetObjectVolume={props.onSetObjectVolume}
           onSetObjectAudibleRange={props.onSetObjectAudibleRange}
           onSetObjectFalloffStart={props.onSetObjectFalloffStart}

@@ -363,6 +363,21 @@ export class ChatBubble extends CanvasSprite {
   }
 
   /**
+   * Ends the current message immediately — the leave-triggered stop (see
+   * NpcView.stopSpeech): sets the exact state redraw()'s own expiry branch
+   * (revealedCount 0, sprite hidden) but at NOW instead of hideAt, so the
+   * bubble is gone this instant rather than one frame before the natural
+   * dwell would have taken it. A no-op when nothing is showing — never
+   * clobbers a message that isn't there.
+   */
+  hide(): void {
+    if (this.revealedCount === 0) return
+    this.revealedCount = 0
+    this.hideAt = performance.now()
+    this.sprite.visible = false
+  }
+
+  /**
    * True while the message most recently passed to show() has not yet
    * reached its hideAt. There is only ever one message now (show()
    * replaces), so this is simpler than it used to be when it had to pick

@@ -24,7 +24,10 @@ import { isMediaKind } from './mediaFormat'
 import { isFacingDone, NpcView, stepYawTowards } from './NpcView'
 import {
   approachStopPoint,
+  engagedChaseRange,
   hasArrived,
+  LEAVE_GRACE_SECONDS,
+  REAPPROACH_DISTANCE,
   nearestPlayer,
   separateApproachTargets,
   stepApproach,
@@ -130,6 +133,19 @@ const DEFAULT_BOX: BoxAppearance = { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' }
 const EMPTY_BYTES = new Uint8Array(0)
 
 /**
+ * Follow rates for transform snapshots of NPCs owned by another peer. Object
+ * states arrive at roughly 10 Hz; applying each sample directly makes both
+ * the root motion and NpcView's observed-speed animation alternate between a
+ * one-frame jump and several stationary frames. These rates turn that sparse
+ * stream into continuous render-frame motion, matching RemotePlayerView.
+ */
+const REMOTE_NPC_POSITION_FOLLOW = 12
+const REMOTE_NPC_ROTATION_FOLLOW = 10
+/** Large corrections are teleports/late joins, not motion worth easing over. */
+const REMOTE_NPC_SNAP_DISTANCE = 8
+const REMOTE_NPC_POSITION_DONE_SQ = 0.0005 ** 2
+
+/**
  * Live per-axis-pair texture-repeat state for a 'box' placement's tiled
  * surface (kind 'box' with BoxAppearance.textureCid only — see buildBox).
  * `textures` stays undefined until the texture bytes actually resolve (a box
@@ -156,6 +172,8 @@ type Entry = {
   pulse?: THREE.Object3D
   /** Present iff this is an NPC placement — advances its idle animation each frame; see update(). */
   npc?: NpcView
+  /** Latest sparse owner snapshot, eased into the scene transform each frame. NPCs only. */
+  remoteNpcTarget?: ObjectState
   /** Pending target heading (radians) for faceTowards(); consumed incrementally by update(), cleared once reached. */
   faceTarget?: number
   /**
@@ -177,6 +195,15 @@ type Entry = {
    * simply off for it — see stepNpcApproach's doc.
    */
   npcApproachMode?: NpcApproachMode
+  /**
+   * The moment (this.elapsed, seconds) at which the leave-grace expires for
+   * this NPC — see LEAVE_GRACE_SECONDS / NpcApproachInputs.leaveGraceOver.
+   * Set the first frame the player is out of the chase leash while the NPC
+   * is unheld; cleared the moment either stops being true. Absent while the
+   * player is around (or the NPC is speaking), so a stale timer can never
+   * trigger a home-return for an engagement that is still live.
+   */
+  npcLeaveGraceUntil?: number
   /** Lazily-created child node an NPC's voice plays from, at mouth height rather than the placement's floor-level origin (see voiceAnchor). */
   voiceAnchor?: THREE.Object3D
   /**
@@ -228,6 +255,14 @@ export class WorldObjects {
   private loader = new GLTFLoader()
   private objects = new Map<string, Entry>()
   private elapsed = 0
+  /**
+   * Currently-audible NPC line per objectId — the teardown for the audio
+   * element playNpcSpeech created (see its doc: a new line stops the
+   * previous one, stopNpcSpeech silences the current one, remove() kills it
+   * with its placement). Never holds an entry for a script's playOneShot:
+   * those may overlap themselves on purpose.
+   */
+  private npcSpeechAudio = new Map<string, () => void>()
   /**
    * True while `id` is mid-drag in ObjectEditor. Defaults to "nothing is
    * dragging" so this class works standalone (e.g. in tests); World wires the
@@ -435,6 +470,9 @@ export class WorldObjects {
     const entry = this.objects.get(id)
     if (!entry) return
     this.objects.delete(id)
+    // A removed placement's voice has no anchor left to track — stop it, so
+    // the audio element doesn't keep playing to an empty spot.
+    this.stopNpcSpeechAudio(id)
     this.scene.remove(entry.object)
     entry.cleanup?.()
     disposeObject(entry.object)
@@ -589,6 +627,8 @@ export class WorldObjects {
     const entry = this.objects.get(id)
     if (!entry) return null
     const object = entry.object
+    // A local edit takes authority over any last remote interpolation target.
+    entry.remoteNpcTarget = undefined
 
     const x = clamp(object.position.x, -EDIT_POS_LIMIT, EDIT_POS_LIMIT)
     const y = clamp(object.position.y, -EDIT_POS_LIMIT, EDIT_POS_LIMIT)
@@ -673,6 +713,9 @@ export class WorldObjects {
     const entry = this.objects.get(state.id)
     if (!entry) return
     const next = { ...entry.state, ...state }
+    // Reliable placement edits/resyncs are exact discontinuities. Do not let
+    // an older transform-only sample pull the NPC back afterward.
+    entry.remoteNpcTarget = undefined
     entry.object.position.set(state.x, state.y, state.z)
     entry.object.rotation.set(0, state.rotationY, 0)
     if (state.scaleXYZ) {
@@ -767,8 +810,19 @@ export class WorldObjects {
       rotationY: state.rotationY,
       scale: state.scale,
     }
-    entry.object.position.set(state.x, state.y, state.z)
-    entry.object.rotation.set(0, state.rotationY, 0)
+    if (entry.npc) {
+      entry.remoteNpcTarget = state
+      const dx = entry.object.position.x - state.x
+      const dy = entry.object.position.y - state.y
+      const dz = entry.object.position.z - state.z
+      if (dx * dx + dy * dy + dz * dz > REMOTE_NPC_SNAP_DISTANCE ** 2) {
+        entry.object.position.set(state.x, state.y, state.z)
+        entry.object.rotation.set(0, state.rotationY, 0)
+      }
+    } else {
+      entry.object.position.set(state.x, state.y, state.z)
+      entry.object.rotation.set(0, state.rotationY, 0)
+    }
     if (state.scaleXYZ) {
       // The owner streams its placement's per-axis scale with every snapshot
       // (World.emitObjectStates), so a script-driven transform never flattens
@@ -941,6 +995,32 @@ export class WorldObjects {
   }
 
   /**
+   * Ends an NPC's current utterance VISUALLY AND AUDIBLY — bubble hidden,
+   * mouth shut (see NpcView.stopSpeech), and the line's audio element
+   * stopped (stopNpcSpeechAudio — the tracked half of playNpcSpeech). The
+   * leave-triggered stop: the session calls this (via World.stopNpcSpeech)
+   * when the runtime decides the player being talked to has walked out of
+   * hearing range, and disposes the analysis graph on its own NpcVoice in
+   * the same breath — this class owns the visual AND audible halves, the
+   * session owns the analysis half. Deliberately local, like every other
+   * bubble/mouth behaviour: no wire message, so peers keep whatever tail of
+   * the line they're already showing (R5's "zero new message kinds"). A
+   * no-op for an id that isn't a currently tracked NPC placement.
+   */
+  stopNpcSpeech(objectId: string): void {
+    this.stopNpcSpeechAudio(objectId)
+    this.objects.get(objectId)?.npc?.stopSpeech()
+  }
+
+  /** Stops and forgets objectId's tracked NPC-line audio, if any. Idempotent. */
+  private stopNpcSpeechAudio(objectId: string): void {
+    const cleanup = this.npcSpeechAudio.get(objectId)
+    if (!cleanup) return
+    this.npcSpeechAudio.delete(objectId)
+    cleanup()
+  }
+
+  /**
    * Feeds a fresh TTS loudness reading for an NPC's current utterance into
    * its lipsync — the seam World.setNpcSpeakingLevel exposes so the session
    * layer (which owns TTS/AnalyserNode entirely outside src/world) can hand
@@ -968,6 +1048,10 @@ export class WorldObjects {
    * the object's own placed media, so it must neither inherit that
    * placement's PlacedObject.volume/audibleRange nor acquire the hard silence
    * boundary a placement's audible range means (see that method's doc).
+   *
+   * Unlike playNpcSpeech this is deliberately UNTRACKED: a script firing the
+   * same sound repeatedly (chimes, footsteps, an alarm) may legitimately
+   * overlap itself — an NPC line never may.
    */
   playOneShot(objectId: string, bytes: Uint8Array, mime?: string): void {
     const entry = this.objects.get(objectId)
@@ -986,6 +1070,49 @@ export class WorldObjects {
       sound.disconnect()
       stopMedia(audio, url)
     }
+    audio.addEventListener('ended', cleanup, { once: true })
+    startMedia(audio, this.listener)
+  }
+
+  /**
+   * Plays a synthesized NPC line — the audible half of NpcVoice's "at most
+   * one utterance per NPC" guarantee (see NpcVoice's header). Same one-shot
+   * PositionalAudio pipeline as playOneShot (including voiceAnchor), plus
+   * per-NPC tracking: a NEW line for the same NPC stops whatever the old
+   * line's audio element is still playing, so a preempting reply can never
+   * overlap the line it is cutting off (World.playNpcSpeech routes here; a
+   * dropped non-preempting line never reaches this method at all — the
+   * decision lives in NpcVoice.speak).
+   *
+   * The tracked audio is also stopped by stopNpcSpeech, so the leave-
+   * triggered stop is a REAL stop: bubble hidden, mouth shut, AND the audio
+   * element silenced — not just the analysis graph (NpcVoice.stop disposes
+   * that half; this class owns the audible half).
+   */
+  playNpcSpeech(objectId: string, bytes: Uint8Array, mime?: string): void {
+    const entry = this.objects.get(objectId)
+    const object = entry?.npc ? this.voiceAnchor(entry) : entry?.object
+    if (!object || !this.listener) return
+    this.stopNpcSpeechAudio(objectId)
+    const url = blobUrl(bytes, mime)
+    const audio = document.createElement('audio')
+    audio.src = url
+    const sound = this.attachOneShotAudio(object, audio)
+    if (!sound) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    const cleanup = (): void => {
+      // Only the NEWEST line for this NPC may own the map entry — a stale
+      // cleanup firing after a replacement (already stopped and cleaned up
+      // by stopNpcSpeechAudio) must not delete the new entry, though it
+      // still tears down its own audio.
+      if (this.npcSpeechAudio.get(objectId) === cleanup) this.npcSpeechAudio.delete(objectId)
+      object.remove(sound)
+      sound.disconnect()
+      stopMedia(audio, url)
+    }
+    this.npcSpeechAudio.set(objectId, cleanup)
     audio.addEventListener('ended', cleanup, { once: true })
     startMedia(audio, this.listener)
   }
@@ -1018,6 +1145,13 @@ export class WorldObjects {
     for (const [id, entry] of this.objects) {
       entry.pulse?.scale.set(pulse, pulse, 1)
       if (entry.npc) {
+        const owned = this.isOwned(id) && !this.isDraggedElsewhere(id)
+        if (owned) {
+          // Ownership can change while a final remote sample is still queued.
+          entry.remoteNpcTarget = undefined
+        } else {
+          this.stepRemoteNpcTransform(entry, delta)
+        }
         const desiredBodyYaw = entry.npc.update(delta, players)
         // Only the OWNER drives the body toward whoever is nearby — a
         // non-owner running this too would fight the transform arriving
@@ -1026,7 +1160,6 @@ export class WorldObjects {
         // still gazes/speaks/lipsyncs locally (all pure-visual, no wire
         // message) — only the BODY heading is gated, since that's the only
         // piece of this that gets published.
-        const owned = this.isOwned(id) && !this.isDraggedElsewhere(id)
         if (desiredBodyYaw !== null && owned) {
           entry.faceTarget = desiredBodyYaw
         }
@@ -1047,8 +1180,49 @@ export class WorldObjects {
   }
 
   /**
+   * Eases a non-owned NPC toward its latest ~10 Hz network snapshot. This is
+   * intentionally run before NpcView.update(), so its walk/idle detector sees
+   * a small displacement on every rendered frame instead of one packet-sized
+   * jump followed by zero motion (which restarted the clips continuously).
+   */
+  private stepRemoteNpcTransform(entry: Entry, delta: number): void {
+    const target = entry.remoteNpcTarget
+    if (!target || delta <= 0) return
+
+    const position = entry.object.position
+    const posAlpha = 1 - Math.exp(-REMOTE_NPC_POSITION_FOLLOW * delta)
+    position.set(
+      position.x + (target.x - position.x) * posAlpha,
+      position.y + (target.y - position.y) * posAlpha,
+      position.z + (target.z - position.z) * posAlpha,
+    )
+
+    const nextYaw = stepYawTowards(
+      entry.object.rotation.y,
+      target.rotationY,
+      delta,
+      REMOTE_NPC_ROTATION_FOLLOW,
+    )
+    entry.object.rotation.set(0, nextYaw, 0)
+
+    const dx = position.x - target.x
+    const dy = position.y - target.y
+    const dz = position.z - target.z
+    if (
+      dx * dx + dy * dy + dz * dz <= REMOTE_NPC_POSITION_DONE_SQ &&
+      isFacingDone(nextYaw, target.rotationY)
+    ) {
+      position.set(target.x, target.y, target.z)
+      entry.object.rotation.set(0, target.rotationY, 0)
+      entry.remoteNpcTarget = undefined
+    }
+  }
+
+  /**
    * For every OWNED NPC with a valid approachRange and a player currently
-   * within it (measured from the NPC's HOME position, not its live one — see
+   * within the radius that keeps it interested (measured from the NPC's HOME
+   * position, not its live one — the placement's approachRange while the NPC
+   * stands home, the wider chase leash once engaged; see engagedChaseRange /
    * NpcApproachInputs.playerInRange's doc), the point it should walk to and
    * the player it picked. Batched across all such NPCs (rather than resolved
    * one at a time inside stepNpcApproach) purely so separateApproachTargets
@@ -1061,7 +1235,16 @@ export class WorldObjects {
       if (!entry.npc || !entry.npcHome || !this.isOwned(id) || this.isDraggedElsewhere(id)) continue
       const range = entry.state.npc?.approachRange
       if (range === undefined) continue // absent = feature off, see NpcBinding.approachRange's doc
-      const player = nearestPlayer(entry.npcHome, players, range)
+      // The mode read here is the PREVIOUS frame's (ownedApproachTargets runs
+      // before stepNpcApproach in update()) — which is the correct phase
+      // alignment: the frame an NPC first leaves home, the player that made
+      // it do so is still being sought within the trigger range; only once it
+      // has engaged does the leash widen.
+      const player = nearestPlayer(
+        entry.npcHome,
+        players,
+        engagedChaseRange(range, entry.npcApproachMode ?? 'home', entry.state.npc?.chaseRange),
+      )
       if (!player) continue
       raw.push({ id, player, stopPoint: approachStopPoint(entry.npcHome, player) })
     }
@@ -1102,12 +1285,29 @@ export class WorldObjects {
     if (mode === 'home' && !target) return // nothing to do and nothing has ever moved it
     const position: Vec3 = { x: entry.object.position.x, y: entry.object.position.y, z: entry.object.position.z }
     const held = this.heldNpcIds.has(id)
+    const playerInRange = target !== null
+
+    // Leave-grace timer: starts the first frame the player is gone while the
+    // NPC is unheld, and is cancelled the moment either stops being true —
+    // speech freezes the moment (see LEAVE_GRACE_SECONDS), and a player who
+    // turns back around clears the timer on the very frame they re-enter.
+    if (!held && !playerInRange) {
+      if (entry.npcLeaveGraceUntil === undefined) entry.npcLeaveGraceUntil = this.elapsed + LEAVE_GRACE_SECONDS
+    } else {
+      entry.npcLeaveGraceUntil = undefined
+    }
 
     const nextMode = stepApproachMode(mode, {
-      playerInRange: target !== null,
+      playerInRange,
       reachedStop: target !== null && hasArrived(position, target.stopPoint),
       reachedHome: hasArrived(position, home),
       held,
+      // Re-chase trigger: the tracked player has walked more than
+      // REAPPROACH_DISTANCE from where the NPC is standing (horizontal only,
+      // like every other range test here) — an arrived NPC then walks up to
+      // them again instead of standing at a stop point they left behind.
+      playerLost: target !== null && Math.hypot(target.player.x - position.x, target.player.z - position.z) > REAPPROACH_DISTANCE,
+      leaveGraceOver: entry.npcLeaveGraceUntil !== undefined && this.elapsed >= entry.npcLeaveGraceUntil,
     })
 
     // Edge-triggered: fires exactly the frame the walk actually finishes, not

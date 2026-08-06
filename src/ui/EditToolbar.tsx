@@ -27,6 +27,7 @@ import {
   ImageOff,
   Grid3x3,
   Compass,
+  Footprints,
   Speaker,
   Lock,
   LockOpen,
@@ -82,6 +83,7 @@ type Props = Pick<
   | 'onSetNpcRadius'
   | 'onSetNpcVoice'
   | 'onSetNpcApproachRange'
+  | 'onSetNpcChaseRange'
   | 'onSetObjectVolume'
   | 'onSetObjectAudibleRange'
   | 'onSetObjectFalloffStart'
@@ -161,6 +163,17 @@ const RADIUS_STEPS = [3, 6, 10, 15, 20, 30].filter(
 const APPROACH_STEPS = [3, 5, 8, 12, 20, 30].filter(
   (r) => r >= NPC_LIMITS.minApproachRange && r <= NPC_LIMITS.maxApproachRange,
 )
+
+/**
+ * Presets for the per-NPC chase-leash edit, same set as APPROACH_STEPS (the
+ * chase leash is the same "how far does this NPC care" scale). Filtered per
+ * placement at render time to values >= the placement's own approachRange —
+ * a chase range under the trigger could never actually chase (see
+ * clampNpcChaseRange). Unlike approach there is no 'off' option: the field's
+ * absence is the "auto" default leash (approachRange x CHASE_LEASH_FACTOR),
+ * rendered as its own fixed option.
+ */
+const CHASE_STEPS = APPROACH_STEPS
 
 /**
  * Coarse presets for a volume edit — same "no free-text field encouraging an
@@ -520,6 +533,21 @@ export function EditToolbar(props: Props) {
   const approachValue = npcApproachRange == null ? 'off' : String(npcApproachRange)
   // Same "stay honest about the stored value" reasoning as radiusIsCustom above.
   const approachIsCustom = npcApproachRange != null && !APPROACH_STEPS.includes(npcApproachRange)
+
+  // The chase-leash control only appears once an approachRange is set — a
+  // chase range on a placement whose approach feature is off is inert (see
+  // NpcBinding.chaseRange's doc). 'auto' publishes the field absent; the
+  // offered steps are filtered to >= the placement's approachRange (a chase
+  // under the trigger could never chase — see clampNpcChaseRange).
+  const npcChaseRange = npcApproachRange != null ? selected?.npc?.chaseRange : undefined
+  const chaseValue = npcChaseRange == null ? 'auto' : String(npcChaseRange)
+  const chaseSteps = CHASE_STEPS.filter((r) => r >= (npcApproachRange ?? NPC_LIMITS.minChaseRange))
+  const chaseIsCustom = npcChaseRange != null && !chaseSteps.includes(npcChaseRange)
+  const onChaseChange = (e: Event) => {
+    if (!selected) return
+    const value = (e.target as HTMLSelectElement).value
+    props.onSetNpcChaseRange(selected.id, value === 'auto' ? undefined : Number(value))
+  }
 
   // Summary shown on the Dialogue button (R8) — absent `mode` means 'ai',
   // matching NpcBinding.mode's own "absent means" contract, so a placement
@@ -967,6 +995,23 @@ export function EditToolbar(props: Props) {
               <option value={npcApproachRange}>{t('npc.approachValue', { n: npcApproachRange as number })}</option>
             )}
             {APPROACH_STEPS.map((r) => (
+              <option key={r} value={r}>
+                {t('npc.approachValue', { n: r })}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {selected?.npc && npcApproachRange != null && (
+        <label class="edit-bar-script">
+          <Footprints size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">{t('npc.chase')}</span>
+          <select class="edit-bar-script-select" value={chaseValue} onChange={onChaseChange}>
+            <option value="auto">{t('npc.chaseAuto')}</option>
+            {chaseIsCustom && (
+              <option value={npcChaseRange}>{t('npc.approachValue', { n: npcChaseRange as number })}</option>
+            )}
+            {chaseSteps.map((r) => (
               <option key={r} value={r}>
                 {t('npc.approachValue', { n: r })}
               </option>

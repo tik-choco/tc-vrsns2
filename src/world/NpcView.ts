@@ -200,6 +200,23 @@ export class NpcView {
   }
 
   /**
+   * Ends the current utterance immediately — the leave-triggered counterpart
+   * of showSpeech (owner: 「ユーザーが離れたら自然に話すのをやめるように
+   * した方が自然」): hides the bubble and shuts the mouth/lipsync state so
+   * the character isn't left silently mouthing a line whose audience walked
+   * away. The AUDIO side is stopped separately by the session (NpcVoice.stop,
+   * see WorldObjects.stopNpcSpeech's doc) — this class only owns the visual
+   * half. A no-op when nothing is showing.
+   */
+  stopSpeech(): void {
+    this.chatBubble.hide()
+    this.mouth = INITIAL_MOUTH_STATE
+    this.lastLevel = IDLE_SPEAKING_LEVEL
+    this.speakingRemaining = 0
+    this.voiceFeedSeen = false
+  }
+
+  /**
    * Feeds a fresh TTS loudness reading for the currently-showing utterance
    * into the mouth envelope — the seam the session layer drives once it has
    * a real AnalyserNode reading (see WorldObjects.setNpcSpeakingLevel /

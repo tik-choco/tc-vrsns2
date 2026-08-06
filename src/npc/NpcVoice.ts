@@ -1,11 +1,17 @@
 // TTS orchestration for placed NPCs (R5.1): synthesizes at most one
-// utterance at a time per NPC — a new line for the same NPC aborts and
-// replaces whatever was still synthesizing or playing — enforces a global
-// concurrency cap that DROPS a request rather than queuing it (a queue would
-// make an NPC talk over itself minutes later, once the backlog finally
-// drains), skips synthesis entirely for a listener too far away to hear the
-// result, and exposes a loudness feed shaped like tc-npc's
-// SpeakingLevelReading for the world layer to drive lipsync from.
+// utterance at a time per NPC — whether a new line for the same NPC aborts
+// and replaces whatever was still synthesizing or playing depends on who
+// asked: a PREEMPTING line (the user spoke — see NpcRuntime's say dep) cuts
+// the current utterance off, while a non-preempting one (a proximity greet)
+// is DROPPED entirely when this NPC is still talking, so an NPC never talks
+// over its own previous line (the audible half of that guarantee lives in
+// WorldObjects.playNpcSpeech, which stops the previous line's audio element
+// when a replacement plays — NpcVoice only owns the synthesis/analysis half)
+// — enforces a global concurrency cap that DROPS a request rather than
+// queuing it (a queue would make an NPC talk over itself minutes later, once
+// the backlog finally drains), skips synthesis entirely for a listener too
+// far away to hear the result, and exposes a loudness feed shaped like
+// tc-npc's SpeakingLevelReading for the world layer to drive lipsync from.
 //
 // Deliberately DOM/three.js-free at the orchestration level, exactly like
 // NpcRuntime.ts: every peer runs this locally (see ttsClient.ts's header
@@ -86,14 +92,35 @@ export class NpcVoice {
 
   /**
    * Requests speech for `objectId`'s new line, `distance` metres from the
-   * local listener. Always supersedes whatever this NPC was saying, in
-   * flight or already playing. Resolves to the synthesized clip (for the
-   * caller to hand to WorldObjects.playOneShot) or null when: the listener
-   * is beyond NPC_LIMITS.ttsMaxDistance, the global concurrency cap dropped
-   * this request, synthesis failed/is unconfigured, or a newer call
-   * superseded this one before it finished.
+   * local listener. With `preempt` true (the default, and the legacy
+   * behaviour — an effect with no preempt field decodes to this) it
+   * supersedes whatever this NPC was saying, in flight or already playing:
+   * the runtime only preempts when the USER spoke, which is the one case
+   * where cutting a line off is desired (owner: 「途中でユーザーが何かを
+   * 話した場合は、前のを中断して新しいのを話させていい」). With `preempt`
+   * false (a proximity greet — an NPC must never cut its own line off for
+   * a hello) it returns null immediately if this NPC has a live utterance
+   * at all, leaving that utterance completely untouched: no synthesis, no
+   * state change, no cooldown burn — dropped, never queued, exactly like
+   * the concurrency cap below.
+   *
+   * Resolves to the synthesized clip (for the caller to hand to
+   * WorldObjects.playNpcSpeech) or null when: a non-preempting line arrived
+   * while this NPC is still talking, the listener is beyond
+   * NPC_LIMITS.ttsMaxDistance, the global concurrency cap dropped this
+   * request, synthesis failed/is unconfigured, or a newer call superseded
+   * this one before it finished.
    */
-  async speak(objectId: string, req: TtsRequest, distance: number): Promise<TtsClip | null> {
+  async speak(objectId: string, req: TtsRequest, distance: number, preempt = true): Promise<TtsClip | null> {
+    // A live utterance is an in-flight synthesis OR a playing analysis
+    // source (the source outlives the audio only by the session's
+    // silence-hold, so "source alive" ≈ "recently audible"). Checked
+    // BEFORE stateFor() so a dropped greet never even creates state for an
+    // NPC that has nothing to drop.
+    const isLive =
+      this.inFlight.has(objectId) || (this.npcs.get(objectId)?.source ?? null) !== null
+    if (!preempt && isLive) return null
+
     this.abortInFlight(objectId)
     this.stopPlayback(objectId)
 

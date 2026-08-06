@@ -48,7 +48,7 @@ describe('radius', () => {
     runtime.setPlacements([placement({ radius: 5 })])
     runtime.heard(speaker({ x: 3, y: 0, z: 0 }), 'hi')
     await flush()
-    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!')
+    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!', true)
   })
 
   it('stays silent when the speaker is outside radius', async () => {
@@ -82,7 +82,7 @@ describe('nearest-NPC-only', () => {
     runtime.heard(speaker({ x: 0, y: 0, z: 0 }), 'hello')
     await flush()
     expect(chat).toHaveBeenCalledTimes(1)
-    expect(say).toHaveBeenCalledWith('npc-near', 'Hello there!')
+    expect(say).toHaveBeenCalledWith('npc-near', 'Hello there!', true)
   })
 })
 
@@ -168,7 +168,7 @@ describe('reply sanitization', () => {
     runtime.setPlacements([placement()])
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there, how are you?')
+    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there, how are you?', true)
   })
 
   it('strips a leading "Name:" echo', async () => {
@@ -178,7 +178,7 @@ describe('reply sanitization', () => {
     runtime.setPlacements([placement()])
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!')
+    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!', true)
   })
 
   it('caps an overlong reply at maxReplyChars', async () => {
@@ -285,7 +285,7 @@ describe('arrived (R7 walk-up greet)', () => {
     runtime.setPlacements([placement()])
     runtime.arrived('npc-1', speaker())
     await flush()
-    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!')
+    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!', false) // a greet never preempts
     expect(face).toHaveBeenCalled()
   })
 
@@ -326,6 +326,31 @@ describe('arrived (R7 walk-up greet)', () => {
     expect(say).toHaveBeenCalledTimes(1)
   })
 
+  it('turns the body toward the player even when the greet reply is on cooldown', async () => {
+    const clock = makeClock()
+    const { deps, say, face } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+    // The first arrival turns twice: the unconditional turn below, then
+    // attemptReply re-facing after its reply lands (same as heard()).
+    const facesBefore = face.mock.calls.length
+    expect(facesBefore).toBeGreaterThan(0)
+
+    // A second arrival within greetCooldownMs must not re-speak — but the
+    // body still turns exactly once: arriving IS an address, and turning is
+    // acknowledgement, same split as heard() (the walk-up flow greets at
+    // radius entry via observe(), so this is the NORMAL arrival case).
+    clock.advance(NPC_LIMITS.greetCooldownMs - 1)
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+    expect(face.mock.calls.length).toBe(facesBefore + 1)
+  })
+
   it('is a no-op for an id this runtime is not tracking', async () => {
     const { deps, say, chat } = makeDeps()
     const runtime = new NpcRuntime(deps)
@@ -353,6 +378,149 @@ describe('arrived (R7 walk-up greet)', () => {
     runtime.arrived('npc-1', speaker())
     await flush()
     expect(say).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('leave-triggered stop (walk-away ends the utterance)', () => {
+  it('ends a landed utterance when the player being talked to leaves the radius', async () => {
+    const stopSpeech = vi.fn()
+    const { deps, say } = makeDeps({ stopSpeech })
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement({ radius: 5 })])
+
+    runtime.heard(speaker({ x: 0, y: 0, z: 0 }), 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+    expect(runtime.isHeld('npc-1')).toBe(true) // the line is being read/heard
+
+    // The same player polls in from far away: the line trails off.
+    runtime.observe([speaker({ x: 20, y: 0, z: 0 })])
+    expect(stopSpeech).toHaveBeenCalledWith('npc-1')
+    expect(runtime.isHeld('npc-1')).toBe(false) // released, so the leave-grace can start
+  })
+
+  it('drops a still-composing reply when its player leaves mid-round-trip', async () => {
+    let resolveChat: (text: string) => void = () => {}
+    const chat = vi.fn().mockImplementation(() => new Promise<string>((resolve) => (resolveChat = resolve)))
+    const stopSpeech = vi.fn()
+    const { deps, say } = makeDeps({ chat, stopSpeech })
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement({ radius: 5 })])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(runtime.isHeld('npc-1')).toBe(true) // busy: the LLM round trip is in flight
+
+    runtime.observe([speaker({ x: 20, y: 0, z: 0 })])
+    resolveChat('Too late — nobody is listening!')
+    await flush()
+    expect(say).not.toHaveBeenCalled() // the stale line was dropped, never spoken
+    expect(runtime.isHeld('npc-1')).toBe(false)
+  })
+
+  it('keeps talking while the speaker is still in range, even if others drift off', async () => {
+    const stopSpeech = vi.fn()
+    const { deps, say } = makeDeps({ stopSpeech })
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement({ radius: 5 })])
+
+    runtime.heard(speaker({ x: 1, y: 0, z: 0 }), 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    runtime.observe([speaker({ x: 1, y: 0, z: 0 }), speaker({ id: 'other', x: 20, y: 0, z: 0 })])
+    expect(stopSpeech).not.toHaveBeenCalled()
+    expect(runtime.isHeld('npc-1')).toBe(true)
+  })
+
+  it('leaves a line alone once it has finished (nothing held to stop)', async () => {
+    const clock = makeClock()
+    const stopSpeech = vi.fn()
+    const { deps, say } = makeDeps({ stopSpeech }, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement({ radius: 5 })])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    clock.advance(20000) // well past BUBBLE_DWELL_MAX_MS (10 s)
+    runtime.observe([speaker({ x: 20, y: 0, z: 0 })])
+    expect(stopSpeech).not.toHaveBeenCalled()
+    expect(runtime.isHeld('npc-1')).toBe(false)
+  })
+})
+
+// The talk-over guard (owner: 「NPCの音声だが、前のセリフと被らないように
+// したい。途中でユーザーが何かを話した場合は、前のを中断して新しいのを
+// 話させていい」): a chat reply may cut the current line off (preempt=true),
+// a proximity greet may not — and a greet that lands while the NPC is held is
+// skipped entirely rather than consumed, so the player gets one on the next
+// entry. The actual interruption is executed by the voice layer (NpcVoice's
+// preempt rule); this runtime's job is the flag and the gate.
+describe('preempt / talk-over guard', () => {
+  it('a chat heard mid-line replies with preempt=true (the voice layer cuts the line)', async () => {
+    const clock = makeClock()
+    const chat = vi.fn().mockResolvedValueOnce('first line').mockResolvedValueOnce('cut in!')
+    const { deps, say } = makeDeps({ chat }, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledWith('npc-1', 'first line', true)
+    expect(runtime.isHeld('npc-1')).toBe(true)
+
+    // The user speaks again inside the speaking window, past cooldownMs.
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.heard(speaker(), 'quick question')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(2)
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'cut in!', true)
+  })
+
+  it('a proximity greet while the NPC is still speaking is skipped, and stays unconsumed', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement({ radius: 5 })])
+    const p1 = speaker({ id: 'player-1', x: 0, y: 0, z: 0 })
+    const p2in = speaker({ id: 'player-2', x: 2, y: 0, z: 0 })
+    const p2out = speaker({ id: 'player-2', x: 20, y: 0, z: 0 })
+
+    runtime.heard(p1, 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    // Player 2 walks into range while the line is still being read/heard.
+    runtime.observe([p1, p2in])
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1) // no greet, no overlap
+
+    // The greet was NOT consumed (lastGreetAt untouched): once the line is
+    // done, the same player coming back into range is greeted for real.
+    clock.advance(20000) // past the speaking window (BUBBLE_DWELL_MAX_MS)
+    runtime.observe([p1, p2out]) // leaves
+    runtime.observe([p1, p2in]) // re-enters
+    await flush()
+    expect(say).toHaveBeenCalledTimes(2)
+  })
+
+  it('arrived() skips the greet while held, but still turns to face the player', async () => {
+    const clock = makeClock()
+    const { deps, say, face } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+    face.mockClear()
+
+    runtime.arrived('npc-1', speaker({ id: 'player-2', x: 3, y: 0, z: 0 }))
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1) // no greet while talking
+    expect(face).toHaveBeenCalled() // but the newcomer is acknowledged with a turn
   })
 })
 
@@ -461,23 +629,23 @@ describe('lines mode', () => {
 
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A', true)
 
     clock.advance(NPC_LIMITS.cooldownMs + 1)
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B', true)
 
     clock.advance(NPC_LIMITS.cooldownMs + 1)
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'Line C')
+    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'Line C', true)
 
     // Wraps back to the first line.
     clock.advance(NPC_LIMITS.cooldownMs + 1)
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(4, 'npc-1', 'Line A')
+    expect(say).toHaveBeenNthCalledWith(4, 'npc-1', 'Line A', true)
   })
 
   it('random order never immediately repeats the line just spoken', async () => {
@@ -492,12 +660,12 @@ describe('lines mode', () => {
 
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A', true)
 
     clock.advance(NPC_LIMITS.cooldownMs + 1)
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B', true)
 
     randomSpy.mockRestore()
   })
@@ -546,7 +714,7 @@ describe('lines mode', () => {
     runtime.setPlacements([linesPlacement({ characterId: 'not-a-real-character' })])
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenCalledWith('npc-1', 'Line A')
+    expect(say).toHaveBeenCalledWith('npc-1', 'Line A', true)
     expect(loadPersona).not.toHaveBeenCalled()
   })
 
@@ -565,7 +733,7 @@ describe('lines mode', () => {
     runtime.setPlacements([placement({ mode: 'lines', lines: ['Now I have something to say'] })])
     runtime.heard(speaker(), 'hi again')
     await flush()
-    expect(say).toHaveBeenCalledWith('npc-1', 'Now I have something to say')
+    expect(say).toHaveBeenCalledWith('npc-1', 'Now I have something to say', true)
   })
 
   it('both the heard() trigger and the greet trigger (observe/arrived) speak a line', async () => {
@@ -576,17 +744,17 @@ describe('lines mode', () => {
 
     runtime.observe([speaker({ x: 2, y: 0, z: 0 })])
     await flush()
-    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A', false) // a greet never preempts
 
     clock.advance(NPC_LIMITS.greetCooldownMs + NPC_LIMITS.cooldownMs + 1)
     runtime.arrived('npc-1', speaker())
     await flush()
-    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B', false) // a greet never preempts
 
     clock.advance(NPC_LIMITS.cooldownMs + 1)
     runtime.heard(speaker(), 'hello')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'Line C')
+    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'Line C', true)
   })
 
   it('editing the lines resets the cursor; moving the NPC does not', async () => {
@@ -597,7 +765,7 @@ describe('lines mode', () => {
 
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A', true)
 
     // Position-only edit: same lines, so the cursor carries on to Line B
     // rather than restarting at Line A.
@@ -605,14 +773,14 @@ describe('lines mode', () => {
     runtime.setPlacements([linesPlacement({ x: 3 })])
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B', true)
 
     // Editing the authored list itself must restart the cursor at index 0.
     clock.advance(NPC_LIMITS.cooldownMs + 1)
     runtime.setPlacements([linesPlacement({ lines: ['New A', 'New B'] })])
     runtime.heard(speaker(), 'hi')
     await flush()
-    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'New A')
+    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'New A', true)
   })
 })
 
@@ -625,6 +793,6 @@ describe('mode absent (back-compat)', () => {
     await flush()
     expect(loadPersona).toHaveBeenCalled()
     expect(chat).toHaveBeenCalled()
-    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!')
+    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!', true)
   })
 })

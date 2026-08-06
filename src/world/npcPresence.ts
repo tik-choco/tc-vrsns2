@@ -197,8 +197,52 @@ export function nearestPlayer<T extends Vec3>(origin: Vec3, players: readonly T[
 
 /** Walking speed for an owner-driven NPC approach/return, metres/second — a measured, unhurried human walk. */
 export const APPROACH_WALK_SPEED = 1.4
-/** How close (metres, horizontal) an NPC stops from the player it walked up to — near enough to read as a conversation, not a collision. */
-export const STOP_DISTANCE = 1.5
+/**
+ * How close (metres, horizontal) an NPC stops from the player it walked up
+ * to. About 0.25 m tighter than the original 1.5 m (owner settled on
+ * 1.25 m): close enough to read as a conversation without the two standing
+ * models intersecting, and comfortably inside REAPPROACH_DISTANCE so the
+ * re-chase hysteresis still holds.
+ */
+export const STOP_DISTANCE = 1.25
+/**
+ * How far (metres, horizontal) the player must be from an 'arrived' NPC
+ * before it walks up to them again — the re-chase trigger (owner settled on
+ * 1.75 m). Sized past STOP_DISTANCE so a player hovering at the edge of
+ * conversational range doesn't keep the NPC shuffling after every step (the
+ * chase ends at a fresh stop point, i.e. STOP_DISTANCE away, so there is
+ * real hysteresis between "reached" and "lost"). Still inside the home-range
+ * leash (playerInRange), so an NPC never chases someone who has left its
+ * area — that player makes it return home instead (see stepApproachMode's
+ * 'arrived' branch).
+ */
+export const REAPPROACH_DISTANCE = 1.75
+/**
+ * How long (seconds) an engaged NPC lingers where it stands after the player
+ * leaves the chase leash, before giving up and walking home (owner: 「初期
+ * 位置に戻っていくタイミングをユーザーが離れたらすぐではなく少しタイムアウト
+ * 的な時間があると自然」). A player turning back around within the grace is
+ * met by an NPC still standing there, not one already heading home. The
+ * timer is WorldObjects' to keep (see NpcApproachInputs.leaveGraceOver); it
+ * never runs while the NPC is held — speech freezes the moment, and the
+ * grace only counts after the sentence has ended.
+ */
+export const LEAVE_GRACE_SECONDS = 3
+/**
+ * How much farther from home a player may be before an ENGAGED NPC (one that
+ * has already left home to approach or chase) gives up and returns — a
+ * multiplier on the placement's own approachRange. Deliberately separate
+ * from the trigger range: the placer picks approachRange as "close enough
+ * that the NPC comes over", but once the NPC is out and talking, a player
+ * walking away should be followed for a while rather than abandoned the
+ * instant they cross back past that same line — yet still given up on once
+ * they have truly left the area. Sized at 1.5x after the owner reported it
+ * would chase from "かなり離れている" (quite far from home); tight enough
+ * that a walk-away from a stopped conversation is still followed (the
+ * trigger range + up to half of it again), not a cross-the-room pursuit.
+ * See engagedChaseRange.
+ */
+export const CHASE_LEASH_FACTOR = 1.5
 /** Close enough (metres) to a target to call a walk finished — a nonzero epsilon so floating-point drift never leaves an NPC pacing forever a millimetre short. */
 export const APPROACH_ARRIVE_EPSILON = 0.05
 /** Minimum gap (metres) kept between two NPCs' stop points around the SAME player, so a pair converging on one visitor end up side by side rather than standing inside each other. */
@@ -277,9 +321,24 @@ export function separateApproachTargets(targets: readonly Vec3[], minSeparation:
 /** Phases of the owner-only approach state machine for one NPC — see stepApproachMode. */
 export type NpcApproachMode = 'home' | 'approaching' | 'arrived' | 'returning'
 
+/**
+ * The radius around home within which a player keeps this NPC interested,
+ * for its current phase: the configured approachRange while the NPC stands
+ * at home (that range is the placer's "come over" invitation, and nobody
+ * beyond it should pull the NPC off its spot), and — once it has engaged —
+ * the placement's own chaseRange if set, else approachRange x
+ * CHASE_LEASH_FACTOR — so a walk-away is chased for a while instead of the
+ * NPC abandoning the moment the player exits the trigger range. Measured
+ * from the NPC's HOME position, never its live one (same home reference
+ * NpcRuntime's own hearing-radius check uses).
+ */
+export function engagedChaseRange(approachRange: number, mode: NpcApproachMode, chaseRange?: number): number {
+  return mode === 'home' ? approachRange : chaseRange ?? approachRange * CHASE_LEASH_FACTOR
+}
+
 /** Inputs stepApproachMode reads for one frame's transition decision. */
 export type NpcApproachInputs = {
-  /** A player is currently within this NPC's approachRange (measured from its HOME position — see WorldObjects, same reference NpcRuntime's own hearing-radius check uses). */
+  /** A player is currently within the radius that keeps this NPC interested, measured from its HOME position — the placement's approachRange while the NPC stands home, the wider chase leash (engagedChaseRange) once engaged; see WorldObjects. Same home reference NpcRuntime's own hearing-radius check uses. */
   playerInRange: boolean
   /** Only meaningful while `mode` is 'approaching': the walk has reached its stop point. */
   reachedStop: boolean
@@ -287,6 +346,25 @@ export type NpcApproachInputs = {
   reachedHome: boolean
   /** The NPC is speaking, or a reply is being composed for it, right now (see NpcRuntime.isHeld) — movement must never resume while this is true, even once the player that triggered it has already left range. */
   held: boolean
+  /**
+   * Only meaningful while `mode` is 'arrived': the player has walked more than
+   * REAPPROACH_DISTANCE away from the NPC's current position (yet is still
+   * within the chase leash of home, so playerInRange is true) — chase them
+   * again rather than staying rooted at a stop point they no longer stand
+   * near. Ignored everywhere else: 'approaching' already re-targets the
+   * player's current position every frame, and 'returning'/'home' must not
+   * be yanked about by a player who merely drifted past.
+   */
+  playerLost: boolean
+  /**
+   * The player has been out of the chase leash (playerInRange false) AND the
+   * NPC unheld for the full LEAVE_GRACE_SECONDS — an abandoned engagement may
+   * now walk home. WorldObjects keeps the timer (cancelled the moment the
+   * player returns or the NPC is held again); until this flips, 'arrived' and
+   * 'approaching' simply hold their ground, so a player turning back around
+   * isn't met by an NPC already heading home.
+   */
+  leaveGraceOver: boolean
 }
 
 /**
@@ -296,13 +374,22 @@ export type NpcApproachInputs = {
  *  - home -> approaching: a player entered range.
  *  - approaching -> arrived: reached the stop point (still in range — a range
  *    exit on the way there is handled by the branch below instead).
- *  - approaching -> returning: the player left range before the walk
- *    finished — abandon and go home rather than finishing a walk toward
- *    someone no longer there.
+ *  - approaching -> returning: the player left the chase leash before the
+ *    walk finished AND the leave grace elapsed — abandon and go home rather
+ *    than finishing a walk toward someone no longer there. Before the grace
+ *    expires 'approaching' holds in place (no target, no step), so a player
+ *    turning back isn't met by an NPC mid-retreat.
+ *  - arrived -> approaching: not held, the player is still within home range
+ *    but has walked more than REAPPROACH_DISTANCE from the NPC — chase them
+ *    again instead of standing at a stop point they left behind.
  *  - arrived -> arrived: held (speaking, or composing a reply) OR the player
- *    is still in range — never walks away out from under a conversation, and
- *    never walks away just because a reply hasn't landed yet.
- *  - arrived -> returning: not held AND the player has left range.
+ *    is still close enough, OR the player left within the leave grace —
+ *    never walks away out from under a conversation, and never re-shuffles
+ *    toward a player still standing nearby.
+ *  - arrived -> returning: not held, the player has left the chase leash
+ *    (engagedChaseRange from home), AND the leave grace elapsed — a player
+ *    too far from the NPC's home is not chased, but only after the NPC has
+ *    given the moment its LEAVE_GRACE_SECONDS.
  *  - returning -> approaching: someone (the same player, or another) is back
  *    in range before the walk home finished.
  *  - returning -> home: reached the original spot.
@@ -312,11 +399,12 @@ export function stepApproachMode(mode: NpcApproachMode, inputs: NpcApproachInput
     case 'home':
       return inputs.playerInRange ? 'approaching' : 'home'
     case 'approaching':
-      if (!inputs.playerInRange) return 'returning'
+      if (!inputs.playerInRange) return inputs.leaveGraceOver ? 'returning' : 'approaching'
       return inputs.reachedStop ? 'arrived' : 'approaching'
     case 'arrived':
       if (inputs.held) return 'arrived'
-      return inputs.playerInRange ? 'arrived' : 'returning'
+      if (!inputs.playerInRange) return inputs.leaveGraceOver ? 'returning' : 'arrived'
+      return inputs.playerLost ? 'approaching' : 'arrived'
     case 'returning':
       if (inputs.playerInRange) return 'approaching'
       return inputs.reachedHome ? 'home' : 'returning'
