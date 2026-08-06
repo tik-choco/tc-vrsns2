@@ -55,10 +55,28 @@ export type NpcDeps = {
   loadPersona: (characterId: string) => Promise<string | null>
   /** Runs the LLM. Throws on "not configured" — treat as silent, do not spam. */
   chat: (messages: ChatMessage[]) => Promise<string>
-  /** Emits the reply. Wired to the existing say-effect channel. */
-  say: (objectId: string, text: string) => void
+  /**
+   * Emits the reply. Wired to the existing say-effect channel. `preempt` is
+   * whether this line may cut off whatever the NPC is currently saying:
+   * true for a chat reply (the user spoke, so interrupting is desired —
+   * owner: 「途中でユーザーが何かを話した場合は、前のを中断して新しいのを
+   * 話させていい」), false for a proximity greet — a greet must never talk
+   * over the line in progress, and the voice layer DROPS such a line if it
+   * would (see NpcVoice.speak's preempt rule). Every peer decides against
+   * its own audio state, so the flag rides the say effect.
+   */
+  say: (objectId: string, text: string, preempt: boolean) => void
   /** Optional: turn the NPC to face the speaker (yaw radians). */
   face?: (objectId: string, yaw: number) => void
+  /**
+   * Optional: end an NPC's current utterance immediately — bubble hidden,
+   * mouth shut, voice stopped. The leave-triggered stop (see observe()'s
+   * cancelAbandonedUtterance): the player this NPC was talking to walked out
+   * of hearing range, so the line trails off instead of finishing to an
+   * empty spot. Wired by the session to NpcVoice.stop + World.stopNpcSpeech.
+   * Absent in a harness = the feature is off for that harness.
+   */
+  stopSpeech?: (objectId: string) => void
   now: () => number
 }
 
@@ -80,6 +98,23 @@ type NpcState = {
    * approach-movement doc for where this is consumed).
    */
   heldUntil: number
+  /**
+   * The player this NPC is currently talking to (the speaker of the most
+   * recent attemptReply), or null when nothing is owed to anyone. Set at
+   * the START of every reply attempt; cleared by cancelAbandonedUtterance
+   * when that player walks out of hearing range mid-line. Only consulted
+   * while held (see cancelAbandonedUtterance), so a stale value left over
+   * from a naturally-finished line is harmless — the next attempt replaces
+   * it before it can matter.
+   */
+  lastSpeakerId: string | null
+  /**
+   * True while a reply for lastSpeakerId is still being composed (busy) but
+   * its audience has left — set by cancelAbandonedUtterance, checked and
+   * cleared when the pending reply finally lands in attemptReply so the
+   * stale text is dropped instead of spoken. Never read while not busy.
+   */
+  abandoned: boolean
   /**
    * 'lines' mode only: index of the line most recently spoken, or -1 before
    * this NPC has ever spoken one. 'sequence' walks forward from here
@@ -226,6 +261,8 @@ export class NpcRuntime {
           busy: false,
           lastFailureLogAt: -Infinity,
           heldUntil: -Infinity,
+          lastSpeakerId: null,
+          abandoned: false,
           lineCursor: -1,
           linesKey: fingerprintLines(placement.lines),
         })
@@ -257,6 +294,15 @@ export class NpcRuntime {
   /** Called ~1 Hz with every known player position. Greets a player once per outside->inside transition, subject to greetCooldownMs per (npc, player). */
   observe(speakers: NpcSpeaker[]): void {
     for (const npc of this.npcs.values()) {
+      this.cancelAbandonedUtterance(npc, speakers)
+      // A talking NPC doesn't greet — a greeting would either overlap the
+      // line in progress or get dropped by the voice layer (see NpcVoice's
+      // preempt rule), and burning lastGreetAt on it would rob the player
+      // of a real greeting later. Skipping the whole pass leaves the greet
+      // unconsumed: the outside->inside transition fires again the next
+      // time this player comes into range (or once the line is done, for
+      // arrived()'s walk-up — see its doc).
+      if (this.isHeld(npc.placement.objectId)) continue
       for (const speaker of speakers) {
         const key = `${npc.placement.objectId}\0${speaker.id}`
         let state = this.greetState.get(key)
@@ -280,6 +326,41 @@ export class NpcRuntime {
   }
 
   /**
+   * If this NPC is currently held (an utterance is in flight or still being
+   * read/heard) and the player it is talking TO has left the hearing radius,
+   * end the line — owner: 「ユーザーが離れたら自然に話すのをやめるように
+   * した方が自然」. A character finishing a sentence to an empty spot reads
+   * as broken; trailing off the moment its audience leaves reads as alive.
+   * Runs off observe()'s ~1 Hz poll — the SAME position source that drives
+   * greetings, so "left" and "arrived" can never disagree about where
+   * someone is. Only the owning tab's runtime exists at all (owner-
+   * authoritative brain, see setPlacements' doc), and the stop itself is
+   * deliberately local — bubble, mouth, and voice on THIS tab only; the wire
+   * carries no cancel (R5's "zero new message kinds"), so a peer keeps
+   * whatever tail of the line it is already showing. Two shapes:
+   *
+   *  - still composing (busy): mark the pending reply abandoned — when it
+   *    finally lands, attemptReply drops it instead of speaking (busy stays
+   *    set until then, so a fresh trigger can't race it).
+   *  - already landed (held by heldUntil): stop the bubble/mouth/voice now
+   *    and release the hold, so the approach state machine's leave-grace
+   *    starts counting and the NPC walks home naturally (see LEAVE_GRACE).
+   */
+  private cancelAbandonedUtterance(npc: NpcState, speakers: NpcSpeaker[]): void {
+    if (!npc.lastSpeakerId) return
+    if (!this.isHeld(npc.placement.objectId)) return
+    const speaker = speakers.find((s) => s.id === npc.lastSpeakerId)
+    if (speaker && distance(npc.placement, speaker) <= npc.placement.radius) return
+    npc.lastSpeakerId = null
+    this.deps.stopSpeech?.(npc.placement.objectId)
+    if (npc.busy) {
+      npc.abandoned = true
+      return
+    }
+    npc.heldUntil = -Infinity
+  }
+
+  /**
    * WorldObjects reports that this NPC's owner just walked it up to `speaker`
    * and stopped (see world/npcPresence.ts's stepApproachMode 'arrived' edge)
    * — the R7 counterpart to observe()'s proximity edge-detection above.
@@ -292,12 +373,24 @@ export class NpcRuntime {
    * `speaker`, same as heard() — arriving is a direct, one-on-one
    * interaction (unlike observe(), which greets across a hearing radius wide
    * enough that turning to face every qualifying player would be
-   * meaningless). A no-op for an id this runtime is not currently tracking
-   * (e.g. a stale event from just after setPlacements dropped it).
+   * meaningless). The turn fires BEFORE the greet gating, exactly like
+   * heard()'s: the typical walk-up flow greets at radius entry via observe(),
+   * so the arrival edge would otherwise land inside greetCooldownMs and the
+   * NPC would stand facing its rest heading with the player right in front
+   * of it. A no-op for an id this runtime is not currently tracking (e.g. a
+   * stale event from just after setPlacements dropped it).
    */
   arrived(objectId: string, speaker: NpcSpeaker): void {
     const npc = this.npcs.get(objectId)
     if (!npc) return
+    // Acknowledge the arrival with the turn (see the face-first rationale
+    // above) but skip the greet itself — same held-gate as observe()'s
+    // per-NPC pass: the line in progress is not interrupted for a hello,
+    // and the greet stays unconsumed so the player gets one when they
+    // arrive again. The wait is short either way: the walk-up flow's
+    // radius-entry greet already fired via observe()'s gate when it could.
+    this.faceSpeaker(npc, speaker)
+    if (this.isHeld(objectId)) return
     const key = `${objectId} ${speaker.id}`
     const state = this.greetState.get(key) ?? { inRange: false, lastGreetAt: -Infinity }
     this.greetState.set(key, state)
@@ -305,7 +398,6 @@ export class NpcRuntime {
     if (now - state.lastGreetAt < NPC_LIMITS.greetCooldownMs) return
     state.inRange = true
     state.lastGreetAt = now
-    this.faceSpeaker(npc, speaker)
     void this.attemptReply(npc, speaker, { kind: 'greet' })
   }
 
@@ -378,6 +470,11 @@ export class NpcRuntime {
     if (npc.busy) return
     const startedAt = this.deps.now()
     if (startedAt - npc.lastReplyAt < NPC_LIMITS.cooldownMs) return
+    // From here an utterance is owed to `speaker` — the leave-triggered stop
+    // (cancelAbandonedUtterance) keys off this id to decide who leaving ends
+    // the line. Set before any await so a player who walks away mid-round
+    // trip is caught (see the abandoned drop below).
+    npc.lastSpeakerId = speaker.id
 
     if (npc.placement.mode === 'lines') {
       // Same busy/cooldown gates as the AI path below — already checked
@@ -389,7 +486,7 @@ export class NpcRuntime {
       // suspend point.
       npc.busy = true
       try {
-        this.speakLine(npc, speaker)
+        this.speakLine(npc, speaker, turn.kind === 'chat')
       } finally {
         npc.busy = false
       }
@@ -416,6 +513,16 @@ export class NpcRuntime {
       const sanitized = sanitizeReply(reply)
       if (!sanitized) return
 
+      // The player this reply was being composed for left mid-round-trip
+      // (cancelAbandonedUtterance) — drop the text rather than speak a line
+      // to an empty spot. busy stays set until this function's finally, so
+      // no fresh trigger can have started under us; the flag is cleared here
+      // so the NEXT utterance starts clean.
+      if (npc.abandoned) {
+        npc.abandoned = false
+        return
+      }
+
       const userContent = turn.kind === 'chat' ? `${speaker.name}: ${turn.heardText}` : `[${speaker.name} has just come into view nearby.]`
       this.pushHistory(npc, userContent, sanitized)
       npc.lastReplyAt = this.deps.now()
@@ -423,7 +530,7 @@ export class NpcRuntime {
       // — the same bubbleDwellMs estimate every peer's NpcView seeds its own
       // lipsync/bubble-dwell timer from for this exact text.
       npc.heldUntil = npc.lastReplyAt + bubbleDwellMs(sanitized)
-      this.deps.say(npc.placement.objectId, sanitized)
+      this.deps.say(npc.placement.objectId, sanitized, turn.kind === 'chat')
       // Re-aim on the way out too: an LLM round trip takes seconds, and the
       // speaker may well have moved since heard() first turned us toward them.
       this.faceSpeaker(npc, speaker)
@@ -441,9 +548,16 @@ export class NpcRuntime {
    * AI path — see NpcPlacement.lines' doc: "I turned AI off" must not be
    * undone by "I haven't written anything yet". `history` is never touched
    * here (unlike the AI path's pushHistory) — nothing in this mode ever
-   * feeds an LLM, so there is nothing to remember a turn for.
+   * feeds an LLM, so there is nothing to remember a turn for. `preempt`
+   * follows the same rule as the AI path (see NpcDeps.say's doc): a chat
+   * may cut the current line off, a greet may not.
    */
-  private speakLine(npc: NpcState, speaker: NpcSpeaker): void {
+  private speakLine(npc: NpcState, speaker: NpcSpeaker, preempt: boolean): void {
+    // Same "an utterance is owed to this player" bookkeeping as the AI path
+    // (see attemptReply) — the leave-triggered stop keys off it. This path is
+    // synchronous, so the flag can only matter AFTER the line has landed,
+    // while it is being read/heard.
+    npc.lastSpeakerId = speaker.id
     const lines = npc.placement.lines
     if (!lines || lines.length === 0) return
     const index = this.nextLineIndex(npc, lines)
@@ -452,7 +566,7 @@ export class NpcRuntime {
     npc.lineCursor = index
     npc.lastReplyAt = this.deps.now()
     npc.heldUntil = npc.lastReplyAt + bubbleDwellMs(sanitized)
-    this.deps.say(npc.placement.objectId, sanitized)
+    this.deps.say(npc.placement.objectId, sanitized, preempt)
     this.faceSpeaker(npc, speaker)
   }
 

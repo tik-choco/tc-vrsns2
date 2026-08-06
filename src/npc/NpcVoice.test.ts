@@ -113,6 +113,73 @@ describe('per-NPC single flight', () => {
   })
 })
 
+describe('preempt vs. non-preempt (talk-over guard)', () => {
+  it('drops a non-preempting line while the previous clip is still live, leaving it untouched', async () => {
+    const analyze = vi.fn().mockImplementation(() => makeSource([0.4, 0.6]))
+    const { deps, synthesize } = makeDeps({ analyze })
+    const voice = new NpcVoice(deps)
+    await voice.speak('npc-1', { text: 'one' }, 1)
+    synthesize.mockClear()
+    const before = voice.read('npc-1')
+
+    const dropped = await voice.speak('npc-1', { text: 'greet' }, 1, false)
+    expect(dropped).toBeNull()
+    expect(synthesize).not.toHaveBeenCalled()
+    // The current utterance is untouched: the feed still advances.
+    const after = voice.read('npc-1')
+    expect(after.seq).toBe(before.seq + 1)
+    expect(analyze).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops a non-preempting line that lands during an in-flight synthesis, without aborting it', async () => {
+    const pending = deferred<TtsClip | null>()
+    const synthesize = vi.fn().mockReturnValue(pending.promise)
+    const { deps } = makeDeps({ synthesize })
+    const voice = new NpcVoice(deps)
+
+    const firstCall = voice.speak('npc-1', { text: 'one' }, 1)
+    const dropped = await voice.speak('npc-1', { text: 'greet' }, 1, false)
+
+    expect(dropped).toBeNull()
+    // The in-flight call was NOT aborted by the dropped greet.
+    const firstSignal = synthesize.mock.calls[0][1] as AbortSignal
+    expect(firstSignal.aborted).toBe(false)
+    pending.resolve(clip('a'))
+    expect(await firstCall).toEqual(clip('a'))
+  })
+
+  it('lets a non-preempting line through once the previous utterance is gone', async () => {
+    const { deps, synthesize } = makeDeps()
+    const voice = new NpcVoice(deps)
+    await voice.speak('npc-1', { text: 'one' }, 1)
+    voice.stop('npc-1')
+    synthesize.mockClear()
+
+    const result = await voice.speak('npc-1', { text: 'greet' }, 1, false)
+    expect(result).not.toBeNull()
+    expect(synthesize).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a non-preempting line through for an NPC that has never spoken', async () => {
+    const { deps } = makeDeps()
+    const voice = new NpcVoice(deps)
+    expect(await voice.speak('npc-1', { text: 'greet' }, 1, false)).not.toBeNull()
+  })
+
+  it('preempts (default and explicit) supersede a live utterance', async () => {
+    const sourceA = makeSource()
+    const analyze = vi.fn().mockReturnValue(sourceA)
+    const { deps, synthesize } = makeDeps({ analyze })
+    const voice = new NpcVoice(deps)
+    await voice.speak('npc-1', { text: 'one' }, 1)
+
+    const result = await voice.speak('npc-1', { text: 'two' }, 1, true)
+    expect(result).not.toBeNull()
+    expect(sourceA.dispose).toHaveBeenCalledTimes(1)
+    expect(synthesize).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('global concurrency cap', () => {
   it('drops a request beyond ttsMaxConcurrent rather than queuing it', async () => {
     const pending = Array.from({ length: NPC_LIMITS.ttsMaxConcurrent }, () => deferred<TtsClip | null>())

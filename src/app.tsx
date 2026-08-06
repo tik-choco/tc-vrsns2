@@ -196,6 +196,7 @@ export function App() {
           onSetNpcRadius={session.setNpcRadius}
           onSetNpcVoice={session.setNpcVoice}
           onSetNpcApproachRange={session.setNpcApproachRange}
+          onSetNpcChaseRange={session.setNpcChaseRange}
           onSetNpcDialogue={session.setNpcDialogue}
           onSetObjectVolume={session.setObjectVolume}
           onSetObjectAudibleRange={session.setObjectAudibleRange}

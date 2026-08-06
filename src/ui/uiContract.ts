@@ -242,6 +242,15 @@ export type GameOverlayProps = {
    */
   onSetNpcApproachRange: (id: string, range: number | undefined) => void
   /**
+   * Edits an NPC placement's chase-leash radius (per-NPC chaseRange override,
+   * NpcBinding.chaseRange), same gating as onSetNpcRadius. `undefined`
+   * publishes the field absent — "auto": the default leash, approachRange x
+   * CHASE_LEASH_FACTOR (see engagedChaseRange). Only meaningful when the
+   * placement has an approachRange — without it the whole approach/chase
+   * feature is off and a chaseRange is inert.
+   */
+  onSetNpcChaseRange: (id: string, range: number | undefined) => void
+  /**
    * Edits an NPC placement's mode/lines/lineOrder (R8's fixed-lines dialogue),
    * same gating as onSetNpcRadius. Only meaningful when `selectedObject.npc`
    * is set; the dialogue UI is the only caller. See useSession.setNpcDialogue's
@@ -581,4 +590,18 @@ export function clampBoxTile(tile: number, fallback: number): number {
 export function clampNpcApproachRange(range: number, fallback: number): number {
   if (!Number.isFinite(range)) return fallback
   return Math.min(NPC_LIMITS.maxApproachRange, Math.max(NPC_LIMITS.minApproachRange, range))
+}
+
+/**
+ * Clamps an NPC chase-leash radius edit to NPC_LIMITS.min/maxChaseRange —
+ * and never below `floor`, the placement's own approachRange: a chase range
+ * smaller than the approach trigger would make an engaged NPC abandon the
+ * moment the player crosses back past the trigger line, i.e. the chase could
+ * never actually happen. "Auto" (the field absent) is a real, separate state
+ * EditToolbar's select can pick — this only ever runs on an actual number
+ * the user chose (see useSession.setNpcChaseRange).
+ */
+export function clampNpcChaseRange(range: number, floor: number, fallback: number): number {
+  if (!Number.isFinite(range)) return fallback
+  return Math.min(NPC_LIMITS.maxChaseRange, Math.max(Math.max(NPC_LIMITS.minChaseRange, floor), range))
 }

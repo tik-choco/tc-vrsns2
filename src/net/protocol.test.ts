@@ -894,6 +894,51 @@ describe('NPC binding validation', () => {
     expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
   })
 
+  it('clamps chaseRange a peer set beyond the runtime bounds, both ends', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, approachRange: 5, chaseRange: 9999 } },
+          {
+            ...base,
+            id: 'b',
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, approachRange: 5, chaseRange: -50 },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.chaseRange).toBe(NPC_LIMITS.maxChaseRange)
+    expect(msg.objects[1].npc?.chaseRange).toBe(NPC_LIMITS.minChaseRange)
+  })
+
+  it('leaves chaseRange absent when missing or garbage — absent means "the default leash", nothing to default on the wire', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, approachRange: 5 } },
+          {
+            ...base,
+            id: 'b',
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, approachRange: 5, chaseRange: 'far' },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.chaseRange).toBeUndefined()
+    expect(msg.objects[1].npc?.chaseRange).toBeUndefined()
+  })
+
+  it('round-trips chaseRange alongside approachRange', () => {
+    const objects: PlacedObject[] = [
+      { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, approachRange: 5, chaseRange: 10 } },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
   it('round-trips mode, both values', () => {
     const aiMode: PlacedObject[] = [
       { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, mode: 'ai' } },
@@ -1419,6 +1464,32 @@ describe('MSG_EVENT / ScriptEffect validation', () => {
       { t: 'emit', event: 'door.opened', payload: '{}', hops: 1 },
     ]
     expect(decode(encode({ kind: MSG_EVENT, effects }))).toEqual({ kind: MSG_EVENT, effects })
+  })
+
+  it('round-trips a say with preempt=false, and lets absent preempt mean preempt (legacy shape)', () => {
+    const msg = decode(
+      frame(MSG_EVENT, {
+        effects: [
+          { t: 'say', objectId: 'a', text: 'greet', preempt: false },
+          { t: 'say', objectId: 'b', text: 'chat', preempt: true },
+          { t: 'say', objectId: 'c', text: 'old-producer' },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_EVENT) throw new Error('expected MSG_EVENT')
+    // false travels, true and absent both decode to the preempt shape — and
+    // an old producer's say keeps its exact wire shape (no field added).
+    expect(msg.effects).toEqual([
+      { t: 'say', objectId: 'a', text: 'greet', preempt: false },
+      { t: 'say', objectId: 'b', text: 'chat' },
+      { t: 'say', objectId: 'c', text: 'old-producer' },
+    ])
+  })
+
+  it('treats a non-boolean preempt as the legacy preempt default', () => {
+    const msg = decode(frame(MSG_EVENT, { effects: [{ t: 'say', objectId: 'a', text: 'ok', preempt: 'yes' }] }))
+    if (msg?.kind !== MSG_EVENT) throw new Error('expected MSG_EVENT')
+    expect(msg.effects).toEqual([{ t: 'say', objectId: 'a', text: 'ok' }])
   })
 
   it('drops an unknown effect kind but keeps the rest of the batch', () => {

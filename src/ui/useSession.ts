@@ -35,6 +35,7 @@ import {
   clampBoxTile,
   clampFalloffStart,
   clampNpcApproachRange,
+  clampNpcChaseRange,
   clampNpcRadius,
   clampPosition,
   clampRotation,
@@ -297,6 +298,13 @@ export type SessionApi = {
    * own "absent means off" contract. Gated the same as any other edit.
    */
   setNpcApproachRange: (id: string, range: number | undefined) => void
+  /**
+   * Edits an NPC's chase-leash radius (per-NPC chaseRange override, clamped
+   * to NPC_LIMITS.min/maxChaseRange and never below the placement's own
+   * approachRange). `undefined` clears the field ("auto" — the default leash
+   * approachRange x CHASE_LEASH_FACTOR). Gated the same as any other edit.
+   */
+  setNpcChaseRange: (id: string, range: number | undefined) => void
   /**
    * Edits an NPC's mode/lines/lineOrder (R8's fixed-lines dialogue). Gated the
    * same as any other edit; see the implementation's own doc for the
@@ -777,7 +785,7 @@ export function useSession(): SessionApi {
     new NpcRuntime({
       loadPersona: loadTownCharacterPersona,
       chat: (messages) => runLlmTask('npc', messages),
-      say: (objectId, text) => {
+      say: (objectId, text, preempt) => {
         npcLastReplyAt.current.set(objectId, Date.now())
         // The exact channel a script's `say` effect takes: World.applyRemoteScriptEffect's
         // 'say' case just forwards to the onScriptSay listener wired in
@@ -785,10 +793,21 @@ export function useSession(): SessionApi {
         // calling it directly here is "apply locally" without a second
         // rendering path. sendScriptEffects broadcasts the same effect so
         // peers see the identical line via their own onScriptSay.
-        worldRef.current?.applyRemoteScriptEffect({ t: 'say', objectId, text })
-        sessionRef.current?.sendScriptEffects([{ t: 'say', objectId, text }])
+        // `preempt` (true = user spoke, may cut the current line off; false
+        // = a greet, must not) rides the effect so every peer's voice layer
+        // applies the same rule against its own audio state.
+        worldRef.current?.applyRemoteScriptEffect({ t: 'say', objectId, text, preempt })
+        sessionRef.current?.sendScriptEffects([{ t: 'say', objectId, text, preempt }])
       },
       face: (objectId, yaw) => worldRef.current?.faceObject(objectId, yaw),
+      // Leave-triggered stop (see NpcRuntime.cancelAbandonedUtterance): the
+      // player being talked to walked out of hearing range, so the line
+      // trails off — voice stopped here (NpcVoice), bubble/mouth stopped in
+      // World. Both no-op safely when nothing is actually playing.
+      stopSpeech: (objectId) => {
+        npcVoiceRef.current.stop(objectId)
+        worldRef.current?.stopNpcSpeech(objectId)
+      },
       now: () => Date.now(),
     }),
   )
@@ -875,8 +894,14 @@ export function useSession(): SessionApi {
    * trigger that raises the speech bubble, so bubble and voice can never
    * disagree about what was said. A non-NPC placement (an ordinary scripted
    * prop saying something) is ignored: those have no voice identity.
+   *
+   * `preempt` is the say effect's flag (see ScriptEffect.preempt): a chat
+   * reply may cut the current line off — NpcVoice synthesizes the new clip
+   * and WorldObjects.playNpcSpeech stops the old audio element — while a
+   * greet that would overlap is dropped by NpcVoice instead (speak resolves
+   * null and nothing plays). Absent means preempt, the legacy behaviour.
    */
-  const speakNpcLine = useCallback((objectId: string, text: string) => {
+  const speakNpcLine = useCallback((objectId: string, text: string, preempt?: boolean) => {
     const world = worldRef.current
     if (!world) return
     const placement = world.listPlacedObjects().find((o) => o.id === objectId)
@@ -892,7 +917,7 @@ export function useSession(): SessionApi {
       voiceName: placement.npc.voiceName,
     }
     void npcVoiceRef.current
-      .speak(objectId, request, distance)
+      .speak(objectId, request, distance, preempt)
       .then((clip) => {
         if (!clip) return
         worldRef.current?.playNpcSpeech(objectId, clip.bytes, clip.mime)
@@ -1155,7 +1180,7 @@ export function useSession(): SessionApi {
       // fromId is namespaced under a prefix no peer id can produce, and the
       // name is bracketed so it reads as "not a person" at a glance even
       // without inspecting color or fromId.
-      world.onScriptSay((objectId, text) => {
+      world.onScriptSay((objectId, text, preempt) => {
         const objectName = world.listPlacedObjects().find((o) => o.id === objectId)?.name ?? ''
         pushMessage({
           fromId: `script:${objectId}`,
@@ -1167,7 +1192,7 @@ export function useSession(): SessionApi {
         // Same trigger raises the bubble (inside World) and the voice, for both
         // our own NPCs and other peers' — so what is written and what is heard
         // can never disagree about which line was said.
-        speakNpcLine(objectId, text)
+        speakNpcLine(objectId, text, preempt)
       })
       // Closes the owner-authoritative loop's local half: World already applied
       // these effects to itself (say/sound/window/emit) before calling this —
@@ -2744,6 +2769,43 @@ export function useSession(): SessionApi {
   )
 
   /**
+   * Edits an NPC's chase-leash radius from EditToolbar (per-NPC chaseRange
+   * override). Same shape as setNpcApproachRange above, with `undefined`
+   * DELETING the field — NpcBinding.chaseRange's contract is "absent means
+   * the default leash (approachRange x CHASE_LEASH_FACTOR)", the opposite of
+   * the feature-off semantics approachRange's absence carries. Clamped to
+   * NPC_LIMITS bounds and never below the placement's own approachRange —
+   * a chase range under the trigger would make an engaged NPC abandon the
+   * moment the player crosses back past the trigger line.
+   */
+  const setNpcChaseRange = useCallback(
+    (id: string, range: number | undefined) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current?.npc) return
+      if (range === undefined) {
+        if (current.npc.chaseRange === undefined) return
+        const npc = { ...current.npc }
+        delete npc.chaseRange
+        const next: PlacedObject = { ...current, npc }
+        commitOwnObjects(objects.current.claim(next))
+        reconcileObjects()
+        if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+        return
+      }
+      const fallback = current.npc.chaseRange ?? NPC_LIMITS.minChaseRange
+      const clamped = clampNpcChaseRange(range, current.npc.approachRange ?? NPC_LIMITS.minChaseRange, fallback)
+      if (clamped === current.npc.chaseRange) return
+      const next: PlacedObject = { ...current, npc: { ...current.npc, chaseRange: clamped } }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
    * Edits an NPC's mode/lines/lineOrder from the dialogue authoring UI (R8).
    * Same shape as setNpcRadius above: gate on worldPolicy + editableIds, read
    * the live placement off worldRef (not the render-time `objects` state,
@@ -3322,6 +3384,7 @@ export function useSession(): SessionApi {
     setNpcRadius,
     setNpcVoice,
     setNpcApproachRange,
+    setNpcChaseRange,
     setNpcDialogue,
     setObjectVolume,
     setObjectAudibleRange,

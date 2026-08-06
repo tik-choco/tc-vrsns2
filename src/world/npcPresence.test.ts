@@ -11,7 +11,9 @@ import {
   BODY_TURN_HYSTERESIS,
   bubbleDwellMs,
   eyePosition,
+  CHASE_LEASH_FACTOR,
   EYE_HEIGHT_BELOW_TOP,
+  engagedChaseRange,
   GAZE_PITCH_LIMIT,
   GAZE_YAW_LIMIT,
   hasArrived,
@@ -391,7 +393,14 @@ describe('separateApproachTargets', () => {
 })
 
 describe('stepApproachMode', () => {
-  const base = { playerInRange: false, reachedStop: false, reachedHome: false, held: false }
+  const base = {
+    playerInRange: false,
+    reachedStop: false,
+    reachedHome: false,
+    held: false,
+    playerLost: false,
+    leaveGraceOver: false,
+  }
 
   it('home -> approaching once a player enters range', () => {
     expect(stepApproachMode('home', { ...base, playerInRange: true })).toBe('approaching')
@@ -409,20 +418,44 @@ describe('stepApproachMode', () => {
     expect(stepApproachMode('approaching', { ...base, playerInRange: true })).toBe('approaching')
   })
 
-  it('approaching -> returning: abandons the walk if the player leaves range mid-approach', () => {
-    expect(stepApproachMode('approaching', { ...base, playerInRange: false })).toBe('returning')
+  it('approaching holds still while the player is gone but the leave grace has not elapsed', () => {
+    expect(stepApproachMode('approaching', { ...base, playerInRange: false })).toBe('approaching')
+  })
+
+  it('approaching -> returning: abandons the walk once the player has been gone through the leave grace', () => {
+    expect(stepApproachMode('approaching', { ...base, playerInRange: false, leaveGraceOver: true })).toBe('returning')
   })
 
   it('arrived stays arrived while held, even once the player has left range', () => {
     expect(stepApproachMode('arrived', { ...base, playerInRange: false, held: true })).toBe('arrived')
   })
 
-  it('arrived stays arrived while the player is still in range (not held)', () => {
+  it('arrived stays arrived while the player is still close (not held)', () => {
     expect(stepApproachMode('arrived', { ...base, playerInRange: true })).toBe('arrived')
   })
 
-  it('arrived -> returning only once not held AND the player has left range', () => {
-    expect(stepApproachMode('arrived', { ...base, playerInRange: false, held: false })).toBe('returning')
+  it('arrived lingers through the leave grace while the player is gone, returning home only once it elapses', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: false, held: false })).toBe('arrived')
+    expect(stepApproachMode('arrived', { ...base, playerInRange: false, held: false, leaveGraceOver: true })).toBe('returning')
+  })
+
+  it('arrived -> approaching: chases the player again once they walk away from the NPC', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: true, playerLost: true })).toBe('approaching')
+  })
+
+  it('arrived stays arrived while held, even if the player has walked away', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: true, playerLost: true, held: true })).toBe('arrived')
+  })
+
+  it('arrived -> returning, not chasing, when the player has left home range (the leash)', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: false, playerLost: true })).toBe('arrived')
+    expect(stepApproachMode('arrived', { ...base, playerInRange: false, playerLost: true, leaveGraceOver: true })).toBe(
+      'returning',
+    )
+  })
+
+  it('arrived -> returning only once not held AND the player has left range through the grace', () => {
+    expect(stepApproachMode('arrived', { ...base, playerInRange: false, held: false, leaveGraceOver: true })).toBe('returning')
   })
 
   it('returning -> approaching if a player re-enters range before reaching home', () => {
@@ -446,8 +479,57 @@ describe('stepApproachMode', () => {
     mode = stepApproachMode(mode, { ...base, playerInRange: false, held: true })
     expect(mode).toBe('arrived') // still talking
     mode = stepApproachMode(mode, { ...base, playerInRange: false, held: false })
+    expect(mode).toBe('arrived') // grace: the player just left
+    mode = stepApproachMode(mode, { ...base, playerInRange: false, held: false, leaveGraceOver: true })
     expect(mode).toBe('returning')
     mode = stepApproachMode(mode, { ...base, reachedHome: true })
     expect(mode).toBe('home')
+  })
+
+  it('round-trips through a re-chase: walk up, get left behind, chase again, then give up at the leash', () => {
+    let mode: NpcApproachMode = 'home'
+    mode = stepApproachMode(mode, { ...base, playerInRange: true })
+    expect(mode).toBe('approaching')
+    mode = stepApproachMode(mode, { ...base, playerInRange: true, reachedStop: true })
+    expect(mode).toBe('arrived')
+    // Player walks away but stays within home range — chase again.
+    mode = stepApproachMode(mode, { ...base, playerInRange: true, playerLost: true })
+    expect(mode).toBe('approaching')
+    // Catches up; fresh stop point reached.
+    mode = stepApproachMode(mode, { ...base, playerInRange: true, playerLost: true, reachedStop: true })
+    expect(mode).toBe('arrived')
+    // Player leaves home range entirely — the leash ends the chase, after
+    // the leave grace.
+    mode = stepApproachMode(mode, { ...base, playerInRange: false, playerLost: true, held: false })
+    expect(mode).toBe('arrived')
+    mode = stepApproachMode(mode, { ...base, playerInRange: false, playerLost: true, held: false, leaveGraceOver: true })
+    expect(mode).toBe('returning')
+    mode = stepApproachMode(mode, { ...base, reachedHome: true })
+    expect(mode).toBe('home')
+  })
+})
+
+describe('engagedChaseRange', () => {
+  it('is the placement\'s own approachRange while the NPC stands home — nobody beyond the trigger line pulls it off its spot', () => {
+    expect(engagedChaseRange(6, 'home')).toBe(6)
+    expect(engagedChaseRange(3, 'home')).toBe(3)
+  })
+
+  it('widens to the chase leash once engaged, so a player walking away is still chased', () => {
+    for (const mode of ['approaching', 'arrived', 'returning'] as const) {
+      expect(engagedChaseRange(6, mode)).toBe(6 * CHASE_LEASH_FACTOR)
+      expect(engagedChaseRange(3, mode)).toBe(3 * CHASE_LEASH_FACTOR)
+    }
+  })
+
+  it('honours a per-placement chaseRange override once engaged, while home still uses approachRange', () => {
+    expect(engagedChaseRange(6, 'home', 10)).toBe(6)
+    for (const mode of ['approaching', 'arrived', 'returning'] as const) {
+      expect(engagedChaseRange(6, mode, 10)).toBe(10)
+    }
+  })
+
+  it('keeps the leash strictly wider than the trigger range — otherwise chasing could never actually happen', () => {
+    expect(CHASE_LEASH_FACTOR).toBeGreaterThan(1)
   })
 })

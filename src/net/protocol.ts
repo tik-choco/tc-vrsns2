@@ -138,7 +138,19 @@ export interface RoomAnnounceEntry {
  * setVisible are deliberately absent — they ride MSG_OBJECTS instead.
  */
 export type ScriptEffect =
-  | { t: 'say'; objectId: string; text: string }
+  | {
+      t: 'say'
+      objectId: string
+      text: string
+      /**
+       * Whether this line may cut off whatever the NPC is currently saying
+       * (see NpcRuntime's say dep and NpcVoice.speak's preempt rule). Absent
+       * means preempt — the legacy behaviour every pre-existing producer
+       * (scripts) and every old peer rely on. Only ever carried when false,
+       * so old peers and old producers never see a wire change.
+       */
+      preempt?: boolean
+    }
   | { t: 'sound'; objectId: string; cid: string }
   | { t: 'window'; scriptId: string; windowId: string; ui: UiNode; anchor: UiAnchor }
   | { t: 'closeWindow'; scriptId: string; windowId: string }
@@ -593,6 +605,14 @@ function parseBoxAppearance(raw: unknown): BoxAppearance | null {
  * sensible "every NPC always approaches this far" default — approach is an
  * opt-in behaviour, not something every placement has always done.
  *
+ * `chaseRange` (per-NPC chase-leash override) is clamped like `approachRange`
+ * and likewise leaves the field absent when missing/garbage — absent means
+ * "the default leash", which the read side derives from approachRange x
+ * CHASE_LEASH_FACTOR, so there is nothing sensible to default this to on the
+ * wire either. A placement with a chaseRange but no approachRange keeps the
+ * whole feature off: the read side never looks at chaseRange unless
+ * approachRange is present.
+ *
  * `mode` (R8) follows the same set-based idiom as PLACED_KINDS/EDIT_POLICIES
  * above: anything other than the two literal strings NPC_MODES recognizes
  * leaves the field absent, which NpcBinding's own doc defines as 'ai' — so a
@@ -646,6 +666,10 @@ function parseNpcBinding(raw: unknown): NpcBinding | null {
       NPC_LIMITS.maxApproachRange,
     )
     if (approachRange !== null) binding.approachRange = approachRange
+  }
+  if (o.chaseRange !== undefined) {
+    const chaseRange = clampNumber(o.chaseRange, NPC_LIMITS.minChaseRange, NPC_LIMITS.maxChaseRange)
+    if (chaseRange !== null) binding.chaseRange = chaseRange
   }
   if (typeof o.mode === 'string' && NPC_MODES.has(o.mode)) {
     binding.mode = o.mode as NpcMode
@@ -1180,7 +1204,11 @@ function parseScriptEffect(raw: unknown): ScriptEffect | null {
         return null
       }
       if (typeof o.text !== 'string') return null
-      return { t: 'say', objectId: o.objectId, text: o.text.trim().slice(0, TEXT_MAX_LEN) }
+      const text = o.text.trim().slice(0, TEXT_MAX_LEN)
+      // preempt only travels when false — absent means preempt (see the
+      // field's doc), so a say from an old producer keeps its exact shape.
+      if (o.preempt === false) return { t: 'say', objectId: o.objectId, text, preempt: false }
+      return { t: 'say', objectId: o.objectId, text }
     }
     case 'sound': {
       if (

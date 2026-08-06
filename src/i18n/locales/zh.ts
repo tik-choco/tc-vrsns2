@@ -97,6 +97,8 @@ export const zh: Dict = {
   'npc.approach': '接近范围',
   'npc.approachOff': '关闭',
   'npc.approachValue': '{n} 米',
+  'npc.chase': '追踪范围',
+  'npc.chaseAuto': '自动',
   'npc.dialogue': '台词',
   'npc.dialogueEdit': '台词…',
   'npc.dialogueTitle': 'NPC 台词',

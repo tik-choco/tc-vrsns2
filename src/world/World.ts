@@ -118,7 +118,7 @@ export class World {
   /** WorldObjects reports an owned NPC's approach walk arriving here; forwarded to onNpcArrived's listener — see both docs. */
   private npcArrivedListener: ((objectId: string, player: Vec3) => void) | null = null
   private soundResolver: ((cid: string) => Promise<Uint8Array | null>) | null = null
-  private scriptSayListener: ((objectId: string, text: string) => void) | null = null
+  private scriptSayListener: ((objectId: string, text: string, preempt?: boolean) => void) | null = null
   /** Fires once per frame with a non-trivial ScriptTickResult, so the net layer can broadcast it. See onScriptOutput(). */
   private scriptOutputListener: ((result: ScriptTickResult) => void) | null = null
   /** The caller's onObjectEdited callback, invoked after this class's own script sync. */
@@ -884,7 +884,7 @@ export class World {
         this.scriptRuntime.applyRemoteEffect(effect)
         break
       case 'say':
-        this.scriptSayListener?.(effect.objectId, effect.text)
+        this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt)
         // Same single trigger as applyScriptEffects below — see WorldObjects
         // .npcSpeak's doc for why this must fire for a REMOTE say too, not
         // just a locally-produced one: every peer sees the bubble.
@@ -978,8 +978,13 @@ export class World {
     this.scriptRuntime.uiEvent(scriptId, event, this.localProfileName)
   }
 
-  /** Notified whenever a script's `say` effect fires, so the UI can post it as a chat line. World never touches chat UI itself. */
-  onScriptSay(cb: (objectId: string, text: string) => void): void {
+  /**
+   * Notified whenever a `say` effect fires, so the UI can post it as a chat
+   * line. World never touches chat UI itself. `preempt` rides through from
+   * the effect (see ScriptEffect.preempt — absent means preempt, the legacy
+   * behaviour scripts rely on).
+   */
+  onScriptSay(cb: (objectId: string, text: string, preempt?: boolean) => void): void {
     this.scriptSayListener = cb
   }
 
@@ -997,15 +1002,29 @@ export class World {
   }
 
   /**
+   * Ends an NPC's current utterance VISUALLY — the leave-triggered stop (see
+   * WorldObjects.stopNpcSpeech; the session stops the voice on its own
+   * NpcVoice in the same breath). A no-op for an id that isn't a currently
+   * tracked NPC placement.
+   */
+  stopNpcSpeech(objectId: string): void {
+    this.worldObjects.stopNpcSpeech(objectId)
+  }
+
+  /**
    * Plays a synthesized NPC line at its placement, through the very same
    * one-shot PositionalAudio path a script's `sound` effect uses — so an NPC
    * voice attenuates with distance and tracks the body if it moves, with no
    * second audio route to keep in sync. Bytes come from the session layer
    * (src/lib/ttsClient.ts); World neither synthesizes nor caches them.
+   *
+   * Routed through WorldObjects.playNpcSpeech, NOT playOneShot: a new line
+   * stops whatever the previous line is still audibly playing (the audible
+   * half of NpcVoice's per-NPC single-utterance guarantee — see its doc).
    */
   playNpcSpeech(objectId: string, bytes: Uint8Array, mime?: string): void {
     if (this.disposed) return
-    this.worldObjects.playOneShot(objectId, bytes, mime)
+    this.worldObjects.playNpcSpeech(objectId, bytes, mime)
   }
 
   /**
@@ -1210,7 +1229,7 @@ export class World {
   private applyScriptEffects(effects: ScriptEffect[]): void {
     for (const effect of effects) {
       if (effect.t === 'say') {
-        this.scriptSayListener?.(effect.objectId, effect.text)
+        this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt)
         this.worldObjects.npcSpeak(effect.objectId, effect.text)
       } else if (effect.t === 'sound') {
         void this.playScriptSound(effect.objectId, effect.cid)
