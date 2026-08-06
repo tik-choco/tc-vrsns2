@@ -30,6 +30,7 @@ import {
   Speaker,
   Lock,
   LockOpen,
+  MessageSquare,
 } from 'lucide-preact'
 import { useTranslation, type TranslationKey } from '../i18n'
 import { useTtsVoices } from '../lib/ttsVoices'
@@ -108,6 +109,17 @@ type Props = Pick<
    * open/closed state for the same keyboard/world-input gating reasons.
    */
   onEditGraph: () => void
+  /**
+   * "Dialogue…" was picked, on an NPC placement. Opens NpcLinesDialog for
+   * the selected object's current npc binding (mode/order/lines together —
+   * see that dialog's own header comment for why they're one decision, not
+   * separate controls in this bar). Same reasoning as onDescribeBehaviour/
+   * onEditGraph: this doesn't change anything by itself (the dialog edits a
+   * local working copy and only calls onSetNpcDialogue on Apply), and
+   * GameOverlay owns its open/closed state for the same keyboard/world-input
+   * gating reasons.
+   */
+  onEditNpcDialogue: () => void
 }
 
 // All lucide-preact icons share one component type; borrow it from any import.
@@ -508,6 +520,16 @@ export function EditToolbar(props: Props) {
   const approachValue = npcApproachRange == null ? 'off' : String(npcApproachRange)
   // Same "stay honest about the stored value" reasoning as radiusIsCustom above.
   const approachIsCustom = npcApproachRange != null && !APPROACH_STEPS.includes(npcApproachRange)
+
+  // Summary shown on the Dialogue button (R8) — absent `mode` means 'ai',
+  // matching NpcBinding.mode's own "absent means" contract, so a placement
+  // that never touched this dialog still reads as what it actually does.
+  const npcMode = selected?.npc?.mode ?? 'ai'
+  const npcLinesCount = selected?.npc?.lines?.length ?? 0
+  const npcDialogueState =
+    npcMode === 'ai'
+      ? t('npc.modeAi')
+      : `${t('npc.modeLines')} · ${npcLinesCount > 0 ? t('npc.linesCount', { n: npcLinesCount }) : t('npc.linesNone')}`
 
   // Volume/audible-range controls are gated on kind, not on an optional
   // field being present (unlike selected?.npc above) — every 'audio'/'video'
@@ -951,6 +973,20 @@ export function EditToolbar(props: Props) {
             ))}
           </select>
         </label>
+      )}
+      {selected?.npc && (
+        <button
+          type="button"
+          class="btn btn-ghost edit-bar-npc-dialogue"
+          title={`${t('npc.dialogueEdit')} — ${npcDialogueState}`}
+          onClick={props.onEditNpcDialogue}
+        >
+          <MessageSquare size={15} aria-hidden="true" />
+          <span class="btn-text-collapse">
+            {t('npc.dialogueEdit')}
+            <span class="edit-bar-npc-dialogue-state">{npcDialogueState}</span>
+          </span>
+        </button>
       )}
       {isAudible && (
         <label class="edit-bar-script">

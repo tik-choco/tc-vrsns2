@@ -24,6 +24,10 @@ type Props = Pick<
   | 'onSetWorldPolicy'
   | 'onExportWorldManifest'
   | 'onImportWorldManifest'
+  // How many placements the import is about to replace — see the confirm
+  // step below. Our own published set is exactly what an import overwrites,
+  // so this is the own()-only count, not placedCount.
+  | 'ownPlacedCount'
 > & { onClose: () => void }
 
 const SKYBOX_ERROR_KEYS: Record<SkyboxUploadError, TranslationKey> = {
@@ -232,6 +236,17 @@ export function WorldPanel(props: Props) {
           <p class="panel-note is-muted">
             {t('world.importObjectCount', { count: pending.manifest.objects.length })}
           </p>
+          {/* An import REPLACES the placements this device publishes rather
+              than adding to them (see useSession's importWorldManifest), so
+              the confirm step has to say so — the object count above reads
+              like "this much will be added" otherwise. Shown as a warning
+              only when there is something to lose. */}
+          {props.ownPlacedCount > 0 && (
+            <p class="panel-note is-warn" role="alert">
+              <AlertTriangle size={16} aria-hidden="true" />
+              {t('world.importReplaces', { count: props.ownPlacedCount })}
+            </p>
+          )}
           {pending.manifest.env && <p class="panel-note is-muted">{t('world.importHasEnvironment')}</p>}
           {pending.unavailable === null ? (
             <p class="panel-note is-muted">{t('common.loading')}</p>

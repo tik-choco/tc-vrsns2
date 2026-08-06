@@ -70,6 +70,17 @@ export type CatalogItem = {
   origin?: 'foreign'
   /** Provenance for a foreign item — who actually authored it. */
   source?: { characterId?: string; name?: string; vrmChecksum?: string }
+  /** What a placeable catalog item actually is. Absent for avatars/worlds
+   *  (only placeable objects carry a kind at all), and also absent on
+   *  entries saved before media support existed — those old entries are
+   *  models, which is what they were, but the field itself stays undefined. */
+  asset?: PlacedKind
+  /** Byte length of the content recorded at save time. Entries saved before
+   *  this field existed have it undefined — there's no way to recover it. */
+  size?: number
+  /** When this device saved the item (epoch ms). Entries saved before this
+   *  field existed have it undefined. */
+  addedAt?: number
 }
 
 /** Loadable world/model container formats. */
@@ -140,7 +151,41 @@ export type NpcBinding = {
    * existed behaves exactly as it always has.
    */
   approachRange?: number
+  /**
+   * Which brain answers for this NPC. Absent means 'ai' — the behaviour every
+   * placement had before this field existed, so an old placement (or an old
+   * peer's) keeps working untouched.
+   */
+  mode?: NpcMode
+  /**
+   * Pre-authored things this NPC says, used iff `mode` is 'lines'. Unlike the
+   * persona (which deliberately never travels — see this type's own doc), these
+   * DO ride the wire: there is no shared roster to resolve them from, they are
+   * authored right here against this one placement, and a peer adopting the
+   * placement later (publishing an id IS the claim — see ObjectRegistry) would
+   * otherwise inherit a mute NPC. Kept affordable by hard caps instead:
+   * NPC_LIMITS.maxLines x NPC_LIMITS.maxLineChars, enforced in the decoder, is
+   * an order of magnitude under a script graph's own MSG_OBJECTS budget.
+   *
+   * Empty or absent in 'lines' mode means the NPC stays silent — deliberately
+   * not a fallback to the AI path, since "I turned AI off" must not be undone
+   * by "I haven't written anything yet".
+   */
+  lines?: string[]
+  /** How `lines` is walked. Absent means 'sequence'. */
+  lineOrder?: NpcLineOrder
 }
+
+/**
+ * 'ai' asks the character's LLM (the original R5 behaviour, needs AI settings
+ * and a tc-town persona); 'lines' speaks only NpcBinding.lines, which needs
+ * neither — the whole point of the mode is an NPC that works with nothing
+ * configured and says exactly what its author wrote.
+ */
+export type NpcMode = 'ai' | 'lines'
+
+/** 'sequence' walks NpcBinding.lines in order and wraps; 'random' picks one, avoiding an immediate repeat. */
+export type NpcLineOrder = 'sequence' | 'random'
 
 /**
  * Who may edit the objects placed in a room — a room-wide, advisory setting

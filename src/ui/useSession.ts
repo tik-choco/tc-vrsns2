@@ -6,6 +6,8 @@ import type {
   BoxAppearance,
   CatalogItem,
   ChatMessage,
+  NpcLineOrder,
+  NpcMode,
   PlacedObject,
   PlayerProfile,
   Skybox,
@@ -90,6 +92,7 @@ import {
   type CharacterIndexEntry,
 } from '../interop/townCharacters'
 import { MAX_VRM_BYTES, sha256Hex, vrmBytesByChecksum } from '../interop/vrmLibrary'
+import { SPACE_SOURCE_NAME, startCatalogInbox } from '../interop/spaceInbox'
 import { syncLocationToUrl, withoutRoomParam, withRoomParam } from './roomUrl'
 import { NpcRuntime, type NpcPlacement, type NpcSpeaker } from '../npc/NpcRuntime'
 import { NPC_LIMITS } from '../npc/limits'
@@ -241,7 +244,17 @@ export type SessionApi = {
   // objects
   /** Resolves the new catalog item's cid (or null on failure) — see uploadWorld's doc for why. */
   uploadObject: (file: File) => Promise<string | null>
-  placeObject: (cid: string) => Promise<void>
+  /**
+   * Places one catalog item in front of the local player and drops into edit
+   * mode with it selected. `batchIndex` exists for a multi-file drop (the
+   * drag-and-drop overlay calling this once per file): omitted, or 0, is
+   * exactly today's single-placement behaviour — same anchor position, same
+   * selection. Anything greater fans that placement out sideways from the
+   * same anchor, relative to the placer's own facing, so a batch drop doesn't
+   * stack every object on top of the first one — see the implementation for
+   * the exact offset.
+   */
+  placeObject: (cid: string, batchIndex?: number) => Promise<void>
   /**
    * Places a default 1m box primitive in front of the local player (task
    * #24). Unlike placeObject there is no catalog item or bytes to resolve —
@@ -284,6 +297,13 @@ export type SessionApi = {
    * own "absent means off" contract. Gated the same as any other edit.
    */
   setNpcApproachRange: (id: string, range: number | undefined) => void
+  /**
+   * Edits an NPC's mode/lines/lineOrder (R8's fixed-lines dialogue). Gated the
+   * same as any other edit; see the implementation's own doc for the
+   * normalization applied and why `lines` rides the wire on the placement
+   * itself while the persona never does.
+   */
+  setNpcDialogue: (id: string, dialogue: { mode: NpcMode; lines: string[]; lineOrder: NpcLineOrder }) => void
   /** Edits an 'audio'/'video' placement's own playback volume multiplier, clamped to VOLUME_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
   setObjectVolume: (id: string, volume: number) => void
   /** Edits an 'audio'/'video' placement's audible range, clamped to AUDIBLE_RANGE_MIN/MAX (net/protocol.ts). Gated the same as any other edit. */
@@ -425,6 +445,13 @@ const DEFAULT_BOX_APPEARANCE: BoxAppearance = { sx: 1, sy: 1, sz: 1, color: '#9e
  * sits clear of the player.
  */
 const BOX_PLACE_DISTANCE = 2.5
+/**
+ * Lateral spacing between fanned-out placements in a multi-file drop (see
+ * placeObject's batchIndex). Modest on purpose: this only has to pull
+ * objects apart enough that a batch reads as separate items instead of a
+ * single overlapping stack, not scatter them out of the placer's view.
+ */
+const BATCH_FAN_SPACING = 1.5
 
 /** Schedules a thumbnail capture one rendered frame out (rAF, or a short timeout where unavailable). */
 function scheduleNextFrame(cb: () => void): void {
@@ -501,7 +528,22 @@ function ownNpcPlacements(own: PlacedObject[]): NpcPlacement[] {
   const out: NpcPlacement[] = []
   for (const o of own) {
     if (o.kind !== 'npc' || !o.npc) continue
-    out.push({ objectId: o.id, characterId: o.npc.characterId, name: o.name, radius: o.npc.radius, x: o.x, y: o.y, z: o.z })
+    out.push({
+      objectId: o.id,
+      characterId: o.npc.characterId,
+      name: o.name,
+      radius: o.npc.radius,
+      x: o.x,
+      y: o.y,
+      z: o.z,
+      // Carried straight through from the binding (R8) — mode/lines/lineOrder
+      // are absent on every placement that predates fixed-line NPCs, and
+      // NpcRuntime treats an absent mode as 'ai', matching NpcBinding's own
+      // "absent means the default" contract.
+      mode: o.npc.mode,
+      lines: o.npc.lines,
+      lineOrder: o.npc.lineOrder,
+    })
     if (out.length >= NPC_LIMITS.maxOwnedNpcs) break
   }
   return out
@@ -965,6 +1007,35 @@ export function useSession(): SessionApi {
   // tc-town's character roster lives on the shared bus, independent of the
   // room session — subscribe once for the lifetime of the app, not per-join.
   useEffect(() => subscribeTownCharacters(setTownCharacters), [])
+
+  /**
+   * The reverse of interop/tcSpace.ts: files the user put in tc-storage's
+   * "TC Space" folder arrive here and land in the object catalog. Same
+   * app-lifetime scope as the town roster above — the bus is independent of
+   * which room (if any) is joined.
+   *
+   * startCatalogInbox does the whole import itself; the only thing it can't
+   * know about is this hook's copy of the catalog, so addForeignToCatalog is
+   * wrapped to refresh that copy after each successful write. Wrapping the
+   * injected dependency is the only hook available (spaceInbox.ts exposes no
+   * "on imported" callback), and it is the right one anyway: the refresh then
+   * fires exactly when a write actually succeeded, never on a skipped or
+   * rejected item.
+   */
+  useEffect(
+    () =>
+      startCatalogInbox({
+        addForeign: async (...args) => {
+          const item = await addForeignToCatalog(...args)
+          if (!mountedRef.current) return item
+          const list = listCatalog('object')
+          setObjectModels(list)
+          hydrateThumbs('object', list, setObjectModels)
+          return item
+        },
+      }),
+    [hydrateThumbs],
+  )
 
   // Discovery lobby: joined once for the app's lifetime, independent of which
   // (if any) user room is currently joined. Failure is non-fatal — the app
@@ -1978,12 +2049,26 @@ export function useSession(): SessionApi {
    * Gated on worldPolicy exactly like every other world-mutating action
    * (placeObject, applyWorld, clearObjects).
    *
-   * Objects: every imported placement joins OUR published set — importing
-   * makes the local player the publisher of all of it, same as claiming a
-   * peer's object under the 'everyone' policy (ObjectRegistry.claim) — and
-   * flows through the same commitOwnObjects/reconcileObjects path every
-   * other object-set change does, so it is broadcast, autosaved and synced
-   * into the live scene with no second code path.
+   * Objects: the manifest REPLACES our published set rather than adding to
+   * it — importing a world file is "make the room look like this file", not
+   * "merge this file into whatever is already here". Importing the same file
+   * twice therefore leaves one copy of each placement, not two stacked in
+   * the same spot, and a file exported from a tidied-up room actually tidies
+   * the room it is imported into. Every imported placement becomes OUR
+   * published one, the same way claiming a peer's object under the
+   * 'everyone' policy does (ObjectRegistry.claim), and it all flows through
+   * the same commitOwnObjects/reconcileObjects path every other object-set
+   * change does, so it is broadcast, autosaved and synced into the live
+   * scene with no second code path.
+   *
+   * What replacement can and cannot reach is exactly what commitOwnObjects
+   * governs: OUR published set. A peer's placements are theirs to publish
+   * and survive the import untouched (as do orphans — see ObjectRegistry's
+   * header), which is the same boundary clearObjects already has. An empty
+   * `objects` array is honoured as the emptying it describes, so an env-only
+   * or deliberately-cleared export imports as a cleared room; WorldPanel's
+   * confirm step states the object count and that existing placements are
+   * replaced, so this is never the silent half of a click.
    *
    * Environment: applied through applyEnvironment — the same local-apply
    * logic a peer's MSG_WORLD, or the room's own autosave restore, already
@@ -2011,10 +2096,12 @@ export function useSession(): SessionApi {
       if (!worldRef.current || worldPolicyRef.current === 'locked') return
       setWorldBusy(true)
       try {
-        if (manifest.objects.length > 0) {
-          commitOwnObjects([...objects.current.own(), ...manifest.objects])
-          reconcileObjects()
-        }
+        // Unconditional, including the empty case: gating on
+        // `objects.length > 0` would quietly turn "import a cleared room"
+        // into "keep what you had", which is the merge behaviour this
+        // replaced.
+        commitOwnObjects(manifest.objects)
+        reconcileObjects()
         if (manifest.env) {
           const env = manifest.env
           await applyEnvironment(env)
@@ -2259,7 +2346,7 @@ export function useSession(): SessionApi {
   }, [hydrateThumbs])
 
   const placeObject = useCallback(
-    async (cid: string) => {
+    async (cid: string, batchIndex?: number) => {
       const world = worldRef.current
       if (!world || worldPolicyRef.current === 'locked') return
       setObjectBusy(true)
@@ -2267,8 +2354,21 @@ export function useSession(): SessionApi {
         const item = listCatalog('object').find((o) => o.cid === cid)
         const asset = placeableAssetOf(cid)
         const bytes = await catalogBytes(cid)
+        // A tc-storage inbox item's catalog cid names CIPHERTEXT (see
+        // interop/spaceInbox.ts's header) — broadcasting that cid with the
+        // placement would hand every peer in the room bytes they cannot
+        // decrypt. The plaintext is published to the shared content store
+        // HERE, at placement time — never at import time, per the contract
+        // doc's "配置時の平文公開" line — and the fresh content-addressed cid
+        // (repeat publishes of identical bytes return the same cid) rides
+        // the placement instead. All three source fields are checked because
+        // a tc-town character also sets source.name (its own name) but always
+        // alongside characterId + vrmChecksum, which the inbox never sets.
+        const source = item?.source
+        const isSpaceInboxItem = source?.name === SPACE_SOURCE_NAME && source.characterId == null && source.vrmChecksum == null
+        const placedCid = isSpaceInboxItem ? await publishVrmBytes(item?.name ?? 'Object', bytes) : cid
         const state = await world.placeObject(bytes, {
-          cid,
+          cid: placedCid,
           name: item?.name ?? 'Object',
           kind: asset.kind,
           mime: asset.mime,
@@ -2276,12 +2376,52 @@ export function useSession(): SessionApi {
           // else takes over publishing or editing it.
           placedBy: profileRef.current.name,
         })
-        commitOwnObjects([...objects.current.own(), state])
+        // World.placeObject always drops at the SAME anchor (the placer's
+        // feet, distance decided by WorldObjects) — it has no idea this call
+        // is one of several from a batch drop. batchIndex 0 (or omitted, the
+        // single-file/Place-button path every catalog panel uses) must be
+        // byte-identical to before: no offset, no extra reconcile round-trip.
+        // Anything greater fans the placement out sideways from that same
+        // anchor before publishing it, so a five-file drop reads as a row
+        // instead of a stack.
+        if (batchIndex) {
+          // Same heading World.placeObject itself just used to build the
+          // anchor (World.getLocalPose().ry mirrors characterController.
+          // heading — see placeBox above for the identical read), so the fan
+          // is relative to the placer's OWN facing rather than world X/Z:
+          // a batch always spreads out in front of whoever dropped it, no
+          // matter which way they're standing. (cos h, -sin h) is whichever
+          // side is perpendicular to facing (sin h, cos h) — which physical
+          // side that lands on doesn't matter, only that it's deterministic.
+          const heading = world.getLocalPose()?.ry ?? 0
+          const rightX = Math.cos(heading)
+          const rightZ = -Math.sin(heading)
+          // Alternate sides, stepping out one more slot every second index:
+          // 1 -> right, 2 -> left (same distance as 1), 3 -> further right, ...
+          const side = batchIndex % 2 === 1 ? 1 : -1
+          const slot = Math.ceil(batchIndex / 2)
+          const offset = side * slot * BATCH_FAN_SPACING
+          const fanned: PlacedObject = {
+            ...state,
+            x: clampPosition(state.x + rightX * offset, state.x),
+            z: clampPosition(state.z + rightZ * offset, state.z),
+          }
+          commitOwnObjects(objects.current.claim(fanned))
+          // Same "await before select" reasoning as placeBox: the mesh
+          // World.placeObject built is still sitting at the un-fanned anchor
+          // until a reconcile applies `fanned`'s position, so this avoids
+          // handing the gizmo a mesh that visibly jumps a frame later.
+          await reconcileObjects()
+        } else {
+          commitOwnObjects([...objects.current.own(), state])
+        }
         refreshPlacedCount()
         // A new object lands at the placer's feet and almost always has to be
         // moved, so placing IS the start of editing it: drop into the mode
         // with it selected instead of making the player come back and find it.
-        // commitOwnObjects above has already made it selectable.
+        // commitOwnObjects above has already made it selectable. For a batch,
+        // each call selects its own object in turn — the last call in the
+        // sequence naturally leaves the final one selected.
         setEditMode(true)
         worldRef.current?.selectObject(state.id)
       } catch (e) {
@@ -2290,7 +2430,7 @@ export function useSession(): SessionApi {
         setObjectBusy(false)
       }
     },
-    [commitOwnObjects, refreshPlacedCount, setEditMode],
+    [commitOwnObjects, reconcileObjects, refreshPlacedCount, setEditMode],
   )
 
   /**
@@ -2596,6 +2736,67 @@ export function useSession(): SessionApi {
       const clamped = clampNpcApproachRange(range, fallback)
       if (clamped === current.npc.approachRange) return
       const next: PlacedObject = { ...current, npc: { ...current.npc, approachRange: clamped } }
+      commitOwnObjects(objects.current.claim(next))
+      reconcileObjects()
+      if (selectedObjectRef.current?.id === id) setSelectedObject(next)
+    },
+    [commitOwnObjects, reconcileObjects],
+  )
+
+  /**
+   * Edits an NPC's mode/lines/lineOrder from the dialogue authoring UI (R8).
+   * Same shape as setNpcRadius above: gate on worldPolicy + editableIds, read
+   * the live placement off worldRef (not the render-time `objects` state,
+   * which can be stale), claim + commitOwnObjects, then reconcile.
+   *
+   * `lines` is stored ON THE PLACEMENT — and so travels the wire, unlike the
+   * persona, which deliberately never does (see NpcBinding's own doc) —
+   * because there is no shared roster to resolve authored lines from the way
+   * a persona resolves from tc-town's character store: they exist nowhere
+   * except right here, authored against this one placement. That also means
+   * a peer who later adopts this placement (publishing an id IS the claim —
+   * see ObjectRegistry) inherits working dialogue instead of a mute NPC.
+   *
+   * Normalization mirrors what the wire decoder (src/net/protocol.ts) applies
+   * to a peer's own edit, so the local path and the wire path always agree on
+   * what a given input settles to: each line is trimmed, empties are dropped,
+   * each survivor is capped to NPC_LIMITS.maxLineChars, and the array is
+   * capped to NPC_LIMITS.maxLines.
+   *
+   * Fields that carry no information are stored ABSENT rather than at their
+   * default value — the same "absent means the default" contract voiceName/
+   * approachRange already use — so an untouched placement stays byte-identical
+   * to what an older peer already publishes and MSG_OBJECTS stays small:
+   * `mode: 'ai'` is dropped (absent already means 'ai'), an empty line array
+   * is dropped (absent already means silent in 'lines' mode), and
+   * `lineOrder: 'sequence'` is dropped (absent already means 'sequence').
+   */
+  const setNpcDialogue = useCallback(
+    (id: string, dialogue: { mode: NpcMode; lines: string[]; lineOrder: NpcLineOrder }) => {
+      if (worldPolicyRef.current === 'locked') return
+      if (!objects.current.editableIds(worldPolicyRef.current).includes(id)) return
+      const current = worldRef.current?.listPlacedObjects().find((o) => o.id === id)
+      if (!current?.npc) return
+      const lines = dialogue.lines
+        .map((line) => line.trim().slice(0, NPC_LIMITS.maxLineChars))
+        .filter((line) => line.length > 0)
+        .slice(0, NPC_LIMITS.maxLines)
+      const npc = { ...current.npc }
+      if (dialogue.mode === 'ai') delete npc.mode
+      else npc.mode = dialogue.mode
+      if (lines.length === 0) delete npc.lines
+      else npc.lines = lines
+      if (dialogue.lineOrder === 'sequence') delete npc.lineOrder
+      else npc.lineOrder = dialogue.lineOrder
+      if (
+        npc.mode === current.npc.mode &&
+        npc.lineOrder === current.npc.lineOrder &&
+        (npc.lines ?? []).length === (current.npc.lines ?? []).length &&
+        (npc.lines ?? []).every((line, i) => line === (current.npc?.lines ?? [])[i])
+      ) {
+        return
+      }
+      const next: PlacedObject = { ...current, npc }
       commitOwnObjects(objects.current.claim(next))
       reconcileObjects()
       if (selectedObjectRef.current?.id === id) setSelectedObject(next)
@@ -3121,6 +3322,7 @@ export function useSession(): SessionApi {
     setNpcRadius,
     setNpcVoice,
     setNpcApproachRange,
+    setNpcDialogue,
     setObjectVolume,
     setObjectAudibleRange,
     setObjectFalloffStart,

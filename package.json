@@ -23,12 +23,15 @@
     "test:e2e:netload": "node scripts/e2e-netload.mjs",
     "test:e2e:npc": "node scripts/e2e-npc.mjs",
     "test:e2e:npc-edit": "node scripts/e2e-npc-edit.mjs",
+    "test:e2e:npc-lines": "node scripts/e2e-npc-lines.mjs",
     "test:e2e:ai-network-join": "node scripts/e2e-ai-network-join.mjs",
     "test:e2e:vault": "node scripts/e2e-vault.mjs",
     "test:e2e:resume": "node scripts/e2e-resume.mjs",
     "test:e2e:bubble": "node scripts/e2e-bubble.mjs",
     "test:e2e:crouch": "node scripts/e2e-crouch.mjs",
-    "spike:voice": "node scripts/spike-voice-network.mjs"
+    "spike:voice": "node scripts/spike-voice-network.mjs",
+    "test:e2e:tcspace": "node scripts/e2e-tcspace.mjs",
+    "test:e2e:drop-multi": "node scripts/e2e-drop-multi.mjs"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",

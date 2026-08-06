@@ -6,6 +6,9 @@
 import type {
   BoxAppearance,
   ChatMessage,
+  NpcLineOrder,
+  NpcMode,
+  PlacedKind,
   PlacedObject,
   PlayerProfile,
   Skybox,
@@ -67,6 +70,15 @@ export type CatalogItem = {
   origin?: 'foreign'
   /** Provenance for a foreign item — who actually authored it. Mirrors shared/types.ts. */
   source?: { characterId?: string; name?: string; vrmChecksum?: string }
+  /** What a placeable catalog item actually is. Absent for avatars/worlds, and
+   *  on entries saved before media support existed. Mirrors shared/types.ts. */
+  asset?: PlacedKind
+  /** Byte length recorded at save time. Absent on entries saved before this
+   *  field existed. Mirrors shared/types.ts. */
+  size?: number
+  /** When this device saved the item (epoch ms). Absent on entries saved
+   *  before this field existed. Mirrors shared/types.ts. */
+  addedAt?: number
 }
 
 export type GameOverlayProps = {
@@ -161,7 +173,23 @@ export type GameOverlayProps = {
   objectError: ObjectUploadError | null
   /** Resolves the saved item's cid (or null on failure) — see onUploadWorld's identical doc for why. */
   onUploadObject: (file: File) => Promise<string | null>
-  onPlaceObject: (cid: string) => void
+  /**
+   * `batchIndex` exists for a multi-file drop: the drop overlay calls this
+   * once per file, and without it every object after the first would land on
+   * exactly the same spot (useSession's placeObject always drops at the
+   * placer's feet). Passing 0 for the first file, 1 for the second, and so on
+   * fans the rest out sideways from that same spot. Omitting it entirely — as
+   * every catalog panel's single "Place" button does — is exactly today's
+   * one-object behaviour; see placeObject's own doc for what the fan-out
+   * actually does.
+   *
+   * Resolves once the placement has actually landed (uploaded bytes read,
+   * object built, own set republished) — the drop overlay's batch loop
+   * awaits it, which is what keeps a multi-file drop strictly sequential
+   * instead of firing N placements at a data channel every peer's world
+   * sync shares.
+   */
+  onPlaceObject: (cid: string, batchIndex?: number) => Promise<void>
   /**
    * Places a default 1m box primitive in front of the local player (task
    * #24) — build-mode's answer to onPlaceObject, but there is no catalog
@@ -213,6 +241,14 @@ export type GameOverlayProps = {
    * able to reach exactly that state rather than only ever picking a number.
    */
   onSetNpcApproachRange: (id: string, range: number | undefined) => void
+  /**
+   * Edits an NPC placement's mode/lines/lineOrder (R8's fixed-lines dialogue),
+   * same gating as onSetNpcRadius. Only meaningful when `selectedObject.npc`
+   * is set; the dialogue UI is the only caller. See useSession.setNpcDialogue's
+   * own doc for the normalization applied and why `lines` rides the wire on
+   * the placement itself while the persona never does.
+   */
+  onSetNpcDialogue: (id: string, dialogue: { mode: NpcMode; lines: string[]; lineOrder: NpcLineOrder }) => void
   /**
    * Edits an 'audio'/'video' placement's own playback volume multiplier, in
    * world (R7 follow-up to the NPC radius/voice controls above — same

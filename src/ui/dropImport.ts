@@ -201,3 +201,78 @@ export function allowedDropActions(route: DropImportRoute, policy: WorldEditPoli
   const addToWorld = route.worldVerb === 'equip' ? true : !locked
   return { addToWorld, setAsWorldEnvironment: !locked, saveToCatalogOnly: true }
 }
+
+// --- Multi-file drop -------------------------------------------------------
+//
+// Everything above this line answers "what could ONE dropped file become".
+// The rest of this module answers the batch question a multi-file drop
+// raises on top of that: which files get routed at all (the cap), and which
+// of the overlay's two BATCH buttons (add-all / save-all) may run given the
+// mixed bag of per-file routes and the room's current policy. Per-file
+// verbs never change for being part of a batch — routeDroppedFile above is
+// still the only thing that decides what an individual file becomes; a
+// batch is just "do that, for each one, in order."
+
+/**
+ * Ceiling on how many files a single drop will route at once. Every placed
+ * asset gets republished into the shared content store and pulled P2P by
+ * every peer in the room (see scripts/e2e-netload.mjs's own measurements of
+ * asset size/count as the dominant network cost in this app) — a drag from
+ * a folder full of hundreds of textures must not silently queue hundreds of
+ * uploads just because the OS let you select them all at once. Anything
+ * beyond this many is dropped from the batch, and routeDroppedFiles reports
+ * how many so the overlay can say so out loud (never a silent truncation).
+ */
+export const MAX_DROP_FILES = 16
+
+/** One file from a multi-file drop, already routed exactly as routeDroppedFile would for it alone — a batch never changes what an individual file resolves to. */
+export type DroppedFileEntry = { file: File; route: DropImportRoute }
+
+export type RouteDroppedFilesResult = {
+  /** Capped at MAX_DROP_FILES, in the order the browser handed them over. */
+  items: DroppedFileEntry[]
+  /** How many trailing files beyond the cap were left out entirely (0 when the drop was within the cap). */
+  overflow: number
+}
+
+/**
+ * Routes every file from a single drop gesture, enforcing MAX_DROP_FILES.
+ * Deliberately takes a plain array rather than a FileList/DataTransfer —
+ * GameOverlay's window-level 'drop' listener is the only caller, and this
+ * keeps the DOM types out of this otherwise DOM-free module (same reasoning
+ * as routeDroppedFile only taking name/type, not a File).
+ */
+export function routeDroppedFiles(files: File[]): RouteDroppedFilesResult {
+  const capped = files.slice(0, MAX_DROP_FILES)
+  const overflow = Math.max(0, files.length - MAX_DROP_FILES)
+  return { items: capped.map((file) => ({ file, route: routeDroppedFile(file.name, file.type) })), overflow }
+}
+
+/** Which of the multi-file overlay's two batch buttons ("add all to world" / "save all to inventory only") currently have anything to do. */
+export type BatchDropActionAvailability = {
+  addAll: boolean
+  saveAllOnly: boolean
+}
+
+/**
+ * A batch button is enabled the moment AT LEAST ONE item in the batch would
+ * accept that action on its own (per allowedDropActions) — not "every item
+ * permits it". A drop of nine models and one locked-out world file should
+ * still let "add all to world" run for the nine; running the batch action
+ * itself (GameOverlay's dropAddAllToWorld/dropSaveAllToCatalogOnly) is what
+ * actually re-checks allowedDropActions per item and skips the ones that
+ * don't qualify, exactly the same "skip, don't block the rest" rule
+ * unrecognized files already get (see routeDroppedFile's module header).
+ * Unrecognized items simply never contribute true to either flag, since
+ * allowedDropActions already answers all-false for them.
+ */
+export function allowedBatchDropActions(routes: DropImportRoute[], policy: WorldEditPolicy): BatchDropActionAvailability {
+  let addAll = false
+  let saveAllOnly = false
+  for (const route of routes) {
+    const allowed = allowedDropActions(route, policy)
+    if (allowed.addToWorld) addAll = true
+    if (allowed.saveToCatalogOnly) saveAllOnly = true
+  }
+  return { addAll, saveAllOnly }
+}

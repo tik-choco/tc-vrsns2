@@ -270,6 +270,89 @@ describe('the "TC Space" shared-bus hook (interop/tcSpace.ts)', () => {
   })
 })
 
+describe('size/addedAt', () => {
+  it('addToCatalog records the byte length and a save timestamp, readable back from listCatalog', async () => {
+    const before = Date.now()
+    const item = await addToCatalog('object', 'A Prop', localUploadBytes(new Uint8Array([1, 2, 3, 4, 5])), { asset: 'model' })
+    const after = Date.now()
+
+    expect(item.size).toBe(5)
+    expect(item.addedAt).toBeGreaterThanOrEqual(before)
+    expect(item.addedAt).toBeLessThanOrEqual(after)
+
+    const listed = listCatalog('object')[0]
+    expect(listed.size).toBe(5)
+    expect(listed.addedAt).toBe(item.addedAt)
+  })
+
+  it('addForeignToCatalog records the byte length and this device\'s save timestamp too', async () => {
+    const before = Date.now()
+    const item = await addForeignToCatalog('avatar', 'Mira', 'town-cid-size-1', new Uint8Array([1, 2, 3]), { name: 'Mira' })
+    const after = Date.now()
+
+    expect(item.size).toBe(3)
+    expect(item.addedAt).toBeGreaterThanOrEqual(before)
+    expect(item.addedAt).toBeLessThanOrEqual(after)
+    expect(listCatalog('avatar')[0]).toMatchObject({ size: 3 })
+  })
+
+  it('a pre-existing entry saved before these fields existed reads back with them undefined (back-compat)', () => {
+    storage.raw.set(
+      'tc-vrsns2:catalog:avatars-v1',
+      JSON.stringify([{ cid: 'legacy-no-size', name: 'Old' }]),
+    )
+
+    const items = listCatalog('avatar')
+    expect(items).toHaveLength(1)
+    expect(items[0].size).toBeUndefined()
+    expect(items[0].addedAt).toBeUndefined()
+  })
+
+  it('drops an invalid size (negative, string, NaN, fractional) without discarding the entry', () => {
+    storage.raw.set(
+      'tc-vrsns2:catalog:avatars-v1',
+      JSON.stringify([
+        { cid: 'bad-size-negative', name: 'A', size: -1 },
+        { cid: 'bad-size-string', name: 'B', size: '5' },
+        { cid: 'bad-size-nan', name: 'C', size: Number.NaN },
+        { cid: 'bad-size-fraction', name: 'D', size: 5.5 },
+      ]),
+    )
+
+    const items = listCatalog('avatar')
+    expect(items).toHaveLength(4)
+    for (const item of items) {
+      expect(item.size).toBeUndefined()
+    }
+  })
+
+  it('drops an invalid addedAt without discarding the entry', () => {
+    storage.raw.set(
+      'tc-vrsns2:catalog:avatars-v1',
+      JSON.stringify([
+        { cid: 'bad-added-negative', name: 'A', addedAt: -1 },
+        { cid: 'bad-added-string', name: 'B', addedAt: '123' },
+      ]),
+    )
+
+    const items = listCatalog('avatar')
+    expect(items).toHaveLength(2)
+    for (const item of items) {
+      expect(item.addedAt).toBeUndefined()
+    }
+  })
+
+  it('keeps a valid size/addedAt pair as-is', () => {
+    storage.raw.set(
+      'tc-vrsns2:catalog:avatars-v1',
+      JSON.stringify([{ cid: 'good-size', name: 'Good', size: 1024, addedAt: 1700000000000 }]),
+    )
+
+    const items = listCatalog('avatar')
+    expect(items[0]).toMatchObject({ size: 1024, addedAt: 1700000000000 })
+  })
+})
+
 describe('sanitize', () => {
   it('drops a hostile origin value without discarding the rest of the list', () => {
     storage.raw.set(

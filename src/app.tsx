@@ -180,7 +180,7 @@ export function App() {
           objectBusy={session.objectBusy}
           objectError={session.objectError}
           onUploadObject={session.uploadObject}
-          onPlaceObject={(cid) => void session.placeObject(cid)}
+          onPlaceObject={session.placeObject}
           onPlaceBox={session.placeBox}
           onClearObjects={session.clearObjects}
           editMode={session.editMode}
@@ -196,6 +196,7 @@ export function App() {
           onSetNpcRadius={session.setNpcRadius}
           onSetNpcVoice={session.setNpcVoice}
           onSetNpcApproachRange={session.setNpcApproachRange}
+          onSetNpcDialogue={session.setNpcDialogue}
           onSetObjectVolume={session.setObjectVolume}
           onSetObjectAudibleRange={session.setObjectAudibleRange}
           onSetObjectFalloffStart={session.setObjectFalloffStart}

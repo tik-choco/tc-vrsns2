@@ -13,6 +13,9 @@ import { NPC_LIMITS } from './limits'
 // with the actual bubble/lipsync duration every OTHER peer's NpcView shows
 // for the exact same line (see showSpeech's doc in NpcView.ts).
 import { bubbleDwellMs } from '../world/npcPresence'
+// Carried straight through onto NpcPlacement below — see that field's doc for
+// why 'lines' rides the wire when the AI path's persona deliberately never does.
+import type { NpcLineOrder, NpcMode } from '../shared/types'
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -26,10 +29,29 @@ export type NpcPlacement = {
   x: number
   y: number
   z: number
+  /**
+   * Which brain answers for this placement, carried straight through from
+   * NpcBinding.mode. Absent means 'ai' — every placement from before this
+   * field existed keeps behaving exactly as it always did.
+   */
+  mode?: NpcMode
+  /**
+   * Pre-authored lines for 'lines' mode, carried straight through from
+   * NpcBinding.lines. Unlike the persona (see NpcDeps.loadPersona's doc —
+   * resolved locally from this peer's own tc-town roster and deliberately
+   * never sent over the wire) these DO travel on the placement: there is no
+   * shared roster to resolve authored lines from, only this one placement,
+   * and ObjectRegistry's "publishing an id IS the claim" means a peer who
+   * later inherits this object must inherit a working NPC, not a silently
+   * mute one with nothing to say.
+   */
+  lines?: string[]
+  /** How `lines` is walked. Absent means 'sequence'. */
+  lineOrder?: NpcLineOrder
 }
 
 export type NpcDeps = {
-  /** Resolves a tc-town persona prompt. Null = unknown character -> NPC stays silent. */
+  /** Resolves a tc-town persona prompt. Null = unknown character -> NPC stays silent. Never called for a placement in 'lines' mode (see NpcPlacement.mode) — that mode has no persona to resolve, by design. */
   loadPersona: (characterId: string) => Promise<string | null>
   /** Runs the LLM. Throws on "not configured" — treat as silent, do not spam. */
   chat: (messages: ChatMessage[]) => Promise<string>
@@ -58,6 +80,20 @@ type NpcState = {
    * approach-movement doc for where this is consumed).
    */
   heldUntil: number
+  /**
+   * 'lines' mode only: index of the line most recently spoken, or -1 before
+   * this NPC has ever spoken one. 'sequence' walks forward from here
+   * (wrapping); 'random' uses it only to avoid repeating the same line
+   * twice in a row. Unused in 'ai' mode.
+   */
+  lineCursor: number
+  /**
+   * Fingerprint of placement.lines at the point lineCursor was last reset,
+   * so setPlacements() can tell "the author edited the list" (cursor is now
+   * pointing at a possibly different line — restart it) apart from "just a
+   * position/radius edit" (cursor still means the same thing — leave it).
+   */
+  linesKey: string
 }
 
 const STAGE_DIRECTION =
@@ -98,6 +134,51 @@ function sanitizeReply(raw: string): string {
   return text
 }
 
+/**
+ * 'lines' mode's counterpart to sanitizeReply() above — deliberately a
+ * separate, much smaller function rather than a shared code path.
+ * sanitizeReply's quote-stripping and leading "Name:" echo strip exist to
+ * clean up an LLM's habit of wrapping or self-attributing its own output;
+ * neither has any business touching text an author typed on purpose. Run
+ * sanitizeReply on an authored line and a fully-quoted line like `"over
+ * here!"` or one that legitimately starts `Bob: over here!` would come out
+ * mangled or truncated. So this only does the part that's never wrong for
+ * authored text: trim, collapse incidental whitespace, and cap at the same
+ * hard limit already enforced at edit time and in the decoder.
+ */
+function sanitizeAuthoredLine(raw: string): string {
+  let text = raw.trim().replace(/\s+/g, ' ').trim()
+  if (text.length > NPC_LIMITS.maxLineChars) text = text.slice(0, NPC_LIMITS.maxLineChars)
+  return text
+}
+
+/** Fingerprint of a placement's authored lines, used only to detect "the author edited the list" in setPlacements() (see NpcState.linesKey's doc) — not a hash for any security purpose. */
+function fingerprintLines(lines: string[] | undefined): string {
+  return JSON.stringify(lines ?? [])
+}
+
+/**
+ * Two brains live behind one runtime. 'ai' (the original R5 behaviour) asks
+ * the character's LLM, using a persona resolved from this peer's own
+ * same-origin tc-town roster — see the module header above for why that
+ * resolution, and everything downstream of it, never crosses the network.
+ * 'lines' (R8) instead walks a fixed list the author typed in
+ * NpcPlacement.lines, needs no AI settings and no tc-town persona at all,
+ * and — unlike the persona — DOES travel on the placement (see
+ * NpcPlacement.lines' doc for why: there is no shared roster to resolve
+ * authored lines from, only this one placement, and "publishing an id IS
+ * the claim" means whoever inherits it later must inherit a working NPC).
+ *
+ * Both trigger paths (heard()'s chat-line trigger and the greet trigger
+ * shared by observe()/arrived()) route through the same attemptReply(),
+ * which branches on NpcPlacement.mode right after the shared busy/cooldown
+ * gate — a 'lines' NPC is not a licence to spam the say channel just
+ * because it skips the network round trip. And because both paths set
+ * busy/heldUntil identically on success, isHeld() means the same thing in
+ * either mode: the R7 approach-walk gates on it without caring which brain
+ * is behind the NPC, so it never starts walking a 'lines' NPC away
+ * mid-sentence either.
+ */
 export class NpcRuntime {
   private readonly npcs = new Map<string, NpcState>()
   /** characterId -> in-flight/settled persona lookup, so NPCs sharing a characterId (or repeated heard()/observe() calls before setPlacements refreshes) never re-issue loadPersona. Kicked off eagerly in setPlacements rather than lazily on first heard() so the very first line spoken near a freshly-placed NPC isn't penalized by an extra round trip. */
@@ -126,6 +207,16 @@ export class NpcRuntime {
     for (const placement of placements) {
       const existing = this.npcs.get(placement.objectId)
       if (existing) {
+        // A mere position/radius edit (or any other field) must leave the
+        // cursor alone — it still means the same thing. Only an actual
+        // change to the authored list itself invalidates it (see
+        // NpcState.linesKey's doc): the index it was pointing at may now
+        // name a different line, or no longer exist at all.
+        const linesKey = fingerprintLines(placement.lines)
+        if (linesKey !== existing.linesKey) {
+          existing.linesKey = linesKey
+          existing.lineCursor = -1
+        }
         existing.placement = placement
       } else {
         this.npcs.set(placement.objectId, {
@@ -135,9 +226,15 @@ export class NpcRuntime {
           busy: false,
           lastFailureLogAt: -Infinity,
           heldUntil: -Infinity,
+          lineCursor: -1,
+          linesKey: fingerprintLines(placement.lines),
         })
       }
-      this.getPersonaPromise(placement.characterId)
+      // 'lines' mode never needs a persona at all — see NpcDeps.loadPersona's
+      // doc — so kicking this off here would be a wasted lookup (and would
+      // break the "loadPersona is never called in lines mode" contract the
+      // whole feature rests on).
+      if (placement.mode !== 'lines') this.getPersonaPromise(placement.characterId)
     }
   }
 
@@ -281,6 +378,24 @@ export class NpcRuntime {
     if (npc.busy) return
     const startedAt = this.deps.now()
     if (startedAt - npc.lastReplyAt < NPC_LIMITS.cooldownMs) return
+
+    if (npc.placement.mode === 'lines') {
+      // Same busy/cooldown gates as the AI path below — already checked
+      // above, before this branch — but nothing from here on ever awaits:
+      // picking and sanitizing an authored line is synchronous. busy is
+      // still set for the (brief, synchronous) duration of the call so the
+      // top-of-function guard covers the same reentrancy case the AI path
+      // guards against, not because this path actually needs to survive a
+      // suspend point.
+      npc.busy = true
+      try {
+        this.speakLine(npc, speaker)
+      } finally {
+        npc.busy = false
+      }
+      return
+    }
+
     npc.busy = true
     try {
       const persona = await this.getPersonaPromise(npc.placement.characterId)
@@ -315,6 +430,46 @@ export class NpcRuntime {
     } finally {
       npc.busy = false
     }
+  }
+
+  /**
+   * 'lines' mode's entire reply: pick the next authored line, sanitize it,
+   * and — iff that produced something — speak it exactly like the AI path
+   * does once IT has text (lastReplyAt / heldUntil / say / re-face). Empty
+   * or absent `lines` means stay silent and touch NO state: no cooldown
+   * burn, no cursor move. That silence is deliberate, not a fallback to the
+   * AI path — see NpcPlacement.lines' doc: "I turned AI off" must not be
+   * undone by "I haven't written anything yet". `history` is never touched
+   * here (unlike the AI path's pushHistory) — nothing in this mode ever
+   * feeds an LLM, so there is nothing to remember a turn for.
+   */
+  private speakLine(npc: NpcState, speaker: NpcSpeaker): void {
+    const lines = npc.placement.lines
+    if (!lines || lines.length === 0) return
+    const index = this.nextLineIndex(npc, lines)
+    const sanitized = sanitizeAuthoredLine(lines[index])
+    if (!sanitized) return
+    npc.lineCursor = index
+    npc.lastReplyAt = this.deps.now()
+    npc.heldUntil = npc.lastReplyAt + bubbleDwellMs(sanitized)
+    this.deps.say(npc.placement.objectId, sanitized)
+    this.faceSpeaker(npc, speaker)
+  }
+
+  /**
+   * 'sequence' walks forward from npc.lineCursor (starts at -1, so the very
+   * first call lands on index 0) and wraps at the end. 'random' picks a
+   * fresh index and, whenever there's more than one line to choose from,
+   * nudges away from an exact repeat of npc.lineCursor so the same line
+   * never plays twice back to back.
+   */
+  private nextLineIndex(npc: NpcState, lines: string[]): number {
+    if ((npc.placement.lineOrder ?? 'sequence') === 'random') {
+      if (lines.length <= 1) return 0
+      const index = Math.floor(Math.random() * lines.length)
+      return index === npc.lineCursor ? (index + 1) % lines.length : index
+    }
+    return (npc.lineCursor + 1) % lines.length
   }
 
   private buildMessages(

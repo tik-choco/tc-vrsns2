@@ -3,7 +3,12 @@
 // the DropImportRoute as a prop, so this file is the actual coverage for
 // "which prompt does a given dropped file get".
 import { describe, expect, it } from 'vitest'
-import { allowedDropActions, routeDroppedFile } from './dropImport'
+import { MAX_DROP_FILES, allowedBatchDropActions, allowedDropActions, routeDroppedFile, routeDroppedFiles } from './dropImport'
+
+/** A minimal fake sufficient for routeDroppedFiles, which only ever reads .name/.type off each entry — a real File needs a DOM the plain-Node vitest config here doesn't provide (see this file's own header). */
+function fakeFile(name: string, type = ''): File {
+  return { name, type } as File
+}
 
 describe('routeDroppedFile', () => {
   it('routes a .vrm to the avatar catalog, equip verb', () => {
@@ -177,6 +182,83 @@ describe('allowedDropActions', () => {
       addToWorld: true,
       setAsWorldEnvironment: false,
       saveToCatalogOnly: false,
+    })
+  })
+})
+
+describe('routeDroppedFiles', () => {
+  it('routes a single file exactly as routeDroppedFile would, with zero overflow', () => {
+    const result = routeDroppedFiles([fakeFile('prop.glb', 'model/gltf-binary')])
+    expect(result.overflow).toBe(0)
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].route).toEqual(routeDroppedFile('prop.glb', 'model/gltf-binary'))
+    expect(result.items[0].file.name).toBe('prop.glb')
+  })
+
+  it('routes a mixed batch of recognized and unrecognized files, each independently', () => {
+    const files = [fakeFile('prop.glb', 'model/gltf-binary'), fakeFile('notes.txt', 'text/plain'), fakeFile('character.vrm', '')]
+    const result = routeDroppedFiles(files)
+    expect(result.overflow).toBe(0)
+    expect(result.items.map((i) => i.route.recognized)).toEqual([true, false, true])
+  })
+
+  it('routes an all-unrecognized batch with every item flagged unrecognized and no overflow', () => {
+    const files = [fakeFile('archive.zip', 'application/zip'), fakeFile('notes.txt', 'text/plain')]
+    const result = routeDroppedFiles(files)
+    expect(result.overflow).toBe(0)
+    expect(result.items.every((i) => i.route.recognized === false)).toBe(true)
+  })
+
+  it('caps at MAX_DROP_FILES and reports the overflow count instead of silently truncating', () => {
+    const files = Array.from({ length: MAX_DROP_FILES + 5 }, (_, i) => fakeFile(`item${i}.png`, 'image/png'))
+    const result = routeDroppedFiles(files)
+    expect(result.items).toHaveLength(MAX_DROP_FILES)
+    expect(result.overflow).toBe(5)
+  })
+
+  it('does not overflow when the batch is exactly at the cap', () => {
+    const files = Array.from({ length: MAX_DROP_FILES }, (_, i) => fakeFile(`item${i}.png`, 'image/png'))
+    const result = routeDroppedFiles(files)
+    expect(result.items).toHaveLength(MAX_DROP_FILES)
+    expect(result.overflow).toBe(0)
+  })
+})
+
+describe('allowedBatchDropActions', () => {
+  const modelRoute = routeDroppedFile('prop.glb', 'model/gltf-binary')
+  const avatarRoute = routeDroppedFile('character.vrm', '')
+  const worldRoute = routeDroppedFile('scene.splat', '')
+  const unsupportedRoute = routeDroppedFile('mystery', '')
+
+  it('is all-false for an all-unrecognized batch', () => {
+    expect(allowedBatchDropActions([unsupportedRoute, unsupportedRoute], 'owner')).toEqual({
+      addAll: false,
+      saveAllOnly: false,
+    })
+  })
+
+  it('enables a button when at least one item permits it, even if others do not', () => {
+    // Under 'locked', the world file's addToWorld is blocked but the avatar's
+    // is always allowed (equip never touches anything shared) — addAll must
+    // still come back true so the avatar can go through; only items that
+    // individually qualify actually run (GameOverlay's own per-item check).
+    expect(allowedBatchDropActions([worldRoute, avatarRoute], 'locked')).toEqual({
+      addAll: true,
+      saveAllOnly: true,
+    })
+  })
+
+  it('is all-false when nothing in the batch qualifies (locked, all world-mutating)', () => {
+    expect(allowedBatchDropActions([modelRoute, worldRoute], 'locked')).toEqual({
+      addAll: false,
+      saveAllOnly: true, // save-to-catalog-only is never gated by policy
+    })
+  })
+
+  it('is all-true under an unlocked policy with a fully recognized batch', () => {
+    expect(allowedBatchDropActions([modelRoute, avatarRoute, worldRoute], 'owner')).toEqual({
+      addAll: true,
+      saveAllOnly: true,
     })
   })
 })

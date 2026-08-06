@@ -1487,6 +1487,181 @@ body {
    the interaction model is unchanged, only the card's visual anatomy is
    upgraded to gallery quality. */
 
+/* Toolbar (search / sort / view toggle / kind filter) — brings the catalog
+   up to tc-storage's file-browser level (see tc-storage/src/styles/
+   browser.css's .sort-control/.sort-menu/.search-box for the interaction
+   shape this borrows), but re-skinned in this file's glass-HUD language:
+   anything that floats above the grid (the sort menu) uses --glass-2 +
+   backdrop-filter rather than tc-storage's opaque --surface, since this UI
+   sits over a live 3D scene, not a page. Only rendered once there are
+   enough items to be worth searching/sorting — CatalogPanel gates it on
+   shouldShowToolbar() from catalogView.ts. */
+.catalog-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-block-end: var(--sp-3);
+}
+.catalog-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+}
+.catalog-search .input {
+  /* Room on both sides: the magnifier sits at the start, the clear button
+     (only rendered once there's a query) at the end. Plain .input padding
+     would let typed text run under either. */
+  padding-inline-start: 2.1rem;
+  padding-inline-end: 2.1rem;
+}
+.catalog-search-icon {
+  position: absolute;
+  inset-inline-start: 0.7rem;
+  display: inline-flex;
+  color: var(--text-faint);
+  /* Decorative — clicks must reach the input underneath it. */
+  pointer-events: none;
+}
+.catalog-search-clear {
+  position: absolute;
+  inset-inline-end: 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.6rem;
+  block-size: 1.6rem;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.catalog-search-clear:hover {
+  background: var(--fill-2);
+  color: var(--text);
+}
+
+.catalog-sort {
+  position: relative;
+  flex: none;
+}
+.catalog-sort-trigger {
+  /* Same look as .btn.btn-ghost, but kept as its own class (rather than
+     requiring both classes on the element) so this file is the single
+     source of truth for its appearance. */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.catalog-sort-trigger:hover {
+  background: var(--fill-2);
+}
+.catalog-sort-menu {
+  position: absolute;
+  z-index: 5;
+  inset-block-start: calc(100% + 0.35rem);
+  inset-inline-end: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-inline-size: 11rem;
+  padding: 0.3rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--glass-2);
+  backdrop-filter: blur(var(--blur));
+  box-shadow: var(--shadow-2);
+}
+.catalog-sort-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 0.4rem 0.55rem;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.catalog-sort-menu button:hover {
+  background: var(--fill-2);
+}
+.catalog-sort-menu button.is-active {
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+
+.catalog-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  /* A flex item at full inline-size forces itself onto its own line inside
+     .catalog-toolbar's wrapping row — the chip row reads as a second row
+     under search/sort/view without needing a separate wrapper element. */
+  inline-size: 100%;
+}
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--fill-1);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.cat-chip:hover {
+  border-color: var(--border-strong);
+}
+.cat-chip.is-active {
+  border-color: var(--accent-line);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+.cat-chip-count {
+  color: var(--text-faint);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.cat-chip.is-active .cat-chip-count {
+  /* Inherit the chip's own accent text color once active instead of
+     staying --text-faint, which would read as disabled against the tint. */
+  color: inherit;
+}
+
+.catalog-count {
+  margin-inline-start: auto;
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
 .catalog {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
@@ -1626,6 +1801,34 @@ body {
   box-shadow: var(--shadow-1);
 }
 
+/* Type badge, opposite corner from .cat-badge (start side, so it never
+   collides with the "currently placed" checkmark on the end side). Sits on
+   top of an arbitrary thumbnail image, which can be any color — a raw
+   translucent rgba() wouldn't reliably read, so this leans on --glass-2 (a
+   near-opaque token already tuned for both themes) plus a blur to knock
+   back whatever busy image is underneath it. */
+.cat-kind {
+  position: absolute;
+  inset-block-start: 0.4rem;
+  inset-inline-start: 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  border-radius: var(--r-pill);
+  background: var(--glass-2);
+  backdrop-filter: blur(var(--blur));
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+.cat-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-faint);
+  font-size: 0.66rem;
+}
+
 .catalog-preview {
   display: flex;
   flex-direction: column;
@@ -1657,6 +1860,30 @@ body {
   text-align: center;
   overflow-wrap: anywhere;
 }
+/* Definition list of item metadata (type / size / added / content ID) below
+   the name in the detail pane. Two-column grid rather than stacked rows so
+   labels line up — dd values are free to wrap (overflow-wrap: anywhere)
+   since a content ID or long filename shouldn't be able to push the pane
+   wider than the grid column that owns it. */
+.preview-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  row-gap: 0.35rem;
+  column-gap: var(--sp-3);
+  margin: 0;
+  font-size: 0.74rem;
+}
+.preview-meta dt {
+  color: var(--text-faint);
+}
+.preview-meta dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.preview-meta dd.is-mono {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
 .preview-empty {
   display: flex;
   flex-direction: column;
@@ -1685,6 +1912,145 @@ body {
   margin-block-start: auto;
   padding-block-start: var(--sp-3);
   border-block-start: 1px solid var(--border);
+}
+
+/* List view — the density-first alternative to .catalog-grid's tiles, for
+   when a name/size/date matters more than a thumbnail. Shares the grid's
+   scroll box sizing (max-block-size/overflow-y) so switching .seg views
+   doesn't reflow the panel around it. */
+.catalog-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-block-size: 24rem;
+  overflow-y: auto;
+  padding-inline-end: 0.25rem;
+  scrollbar-width: thin;
+}
+.cat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  inline-size: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.cat-row:hover {
+  border-color: var(--border);
+  background: var(--fill-1);
+}
+.cat-row.is-selected {
+  border-color: var(--accent-line);
+  background: var(--accent-tint);
+}
+.cat-row.is-current {
+  border-color: var(--success);
+}
+.cat-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cat-row-thumb {
+  flex: none;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--fill-2);
+}
+.cat-row-thumb.is-blank {
+  /* Same letter-tile treatment as .cat-thumb-blank, scaled down to row
+     height — kept as its own rule rather than sharing that class since the
+     font-size needs to shrink to fit 2.25rem instead of a 16:9 tile. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--accent-strong);
+  background: linear-gradient(135deg, var(--accent-tint-strong), var(--fill-2));
+}
+.cat-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+.cat-row-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-row-sub {
+  /* Holds the kind icon + kind label + .cat-format extension badge, and
+     (for R6 foreign imports) a second .cat-format-styled "imported" badge —
+     a row within the row, not a single text run, so it needs its own flex
+     context. min-inline-size: 0 lets it actually shrink/ellipsize inside
+     .cat-row-main's column instead of forcing the row wider. */
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 0.68rem;
+}
+.cat-row-sub .cat-format {
+  /* .cat-format's card form is meant to float at the top-start corner of a
+     card body (align-self: flex-start there); inline in a row it needs to
+     just center with its siblings, and at a size that doesn't dominate a
+     line that also carries an icon and label. */
+  align-self: center;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.6rem;
+}
+.cat-row-meta {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+.cat-row .cat-badge {
+  /* .cat-badge is positioned absolute for the card (floating over a
+     thumbnail); inside a .cat-row it's a normal flex child that comes
+     after .cat-row-meta, so it just needs to opt back into flow. */
+  position: static;
+  flex: none;
+}
+
+/* Empty state — either the catalog has nothing saved yet, or a search/kind
+   filter matched nothing. Same centered layout either way; CatalogPanel
+   picks the copy (catalog.empty vs. catalog.noMatches). */
+.catalog-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-block-size: 8rem;
+  padding: var(--sp-4);
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+}
+.catalog-empty-icon {
+  color: var(--text-faint);
+  opacity: 0.5;
 }
 
 /* --- Town characters (tc-town cross-app roster) ---------------------------- */
@@ -1967,6 +2333,25 @@ body {
   .catalog-grid {
     max-block-size: none;
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  }
+  .catalog-list {
+    max-block-size: none;
+  }
+  .catalog-search {
+    /* Forces search onto its own line in .catalog-toolbar's wrap — at this
+       width the trigger/seg/count cluster can't share a row with a
+       full-size search field without everything getting too cramped to
+       tap. */
+    flex-basis: 100%;
+  }
+  .cat-row-meta > *:nth-child(2) {
+    /* CatalogList renders size then added, and omits either when the entry
+       predates that field — so the date is the SECOND child, not merely the
+       last. Matching :last-child would hide the date on an entry that has no
+       recorded size, leaving the row with no metadata at all rather than the
+       one column that fits. Dropping the date is cheaper real-estate-wise
+       than the size, and still leaves the size visible. */
+    display: none;
   }
   .chat-panel,
   .chat-toasts {
@@ -2433,6 +2818,102 @@ body {
   font-size: 0.85rem;
   line-height: 1.6;
   color: var(--text-dim);
+}
+
+/* The edit bar's "Dialogue…" button (R8) — opens NpcLinesDialog. Same row
+   layout as the bar's other btn-icon-text-style buttons (icon, then label),
+   but the label itself carries a second, muted line underneath — the NPC's
+   current mode (and line count, in 'lines' mode) — visible at a glance
+   without opening the dialog to find out. The state line is a block inside
+   .btn-text-collapse, so it collapses away together with the label on a
+   narrow bar rather than needing its own separate collapse rule. */
+.edit-bar-npc-dialogue {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8rem;
+  text-align: start;
+}
+.edit-bar-npc-dialogue-state {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+/* --- NPC dialogue dialog (R8: fixed-lines authoring) ------------------------
+   Opened from the edit bar's Dialogue button (NpcLinesDialog.tsx). Reuses
+   .panel/.panel-note/.btn for its chrome, same as .behaviour-dialog above —
+   this section only adds the field layout: a mode select, an order select,
+   and the line-list textarea, each with its own help/hint text underneath. */
+.npc-lines-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.npc-lines-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.npc-lines-field-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.npc-lines-mode,
+.npc-lines-order {
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  max-inline-size: 20rem;
+}
+.npc-lines-help {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-faint);
+}
+.npc-lines-text {
+  resize: vertical;
+  min-block-size: 6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.npc-lines-text::placeholder {
+  color: var(--text-faint);
+}
+.npc-lines-text:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: var(--ring);
+}
+.npc-lines-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+.npc-lines-count {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.npc-lines-empty-warn {
+  margin: 0;
+}
+.npc-lines-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
 }
 
 /* --- Graph editor (R4: direct node-graph editing) --------------------------

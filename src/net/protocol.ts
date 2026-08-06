@@ -10,6 +10,8 @@ import type {
   AnimState,
   BoxAppearance,
   NpcBinding,
+  NpcLineOrder,
+  NpcMode,
   ObjectState,
   PlacedKind,
   PlacedObject,
@@ -277,6 +279,9 @@ const PLACED_KINDS: ReadonlySet<string> = new Set<PlacedKind>([
 ])
 
 const EDIT_POLICIES: ReadonlySet<string> = new Set<WorldEditPolicy>(['owner', 'everyone', 'locked'])
+
+const NPC_MODES: ReadonlySet<string> = new Set<NpcMode>(['ai', 'lines'])
+const NPC_LINE_ORDERS: ReadonlySet<string> = new Set<NpcLineOrder>(['sequence', 'random'])
 
 /** type/subtype, no parameters — peers never need to send a charset or codecs list. */
 const MIME_RE = /^[a-z]+\/[a-z0-9][a-z0-9.+-]*$/i
@@ -587,6 +592,36 @@ function parseBoxAppearance(raw: unknown): BoxAppearance | null {
  * defaulting to some distance, since unlike hearing radius there is no
  * sensible "every NPC always approaches this far" default — approach is an
  * opt-in behaviour, not something every placement has always done.
+ *
+ * `mode` (R8) follows the same set-based idiom as PLACED_KINDS/EDIT_POLICIES
+ * above: anything other than the two literal strings NPC_MODES recognizes
+ * leaves the field absent, which NpcBinding's own doc defines as 'ai' — so a
+ * junk mode degrades to the original behaviour rather than killing the
+ * binding.
+ *
+ * `lines`/`lineOrder` (R8) are CLAMPED, not rejected, and that is a
+ * deliberate departure from this file's usual "malformed shape -> reject"
+ * split between field-level and all-or-nothing validation (see the SCOPE
+ * DISCIPLINE note further down for that split as applied to script graphs).
+ * The reason is what `lines` rides on: unlike `characterId`/the persona it
+ * indexes (which never crosses the wire at all — see NpcBinding's doc),
+ * these strings are authored directly into the placement and travel on
+ * MSG_OBJECTS, and MSG_OBJECTS is DELIVERY_RELIABLE and change-driven — every
+ * peer in the room receives it and re-broadcasts their own set on every
+ * edit. An unbounded `lines` from a hostile peer would therefore be a
+ * room-wide amplifier, not just a local memory cost. So each entry is kept
+ * only if it is a string, trimmed, dropped if it goes empty after trimming,
+ * and truncated to NPC_LIMITS.maxLineChars; the surviving array is then
+ * capped at NPC_LIMITS.maxLines entries. A non-array `lines` — or one that
+ * survives with nothing left in it — leaves the field ABSENT rather than an
+ * empty array, matching NpcBinding's own doc ("empty or absent... means the
+ * NPC stays silent"): there is no behavioural difference between the two on
+ * the read side, so the decoder does not manufacture a distinction the wire
+ * doesn't need. The cap itself (16 x 200 chars, ~3 KB worst case) is
+ * deliberately an order of magnitude under SCRIPT_LIMITS.maxGraphBytes,
+ * which the very same placement is already allowed to carry in `script` —
+ * fixed dialogue is meant to be far cheaper than a full script graph, not
+ * comparable to one.
  */
 function parseNpcBinding(raw: unknown): NpcBinding | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -611,6 +646,23 @@ function parseNpcBinding(raw: unknown): NpcBinding | null {
       NPC_LIMITS.maxApproachRange,
     )
     if (approachRange !== null) binding.approachRange = approachRange
+  }
+  if (typeof o.mode === 'string' && NPC_MODES.has(o.mode)) {
+    binding.mode = o.mode as NpcMode
+  }
+  if (Array.isArray(o.lines)) {
+    const lines: string[] = []
+    for (const rawLine of o.lines) {
+      if (typeof rawLine !== 'string') continue
+      const line = rawLine.trim().slice(0, NPC_LIMITS.maxLineChars)
+      if (!line) continue
+      lines.push(line)
+      if (lines.length >= NPC_LIMITS.maxLines) break
+    }
+    if (lines.length > 0) binding.lines = lines
+  }
+  if (typeof o.lineOrder === 'string' && NPC_LINE_ORDERS.has(o.lineOrder)) {
+    binding.lineOrder = o.lineOrder as NpcLineOrder
   }
   return binding
 }

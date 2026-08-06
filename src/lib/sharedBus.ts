@@ -38,7 +38,10 @@ export type SharedAppName =
   | "tc-town"
   | "tc-travel"
   | "tc-vrm-viewer"
-  | "tc-vrsns2";
+  | "tc-vrsns2"
+  | "tc-books"
+  | "tc-lingo"
+  | "tc-presenter";
 
 /** This vendored copy's app name, used as `SharedRecord.from`/`SharedBusMessage.from`.
  * Substituted per app by protocol/scripts/sync-vendored.mjs — do not edit by hand. */

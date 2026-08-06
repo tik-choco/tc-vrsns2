@@ -24,10 +24,18 @@ import { editableObjectCount, type GameOverlayProps } from './uiContract'
 import { BehaviourDialog } from './BehaviourDialog'
 import { ChatPanel } from './ChatPanel'
 import { DropImportOverlay } from './DropImportOverlay'
-import { allowedDropActions, routeDroppedFile, type DropImportRoute } from './dropImport'
+import {
+  allowedBatchDropActions,
+  allowedDropActions,
+  routeDroppedFile,
+  routeDroppedFiles,
+  type DropImportRoute,
+  type DroppedFileEntry,
+} from './dropImport'
 import { parseWorldManifest, type WorldManifest } from '../storage/worldManifest'
 import { EditToolbar } from './EditToolbar'
 import { GraphEditor } from './GraphEditor'
+import { NpcLinesDialog } from './NpcLinesDialog'
 import { MobileControls } from './MobileControls'
 import { ScriptWindowsHost } from './ScriptWindowsHost'
 import { AvatarPanel } from './panels/AvatarPanel'
@@ -107,6 +115,11 @@ export function GameOverlay(props: GameOverlayProps) {
   // Delete/Enter/V at the window-capture level so they can never reach the
   // handler below or the object being edited — see GraphEditor.tsx's header).
   const [graphEditorOpen, setGraphEditorOpen] = useState(false)
+  // R8's fixed-lines authoring dialog, opened from EditToolbar's new
+  // "Dialogue…" button on an NPC placement. Owned here for the identical
+  // reason describeOpen/graphEditorOpen are: it must gate world input and
+  // take over the same keys while it's up (see the keydown handler below).
+  const [npcDialogueOpen, setNpcDialogueOpen] = useState(false)
   // Drag-and-drop file import: dropImport.ts has already routed the file the
   // instant it landed (name/MIME only — see that module's header for why),
   // and this holds the result for confirmation rather than acting on it —
@@ -116,7 +129,27 @@ export function GameOverlay(props: GameOverlayProps) {
   // GameOverlay only mounts once joined, so there is no separate "must be
   // joined" gate to add here — only the world-lock check the listener itself
   // makes, mirroring every other world-affecting control in this file.
-  const [dropImport, setDropImport] = useState<{ file: File; route: DropImportRoute } | null>(null)
+  // Single-file shape is unchanged from before multi-file drop existed (task
+  // asked for): `{ file, route }`. A drop of two-or-more files instead takes
+  // the `{ batch: true, items, overflow }` shape — kept as a discriminated
+  // union rather than always using the batch shape with items.length === 1,
+  // because DropImportOverlay's single-file rendering (title, description
+  // sentence, three buttons including "set as world environment") must stay
+  // byte-for-byte what it already was; see dropImport.ts's routeDroppedFiles
+  // for the cap/per-file-routing this is built on.
+  const [dropImport, setDropImport] = useState<
+    | { file: File; route: DropImportRoute }
+    | { batch: true; items: DroppedFileEntry[]; overflow: number }
+    | null
+  >(null)
+  // Set only while a batch action (add-all / save-all) is running — see
+  // dropAddAllToWorld/dropSaveAllToCatalogOnly below for why this counts up
+  // one at a time rather than jumping straight to `total` (uploads run
+  // strictly sequentially, never in parallel, so every peer's shared world-
+  // sync channel never has to absorb more than one upload's worth of
+  // traffic at once — see this task's own brief on why parallel batch
+  // uploads are the thing being avoided here).
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
   const selected = props.selectedObject
   /** Is there anything to edit? Gates the HUD toggle and the E shortcut. */
   const canEdit = editableObjectCount(props) > 0
@@ -150,16 +183,25 @@ export function GameOverlay(props: GameOverlayProps) {
   describeOpenRef.current = describeOpen
   const graphEditorOpenRef = useRef(graphEditorOpen)
   graphEditorOpenRef.current = graphEditorOpen
+  const npcDialogueOpenRef = useRef(npcDialogueOpen)
+  npcDialogueOpenRef.current = npcDialogueOpen
   const dropImportRef = useRef(dropImport)
   dropImportRef.current = dropImport
 
-  // Neither dialog ever opens while not editing a selection; if either goes
-  // away out from under one (leaving edit mode, the selection being cleared)
-  // there is nothing left for it to apply to.
+  // None of these three dialogs ever opens while not editing a selection; if
+  // any goes away out from under one (leaving edit mode, the selection being
+  // cleared) there is nothing left for it to apply to. The npc dialogue
+  // dialog also closes if the selection is still there but lost its `.npc`
+  // (e.g. a script replaced the placement's kind out from under it) — same
+  // "nothing left to apply to" reasoning, just a narrower trigger than the
+  // other two.
   useEffect(() => {
     if (!props.editMode || !selected) {
       setDescribeOpen(false)
       setGraphEditorOpen(false)
+      setNpcDialogueOpen(false)
+    } else if (!selected.npc) {
+      setNpcDialogueOpen(false)
     }
   }, [props.editMode, selected])
 
@@ -210,6 +252,17 @@ export function GameOverlay(props: GameOverlayProps) {
         if (e.key === 'Escape') {
           e.preventDefault()
           setDescribeOpen(false)
+        }
+        return
+      }
+      // The npc dialogue dialog (R8) is modal over edit mode the same way
+      // the describe dialog above is: while it's open, Escape closes IT
+      // rather than falling through to "leave edit mode", and everything
+      // else is swallowed so it can't reach the object underneath.
+      if (npcDialogueOpenRef.current) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setNpcDialogueOpen(false)
         }
         return
       }
@@ -287,9 +340,15 @@ export function GameOverlay(props: GameOverlayProps) {
   // same setInputEnabled path as chat focus (also releases pointer lock).
   useEffect(() => {
     gateInputRef.current(
-      menuOpen || panel !== null || chatFocused || describeOpen || graphEditorOpen || dropImport !== null,
+      menuOpen ||
+        panel !== null ||
+        chatFocused ||
+        describeOpen ||
+        graphEditorOpen ||
+        npcDialogueOpen ||
+        dropImport !== null,
     )
-  }, [menuOpen, panel, chatFocused, describeOpen, graphEditorOpen, dropImport])
+  }, [menuOpen, panel, chatFocused, describeOpen, graphEditorOpen, npcDialogueOpen, dropImport])
 
   const openPanel = (id: PanelId) => {
     setPanel(id)
@@ -333,10 +392,22 @@ export function GameOverlay(props: GameOverlayProps) {
     }
     const onDrop = (e: DragEvent) => {
       if (isInputTarget(e.target)) return
-      const file = e.dataTransfer?.files?.[0]
-      if (!file) return // a dragged link or text selection, not a file — nothing to import
+      const files = e.dataTransfer?.files
+      if (!files || files.length === 0) return // a dragged link or text selection, not a file — nothing to import
       e.preventDefault()
-      setDropImport({ file, route: routeDroppedFile(file.name, file.type) })
+      // A single file keeps the exact single-file shape (and so the exact
+      // single-file overlay) it always has — routeDroppedFiles' cap/overflow
+      // machinery only matters once there is more than one file to weigh
+      // against MAX_DROP_FILES, so a lone drop skips straight to
+      // routeDroppedFile the same way it always did rather than routing
+      // through the batch path just to unwrap a one-item array again.
+      if (files.length === 1) {
+        const file = files[0]
+        setDropImport({ file, route: routeDroppedFile(file.name, file.type) })
+        return
+      }
+      const { items, overflow } = routeDroppedFiles(Array.from(files))
+      setDropImport({ batch: true, items, overflow })
     }
     window.addEventListener('dragover', onDragOver)
     window.addEventListener('drop', onDrop)
@@ -358,7 +429,7 @@ export function GameOverlay(props: GameOverlayProps) {
    * import flow" this task's brief calls for.
    */
   const dropAddToWorld = () => {
-    if (!dropImport || !dropImport.route.recognized) return
+    if (!dropImport || 'batch' in dropImport || !dropImport.route.recognized) return
     const { file, route } = dropImport
     setDropImport(null)
     if ('manifest' in route) {
@@ -388,7 +459,7 @@ export function GameOverlay(props: GameOverlayProps) {
 
   /** Only reachable for a route with `alsoValidAsWorld` (a bare glTF/GLB) — see DropImportOverlay's own gating on that flag. Uploads through the WORLD catalog rather than the object one, then applies it. */
   const dropSetAsWorldEnvironment = () => {
-    if (!dropImport) return
+    if (!dropImport || 'batch' in dropImport) return
     const { file } = dropImport
     setDropImport(null)
     void props.onUploadWorld(file).then((cid) => {
@@ -398,7 +469,7 @@ export function GameOverlay(props: GameOverlayProps) {
 
   /** Catalogs the file and stops there — no equip/apply/place. Never wired for a manifest route (DropImportOverlay never renders the button for one — see its own manifest branch), but guards anyway so this stays type-safe against DropImportRoute's manifest variant, which carries no catalogKind at all. */
   const dropSaveToCatalogOnly = () => {
-    if (!dropImport || !dropImport.route.recognized) return
+    if (!dropImport || 'batch' in dropImport || !dropImport.route.recognized) return
     const { file, route } = dropImport
     if ('manifest' in route) return
     setDropImport(null)
@@ -407,7 +478,119 @@ export function GameOverlay(props: GameOverlayProps) {
     else void props.onUploadObject(file)
   }
 
-  const closeDropImport = () => setDropImport(null)
+  /**
+   * "Add All to World": the batch counterpart of dropAddToWorld above. Every
+   * item still performs its OWN worldVerb (an avatar in the batch equips,
+   * a world-format file sets the environment, a model/media file places,
+   * a manifest imports) — a batch never changes what an individual file
+   * resolves to, it only sequences several of those single-file actions
+   * one after another (design constraint #6: uploads run strictly
+   * sequentially, awaiting each one before starting the next, so a big drop
+   * can't saturate the same data channel every peer's world sync shares —
+   * see scripts/e2e-netload.mjs for the congestion class this avoids
+   * re-introducing).
+   *
+   * Re-checks allowedDropActions per item rather than trusting the batch-
+   * level `allowed.addAll` the button itself was gated on — that flag only
+   * promises "at least one item qualifies" (dropImport.ts's
+   * allowedBatchDropActions), so an item the current policy blocks (e.g. a
+   * world file while locked, sitting next to an avatar in the same drop)
+   * is skipped here rather than attempted and silently failing downstream.
+   *
+   * placedIndex counts only items that actually reach onPlaceObject — "the
+   * item's index within the placed-object subset of the batch" per the
+   * onPlaceObject(cid, batchIndex) contract — so equips/environments/
+   * manifest-imports mixed into the same drop don't throw off the spacing
+   * placeObject's batch fan-out uses for the objects that DO get placed.
+   */
+  const dropAddAllToWorld = () => {
+    if (!dropImport || !('batch' in dropImport)) return
+    const { items } = dropImport
+    const policy = props.worldPolicy
+    const eligible = items.filter((item) => allowedDropActions(item.route, policy).addToWorld)
+    if (eligible.length === 0) {
+      setDropImport(null)
+      return
+    }
+    setBatchProgress({ done: 0, total: eligible.length })
+    void (async () => {
+      let placedIndex = 0
+      for (const item of eligible) {
+        const { file, route } = item
+        // allowedDropActions already answers addToWorld: false for an
+        // unrecognized route, so `eligible` can never actually contain one —
+        // same defensive, type-narrowing-only guard dropSaveAllToCatalogOnly
+        // takes below (and dropSaveToCatalogOnly's single-file version takes
+        // against the manifest variant).
+        if (!route.recognized) continue
+        if ('manifest' in route) {
+          const manifest = await readDroppedWorldManifest(file)
+          if (manifest) await props.onImportWorldManifest(manifest)
+          else console.debug('dropped world manifest failed to parse', file.name)
+        } else if (route.worldVerb === 'equip') {
+          props.onUploadAvatar(file)
+        } else if (route.worldVerb === 'setEnvironment') {
+          const cid = await props.onUploadWorld(file)
+          if (cid) props.onApplyWorld(cid)
+        } else {
+          const cid = await props.onUploadObject(file)
+          if (cid) {
+            await props.onPlaceObject(cid, placedIndex)
+            placedIndex += 1
+          }
+        }
+        // `prev ? … : prev` rather than an unconditional set: if the user
+        // dismissed the overlay mid-batch (closeDropImport already cleared
+        // this to null), the batch keeps running to completion in the
+        // background — same "once started, let it finish" tolerance
+        // dropAddToWorld's single-file path already has by never checking
+        // dropImport again after firing — but must not resurrect a progress
+        // readout nothing is displaying anymore.
+        setBatchProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : prev))
+      }
+      setBatchProgress(null)
+      setDropImport(null)
+    })()
+  }
+
+  /** Batch counterpart of dropSaveToCatalogOnly: catalogs every eligible item without equipping/placing/applying any of them, sequentially — same re-check-per-item and background-continues-after-dismiss reasoning as dropAddAllToWorld above. */
+  const dropSaveAllToCatalogOnly = () => {
+    if (!dropImport || !('batch' in dropImport)) return
+    const { items } = dropImport
+    const policy = props.worldPolicy
+    const eligible = items.filter((item) => allowedDropActions(item.route, policy).saveToCatalogOnly)
+    if (eligible.length === 0) {
+      setDropImport(null)
+      return
+    }
+    setBatchProgress({ done: 0, total: eligible.length })
+    void (async () => {
+      for (const item of eligible) {
+        const { file, route } = item
+        // allowedDropActions already answers saveToCatalogOnly: false for an
+        // unrecognized or manifest route, so `eligible` can never actually
+        // contain one — this guard only keeps TypeScript honest against
+        // DropImportRoute's full shape (same defensive stance
+        // dropSaveToCatalogOnly's single-file version takes).
+        if (!route.recognized || 'manifest' in route) continue
+        if (route.catalogKind === 'avatar') props.onUploadAvatarToCatalog(file)
+        else if (route.catalogKind === 'world') await props.onUploadWorld(file)
+        else await props.onUploadObject(file)
+        setBatchProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : prev))
+      }
+      setBatchProgress(null)
+      setDropImport(null)
+    })()
+  }
+
+  const closeDropImport = () => {
+    setDropImport(null)
+    // See dropAddAllToWorld's `prev ? … : prev` comment: clearing this to
+    // null on cancel doesn't stop an in-flight batch, it just stops a
+    // dismissed overlay's progress readout from reappearing once the
+    // background loop's next setBatchProgress call lands.
+    setBatchProgress(null)
+  }
 
   const micState = props.micState
   const voiceClass =
@@ -543,6 +726,7 @@ export function GameOverlay(props: GameOverlayProps) {
           scriptProblems={props.scriptProblems}
           onDescribeBehaviour={() => setDescribeOpen(true)}
           onEditGraph={() => setGraphEditorOpen(true)}
+          onEditNpcDialogue={() => setNpcDialogueOpen(true)}
         />
       )}
 
@@ -583,11 +767,44 @@ export function GameOverlay(props: GameOverlayProps) {
         />
       )}
 
-      {/* A file dropped anywhere on the app (window-level listener above),
-          held for confirmation before it becomes anything — see dropImport's
-          own state comment. */}
+      {/* R8: fixed-lines NPC dialogue authoring, from EditToolbar's
+          "Dialogue…" button. Only reachable when the selection still has an
+          npc binding (EditToolbar gates the button, and the effect above
+          closes this if it stops being true out from under it), so
+          `selected.npc` is always defined here. */}
+      {npcDialogueOpen && selected && selected.npc && (
+        <NpcLinesDialog
+          objectName={selected.name || t('objects.title')}
+          npc={selected.npc}
+          onApply={(dialogue) => {
+            props.onSetNpcDialogue(selected.id, dialogue)
+            setNpcDialogueOpen(false)
+          }}
+          onClose={() => setNpcDialogueOpen(false)}
+        />
+      )}
+
+      {/* A file (or several — see the batch shape's own comment on
+          dropImport's state) dropped anywhere on the app (window-level
+          listener above), held for confirmation before any of it becomes
+          anything — see dropImport's own state comment. */}
       {dropImport &&
-        (dropImport.route.recognized ? (
+        ('batch' in dropImport ? (
+          <DropImportOverlay
+            multi
+            items={dropImport.items}
+            overflow={dropImport.overflow}
+            busy={batchProgress !== null}
+            allowed={allowedBatchDropActions(
+              dropImport.items.map((item) => item.route),
+              props.worldPolicy,
+            )}
+            progress={batchProgress}
+            onAddAllToWorld={dropAddAllToWorld}
+            onSaveAllToCatalogOnly={dropSaveAllToCatalogOnly}
+            onCancel={closeDropImport}
+          />
+        ) : dropImport.route.recognized ? (
           <DropImportOverlay
             fileName={dropImport.file.name}
             route={dropImport.route}

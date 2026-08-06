@@ -11,6 +11,15 @@ export const NPC_LIMITS = {
   maxApproachRange: 30,
   /** Per-NPC minimum gap between replies. */
   cooldownMs: 3000,
+  /**
+   * Pre-authored lines a fixed-lines NPC may carry (NpcBinding.lines). Unlike
+   * the persona these travel on MSG_OBJECTS, so the cap is what keeps them
+   * affordable: 16 x 200 chars is ~3 KB worst case, well under the ~32 KB a
+   * script graph on the same placement is already allowed.
+   */
+  maxLines: 16,
+  /** Hard cap per authored line, applied at edit time AND in the decoder. */
+  maxLineChars: 200,
   /** Conversation turns (user+assistant pairs) kept per NPC. */
   maxHistoryTurns: 8,
   /** Hard cap on a reply before it reaches the say channel. */
