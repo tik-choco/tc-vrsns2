@@ -882,7 +882,7 @@ export function GameOverlay(props: GameOverlayProps) {
       {panel === 'characters' && <CharactersPanel {...props} onClose={closePanel} />}
       {panel === 'room' && <RoomPanel {...props} onClose={closePanel} />}
       {panel === 'discover' && <DiscoveryPanel {...props} onClose={closePanel} />}
-      {panel === 'ai' && <AiPanel onClose={closePanel} />}
+      <AiPanel active={panel === 'ai'} onClose={closePanel} />
       {panel === 'settings' && <SettingsPanel {...props} onClose={closePanel} />}
     </div>
   )

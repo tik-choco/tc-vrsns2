@@ -47,6 +47,7 @@ import {
   MSG_EVENT,
   MSG_INPUT,
   MSG_LOCK,
+  MSG_NPC_SPEECH,
   MSG_OBJ_STATE,
   MSG_OBJECTS,
   MSG_PROFILE,
@@ -63,6 +64,7 @@ import {
 // Type-only, so it stays a separate import (verbatimModuleSyntax) from the
 // MSG_EVENT/MSG_INPUT kind constants pulled from the same module above.
 import type { ScriptEffect } from './protocol'
+import type { NpcSpeechMessage } from './protocol'
 
 /** App prefix keeps our rooms from colliding with other mistlib apps. */
 const ROOM_PREFIX = 'tc-vrsns2/'
@@ -126,6 +128,8 @@ export class RoomSession {
    * from MSG_OBJECTS's replay and then simply starts receiving this too.
    */
   onObjectStates: ((fromId: string, states: ObjectState[]) => void) | null = null
+  /** A completed owner-synthesized NPC clip is ready in the shared content store. */
+  onNpcSpeech: ((fromId: string, speech: NpcSpeechMessage) => void) | null = null
 
   private readonly node: MistNode
   private profile: PlayerProfile
@@ -363,6 +367,12 @@ export class RoomSession {
     this.broadcast(encode({ kind: MSG_EVENT, effects }), DELIVERY_RELIABLE)
   }
 
+  /** Announces one completed, content-addressed NPC utterance room-wide. */
+  sendNpcSpeech(speech: NpcSpeechMessage): void {
+    if (this.closed) return
+    this.broadcast(encode({ kind: MSG_NPC_SPEECH, ...speech }), DELIVERY_RELIABLE)
+  }
+
   /**
    * Broadcasts one-shot script inputs our client detected this frame against
    * objects we do NOT own (trigger enter/exit, interact, ui — see ScriptInput
@@ -530,6 +540,7 @@ export class RoomSession {
     this.onScriptEffects = null
     this.onScriptInputs = null
     this.onObjectStates = null
+    this.onNpcSpeech = null
   }
 
   // --- inbound ---------------------------------------------------------------
@@ -646,6 +657,17 @@ export class RoomSession {
       case MSG_OBJ_STATE: {
         this.touchPeer(fromId)
         this.onObjectStates?.(fromId, msg.states)
+        break
+      }
+      case MSG_NPC_SPEECH: {
+        this.touchPeer(fromId)
+        this.onNpcSpeech?.(fromId, {
+          objectId: msg.objectId,
+          text: msg.text,
+          utteranceId: msg.utteranceId,
+          cid: msg.cid,
+          mime: msg.mime,
+        })
         break
       }
       case MSG_STATE_REQ: {

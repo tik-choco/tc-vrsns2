@@ -37,6 +37,23 @@ function makeDeps(overrides: Partial<NpcVoiceDeps> = {}) {
 }
 
 describe('distance gating', () => {
+  it('installs a shared clip without synthesizing another one', () => {
+    const { deps, synthesize, analyze } = makeDeps()
+    const voice = new NpcVoice(deps)
+    const shared = clip('s')
+    expect(voice.useSharedClip('npc-1', shared, 1)).toBe(true)
+    expect(synthesize).not.toHaveBeenCalled()
+    expect(analyze).toHaveBeenCalledWith(shared)
+    expect(voice.read('npc-1').seq).toBe(1)
+  })
+
+  it('does not install a shared clip beyond hearing distance', () => {
+    const { deps, analyze } = makeDeps()
+    const voice = new NpcVoice(deps)
+    expect(voice.useSharedClip('npc-1', clip(), NPC_LIMITS.ttsMaxDistance + 0.01)).toBe(false)
+    expect(analyze).not.toHaveBeenCalled()
+  })
+
   it('synthesizes when the listener is within ttsMaxDistance', async () => {
     const { deps, synthesize } = makeDeps()
     const voice = new NpcVoice(deps)

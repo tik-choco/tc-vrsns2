@@ -9,6 +9,7 @@ import {
   MSG_CHAT,
   MSG_EVENT,
   MSG_INPUT,
+  MSG_NPC_SPEECH,
   MSG_OBJ_STATE,
   MSG_PROFILE,
   MSG_STATE,
@@ -483,6 +484,22 @@ describe('script effects/inputs', () => {
     expect(frames.map((s) => s.kind)).toEqual([MSG_EVENT])
     expect(frames[0].delivery).toBe(0) // DELIVERY_RELIABLE
     expect(decode(frames[0].bytes)).toEqual({ kind: MSG_EVENT, effects: EFFECTS })
+  })
+
+  it('broadcasts and receives a completed NPC speech CID reliably', () => {
+    const speech = {
+      objectId: 'npc-1', text: 'hello', utteranceId: 'utterance-1',
+      cid: 'bafySpeech', mime: 'audio/mpeg',
+    }
+    session.sendNpcSpeech(speech)
+    const frames = sentTo(null)
+    expect(frames.at(-1)?.kind).toBe(MSG_NPC_SPEECH)
+    expect(decode(frames.at(-1)!.bytes)).toEqual({ kind: MSG_NPC_SPEECH, ...speech })
+
+    const received = vi.fn()
+    session.onNpcSpeech = received
+    fakeNode.eventHandler!(0, 'p1', encode({ kind: MSG_NPC_SPEECH, ...speech }))
+    expect(received).toHaveBeenCalledWith('p1', speech)
   })
 
   it('broadcasts script inputs reliably, room-wide, even though each names one owner', () => {

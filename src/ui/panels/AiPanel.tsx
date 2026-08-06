@@ -58,9 +58,9 @@ import {
 /** localStorage key mistai's provider hook resolves a bookkeeping nodeId from — same caveat as aiClient.ts's own key (unused for wire identity, see lib/mistaiNode.ts). Namespaced separately from aiClient's own so the two roles never fight over the same stored value. */
 const PROVIDER_NODE_ID_STORAGE_KEY = 'tc-vrsns2:mistai-provider-node-id'
 
-type Props = { onClose: () => void }
+type Props = { active: boolean; onClose: () => void }
 
-export function AiPanel({ onClose }: Props) {
+export function AiPanel({ active, onClose }: Props) {
   const { t, locale } = useTranslation()
   const [settings, setSettings] = useState<LlmProviderSettings>(loadLlmProviderSettings)
   const [shared, setShared] = useState<SharedLlmConfigV1>(() => loadLlmConfig() ?? emptyLlmConfig())
@@ -182,6 +182,11 @@ export function AiPanel({ onClose }: Props) {
     // same ttsConfigured flag keeps the advertisement honest.
     advertisedVoices: ttsConfigured ? ttsVoices : undefined,
   })
+
+  // Keep the hooks above mounted for the whole game session. In particular,
+  // a device sharing TTS must remain a provider after its settings panel is
+  // closed; `active` controls only the visible shell.
+  if (!active) return null
 
   return (
     <PanelShell title={t('ai.title')} onClose={onClose} wide>

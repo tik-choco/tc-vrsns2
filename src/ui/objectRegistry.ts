@@ -135,6 +135,11 @@ export class ObjectRegistry {
     return this.own().some((o) => o.id === id)
   }
 
+  /** True when the named live peer is the current publisher of this object. */
+  isOwnedBy(id: string, ownerId: string): boolean {
+    return this.owners.get(ownerId)?.some((o) => o.id === id) ?? false
+  }
+
   orphanCount(): number {
     return this.orphans.length
   }

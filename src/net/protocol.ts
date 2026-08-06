@@ -119,6 +119,20 @@ export const MSG_INPUT = 0x0a
  * into this stream, exactly like a player does for MSG_STATE.
  */
 export const MSG_OBJ_STATE = 0x0b
+/**
+ * A completed NPC utterance, synthesized once by the NPC owner and shared
+ * through mistlib's content store. The room message carries only the CID and
+ * playback metadata; peers fetch the same immutable audio bytes by CID.
+ */
+export const MSG_NPC_SPEECH = 0x0c
+
+export interface NpcSpeechMessage {
+  objectId: string
+  text: string
+  utteranceId: string
+  cid: string
+  mime: string
+}
 
 /** A room the announcer knows about, carried inside a MSG_ROOM_ANNOUNCE. */
 export interface RoomAnnounceEntry {
@@ -142,6 +156,8 @@ export type ScriptEffect =
       t: 'say'
       objectId: string
       text: string
+      /** Correlates this line with the completed shared audio. */
+      utteranceId?: string
       /**
        * Whether this line may cut off whatever the NPC is currently saying
        * (see NpcRuntime's say dep and NpcVoice.speak's preempt rule). Absent
@@ -168,6 +184,7 @@ export type NetMessage =
   | { kind: typeof MSG_EVENT; effects: ScriptEffect[] }
   | { kind: typeof MSG_INPUT; inputs: ScriptInput[] }
   | { kind: typeof MSG_OBJ_STATE; states: ObjectState[] }
+  | ({ kind: typeof MSG_NPC_SPEECH } & NpcSpeechMessage)
 
 // Defensive limits applied to peer-supplied data.
 export const POS_LIMIT = 1000
@@ -374,6 +391,9 @@ export function encode(msg: NetMessage): Uint8Array {
       break
     case MSG_OBJ_STATE:
       body = { states: msg.states }
+      break
+    case MSG_NPC_SPEECH:
+      body = { objectId: msg.objectId, text: msg.text, utteranceId: msg.utteranceId, cid: msg.cid, mime: msg.mime }
       break
   }
   const json = body === undefined ? new Uint8Array(0) : textEncoder.encode(JSON.stringify(body))
@@ -1207,8 +1227,16 @@ function parseScriptEffect(raw: unknown): ScriptEffect | null {
       const text = o.text.trim().slice(0, TEXT_MAX_LEN)
       // preempt only travels when false — absent means preempt (see the
       // field's doc), so a say from an old producer keeps its exact shape.
-      if (o.preempt === false) return { t: 'say', objectId: o.objectId, text, preempt: false }
-      return { t: 'say', objectId: o.objectId, text }
+      const effect: Extract<ScriptEffect, { t: 'say' }> = { t: 'say', objectId: o.objectId, text }
+      if (
+        typeof o.utteranceId === 'string' &&
+        o.utteranceId.length > 0 &&
+        o.utteranceId.length <= CID_MAX_LEN
+      ) {
+        effect.utteranceId = o.utteranceId
+      }
+      if (o.preempt === false) effect.preempt = false
+      return effect
     }
     case 'sound': {
       if (
@@ -1467,6 +1495,35 @@ export function decode(data: Uint8Array): NetMessage | null {
         if (state) states.push(state)
       }
       return { kind: MSG_OBJ_STATE, states }
+    }
+    case MSG_NPC_SPEECH: {
+      if (
+        typeof body.objectId !== 'string' ||
+        body.objectId.length === 0 ||
+        body.objectId.length > CID_MAX_LEN ||
+        typeof body.cid !== 'string' ||
+        body.cid.length === 0 ||
+        body.cid.length > CID_MAX_LEN ||
+        typeof body.text !== 'string' ||
+        typeof body.utteranceId !== 'string' ||
+        body.utteranceId.length === 0 ||
+        body.utteranceId.length > CID_MAX_LEN ||
+        typeof body.mime !== 'string' ||
+        !MIME_RE.test(body.mime) ||
+        body.mime.length > MIME_MAX_LEN
+      ) {
+        return null
+      }
+      const text = body.text.trim().slice(0, TEXT_MAX_LEN)
+      if (!text) return null
+      return {
+        kind: MSG_NPC_SPEECH,
+        objectId: body.objectId,
+        text,
+        utteranceId: body.utteranceId,
+        cid: body.cid,
+        mime: body.mime,
+      }
     }
     case MSG_ROOM_ANNOUNCE: {
       if (!Array.isArray(body.rooms)) return null

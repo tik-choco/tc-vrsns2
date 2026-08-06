@@ -20,6 +20,7 @@ import {
   MSG_EVENT,
   MSG_INPUT,
   MSG_LOCK,
+  MSG_NPC_SPEECH,
   MSG_OBJ_STATE,
   MSG_OBJECTS,
   MSG_PROFILE,
@@ -52,6 +53,29 @@ function frame(kind: number, body?: unknown): Uint8Array {
   out.set(json, 1)
   return out
 }
+
+describe('MSG_NPC_SPEECH', () => {
+  it('round-trips a content-addressed NPC clip announcement', () => {
+    const message = {
+      kind: MSG_NPC_SPEECH,
+      objectId: 'npc-1',
+      text: 'hello',
+      utteranceId: 'utterance-1',
+      cid: 'bafySpeech',
+      mime: 'audio/mpeg',
+    } as const
+    expect(decode(encode(message))).toEqual(message)
+  })
+
+  it('rejects malformed speech metadata', () => {
+    expect(decode(frame(MSG_NPC_SPEECH, {
+      objectId: 'npc-1', text: 'hello', utteranceId: '', cid: 'x', mime: 'audio/mpeg',
+    }))).toBeNull()
+    expect(decode(frame(MSG_NPC_SPEECH, {
+      objectId: 'npc-1', text: 'hello', utteranceId: 'u', cid: 'x', mime: 'not a mime',
+    }))).toBeNull()
+  })
+})
 
 describe('encode/decode round trip', () => {
   it('round-trips a state message', () => {

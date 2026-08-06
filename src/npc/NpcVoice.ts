@@ -157,6 +157,21 @@ export class NpcVoice {
     return clip
   }
 
+  /**
+   * Installs a clip synthesized by the NPC-owning peer. This is the receiver
+   * half of shared TTS: it performs no synthesis and therefore cannot create
+   * another API request, but uses the same analysis/lipsync state as speak().
+   */
+  useSharedClip(objectId: string, clip: TtsClip, distance: number): boolean {
+    this.abortInFlight(objectId)
+    this.stopPlayback(objectId)
+    if (distance > NPC_LIMITS.ttsMaxDistance || clip.bytes.byteLength === 0) return false
+    const state = this.stateFor(objectId)
+    state.generation += 1
+    state.source = this.deps.analyze(clip)
+    return true
+  }
+
   /** Reads objectId's current loudness. IDLE_LOUDNESS if it has never spoken; the frozen last reading (seq unchanged) once its utterance has stopped. */
   read(objectId: string): LoudnessReading {
     const state = this.npcs.get(objectId)
