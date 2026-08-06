@@ -1801,6 +1801,31 @@ body {
   box-shadow: var(--shadow-1);
 }
 
+.cat-placement-count {
+  display: inline-flex;
+  align-items: center;
+  inline-size: fit-content;
+  padding: 0.12rem 0.45rem;
+  border-radius: var(--r-pill);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cat-placement-count.is-card {
+  position: absolute;
+  inset-inline-end: 0.4rem;
+  inset-block-end: 0.4rem;
+  background: var(--glass-2);
+  backdrop-filter: blur(var(--blur));
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+.cat-placement-count.is-preview {
+  align-self: center;
+}
+
 /* Type badge, opposite corner from .cat-badge (start side, so it never
    collides with the "currently placed" checkmark on the end side). Sits on
    top of an arbitrary thumbnail image, which can be any color — a raw

@@ -206,6 +206,7 @@ export const ja: Dict = {
   'objects.clear': 'すべて削除',
   'objects.selectPrompt': '配置するアイテムを選択してください。',
   'objects.count': '{count}個を配置中',
+  'objects.placedCopies': '配置済み ×{count}',
   'objects.empty': 'まだオブジェクトがありません。',
   'objects.hint': 'GLB／GLTFモデル、画像、動画、音声に対応。動画と音声は距離に応じて音量が変わる立体音響で再生されます。',
   'objects.invalid': 'このファイルはモデル・画像・動画・音声として読み込めませんでした。',

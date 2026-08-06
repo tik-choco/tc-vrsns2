@@ -37,6 +37,9 @@ type Props = {
   onUpload: (file: File) => void
   /** Detail + action area for the selected item (equip / apply / place / remove). */
   renderActions: (item: CatalogItem, isCurrent: boolean) => ComponentChildren
+  /** Optional per-item usage count, shown in cards, rows, and the preview. */
+  itemCounts?: Readonly<Record<string, number>>
+  itemCountLabel?: (count: number) => string
   footer?: ComponentChildren
   /**
    * Show the kind chips (in the toolbar), the per-card/-row kind icon, and
@@ -77,6 +80,8 @@ export function CatalogPanel({
   defaultCard,
   onUpload,
   renderActions,
+  itemCounts,
+  itemCountLabel,
   footer,
   kindFilter,
   emptyLabel,
@@ -207,6 +212,7 @@ export function CatalogPanel({
               const size = formatBytes(item.size)
               const added = formatAdded(item.addedAt)
               const itemKind = catalogKindOf(item)
+              const itemCount = itemCounts?.[item.cid] ?? 0
               return (
                 <button
                   type="button"
@@ -227,6 +233,9 @@ export function CatalogPanel({
                       <span class="cat-kind" title={t(`catalog.kind.${itemKind}` as const)}>
                         {kindIcon(itemKind, 13)}
                       </span>
+                    )}
+                    {itemCount > 0 && itemCountLabel && (
+                      <span class="cat-placement-count is-card">{itemCountLabel(itemCount)}</span>
                     )}
                   </span>
                   <span class="cat-card-body">
@@ -305,6 +314,8 @@ export function CatalogPanel({
                 currentCid={currentCid}
                 selectedCid={selected}
                 onSelect={setSelected}
+                itemCounts={itemCounts}
+                itemCountLabel={itemCountLabel}
               />
             )}
           </>
@@ -334,6 +345,11 @@ export function CatalogPanel({
             {fileExtension(selectedItem.name) && (
               <span class="cat-format" style="align-self: center;">
                 {fileExtension(selectedItem.name)}
+              </span>
+            )}
+            {(itemCounts?.[selectedItem.cid] ?? 0) > 0 && itemCountLabel && (
+              <span class="cat-placement-count is-preview">
+                {itemCountLabel(itemCounts?.[selectedItem.cid] ?? 0)}
               </span>
             )}
 

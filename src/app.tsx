@@ -175,6 +175,7 @@ export function App() {
           onImportWorldManifest={session.importWorldManifest}
           objectModels={session.objectModels}
           placedCount={session.placedCount}
+          placedCountsByCid={session.placedCountsByCid}
           ownPlacedCount={session.ownPlacedCount}
           orphanCount={session.orphanCount}
           objectBusy={session.objectBusy}

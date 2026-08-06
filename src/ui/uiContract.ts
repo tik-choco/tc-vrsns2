@@ -165,6 +165,8 @@ export type GameOverlayProps = {
   // placeable objects (glTF props + image / video / audio media)
   objectModels: CatalogItem[]
   placedCount: number
+  /** Visible placements grouped by their catalog/content cid. */
+  placedCountsByCid: Readonly<Record<string, number>>
   /** Of those, the ones we publish — what the editor can select under 'owner'. */
   ownPlacedCount: number
   /** Placements whose owner has left: still shown, editable by nobody. */
