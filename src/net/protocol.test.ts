@@ -893,6 +893,128 @@ describe('NPC binding validation', () => {
     ]
     expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
   })
+
+  it('round-trips mode, both values', () => {
+    const aiMode: PlacedObject[] = [
+      { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, mode: 'ai' } },
+    ]
+    const linesMode: PlacedObject[] = [
+      { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, mode: 'lines' } },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects: aiMode }))).toEqual({
+      kind: MSG_OBJECTS,
+      objects: aiMode,
+    })
+    expect(decode(encode({ kind: MSG_OBJECTS, objects: linesMode }))).toEqual({
+      kind: MSG_OBJECTS,
+      objects: linesMode,
+    })
+  })
+
+  it('drops a junk mode, keeping the rest of the binding', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [{ ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, mode: 'chaos' } }],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc).toEqual({ characterId: 'char-1', radius: 6 })
+  })
+
+  it('trims lines, drops empties, and caps line length and count', () => {
+    const overLong = 'x'.repeat(NPC_LIMITS.maxLineChars + 50)
+    const tooMany = Array.from({ length: NPC_LIMITS.maxLines + 5 }, (_, i) => `line ${i}`)
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          {
+            ...base,
+            kind: 'npc',
+            npc: {
+              characterId: 'char-1',
+              radius: 6,
+              mode: 'lines',
+              lines: ['  hello  ', '', '   ', overLong, 42, null],
+            },
+          },
+          {
+            ...base,
+            id: 'b',
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, mode: 'lines', lines: tooMany },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.lines).toEqual(['hello', overLong.slice(0, NPC_LIMITS.maxLineChars)])
+    expect(msg.objects[0].npc?.lines?.[1]).toHaveLength(NPC_LIMITS.maxLineChars)
+    expect(msg.objects[1].npc?.lines).toHaveLength(NPC_LIMITS.maxLines)
+    expect(msg.objects[1].npc?.lines).toEqual(tooMany.slice(0, NPC_LIMITS.maxLines))
+  })
+
+  it('leaves lines absent (never an empty array) when non-array or nothing survives', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, lines: 'not-an-array' } },
+          { ...base, id: 'b', kind: 'npc', npc: { characterId: 'char-1', radius: 6, lines: ['', '   ', 42] } },
+          { ...base, id: 'c2', kind: 'npc', npc: { characterId: 'char-1', radius: 6 } },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.lines).toBeUndefined()
+    expect(msg.objects[1].npc?.lines).toBeUndefined()
+    expect(msg.objects[2].npc?.lines).toBeUndefined()
+  })
+
+  it('round-trips lines', () => {
+    const objects: PlacedObject[] = [
+      {
+        ...base,
+        kind: 'npc',
+        npc: { characterId: 'char-1', radius: 6, mode: 'lines', lines: ['hi there', 'bye now'] },
+      },
+    ]
+    expect(decode(encode({ kind: MSG_OBJECTS, objects }))).toEqual({ kind: MSG_OBJECTS, objects })
+  })
+
+  it('validates lineOrder, dropping a junk value but keeping the binding', () => {
+    const msg = decode(
+      frame(MSG_OBJECTS, {
+        objects: [
+          { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, lineOrder: 'random' } },
+          {
+            ...base,
+            id: 'b',
+            kind: 'npc',
+            npc: { characterId: 'char-1', radius: 6, lineOrder: 'shuffle' },
+          },
+        ],
+      }),
+    )
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc?.lineOrder).toBe('random')
+    expect(msg.objects[1].npc?.lineOrder).toBeUndefined()
+  })
+
+  it('decodes a binding with none of the new fields exactly as before (back-compat)', () => {
+    const objects: PlacedObject[] = [
+      { ...base, kind: 'npc', npc: { characterId: 'char-1', radius: 6, voiceModel: 'tts-1', approachRange: 10 } },
+    ]
+    const msg = decode(encode({ kind: MSG_OBJECTS, objects }))
+    if (msg?.kind !== MSG_OBJECTS) throw new Error('expected MSG_OBJECTS')
+    expect(msg.objects[0].npc).toEqual({
+      characterId: 'char-1',
+      radius: 6,
+      voiceModel: 'tts-1',
+      approachRange: 10,
+    })
+    expect(msg.objects[0].npc?.mode).toBeUndefined()
+    expect(msg.objects[0].npc?.lines).toBeUndefined()
+    expect(msg.objects[0].npc?.lineOrder).toBeUndefined()
+  })
 })
 
 describe('placement volume / audibleRange validation', () => {

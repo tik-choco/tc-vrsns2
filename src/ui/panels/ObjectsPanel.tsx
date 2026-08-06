@@ -88,6 +88,11 @@ export function ObjectsPanel(props: Props) {
         uploadingLabel={t('objects.uploading')}
         selectPrompt={t('objects.selectPrompt')}
         hint={t('objects.hint')}
+        // Unlike avatars/worlds, the props catalog holds four real kinds
+        // (model/image/video/audio) — worth filtering and worth a type
+        // badge on each card/row and in the detail pane.
+        kindFilter
+        emptyLabel={t('objects.empty')}
         onUpload={props.onUploadObject}
         renderActions={(item) => (
           <div class="preview-actions">

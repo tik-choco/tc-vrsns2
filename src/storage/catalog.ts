@@ -54,23 +54,22 @@ export function localUploadBytes(bytes: Uint8Array): LocalUploadBytes {
 
 /**
  * Stored record — a CatalogItem plus a world's container format when
- * relevant, and for a placeable item what it is (`asset`: model / image /
- * video / audio) and the `mime` its bytes need to decode from a blob URL (the
- * content store keeps raw bytes only, so the type has to be remembered here).
- * `thumbCid` points at the thumbnail bytes in the shared mistlib content store
- * (current format). `thumb` is the legacy inline data-URL thumbnail, kept
- * readable for dual-read; see migrateLegacyThumbs.
+ * relevant, and for a placeable item the `mime` its bytes need to decode from
+ * a blob URL (the content store keeps raw bytes only, so the type has to be
+ * remembered here). `thumbCid` points at the thumbnail bytes in the shared
+ * mistlib content store (current format). `thumb` is the legacy inline
+ * data-URL thumbnail, kept readable for dual-read; see migrateLegacyThumbs.
  *
- * CatalogItem's `origin`/`source` carry straight through unchanged — a
- * missing `origin` means 'local' (see sanitize below and the module header),
- * which is also the correct read for every entry written before this field
- * existed: they predate the distinction and were overwhelmingly genuine
- * uploads. That inference can't retroactively encrypt a plaintext copy an
- * earlier town-character equip already wrote before this change existed.
+ * CatalogItem's `origin`/`source`/`asset`/`size`/`addedAt` carry straight
+ * through unchanged — a missing `origin` means 'local' (see sanitize below
+ * and the module header), which is also the correct read for every entry
+ * written before this field existed: they predate the distinction and were
+ * overwhelmingly genuine uploads. That inference can't retroactively encrypt
+ * a plaintext copy an earlier town-character equip already wrote before this
+ * change existed.
  */
 type StoredItem = CatalogItem & {
   format?: WorldFormat
-  asset?: PlacedKind
   mime?: string
   thumbCid?: string
 }
@@ -117,6 +116,11 @@ function sanitize(raw: unknown): StoredItem | null {
   if (r.origin === 'foreign') item.origin = 'foreign'
   const source = sanitizeSource(r.source)
   if (source) item.source = source
+  // size/addedAt are never trusted from localStorage either: a hand-edited
+  // or adversarial value drops just this field (undefined reads as "unknown"
+  // everywhere downstream) rather than poisoning the whole entry.
+  if (Number.isSafeInteger(r.size) && (r.size as number) >= 0) item.size = r.size as number
+  if (Number.isSafeInteger(r.addedAt) && (r.addedAt as number) >= 0) item.addedAt = r.addedAt as number
   return item
 }
 
@@ -359,7 +363,7 @@ export async function addToCatalog(
 ): Promise<CatalogItem> {
   const cid = await publishVrmBytes(name, bytes)
   const trimmedName = name.trim().slice(0, NAME_MAX_LEN)
-  const item: StoredItem = { cid, name: trimmedName }
+  const item: StoredItem = { cid, name: trimmedName, size: bytes.length, addedAt: Date.now() }
   if (extra?.format) item.format = extra.format
   if (extra?.asset) item.asset = extra.asset
   if (extra?.mime) item.mime = extra.mime
@@ -410,7 +414,10 @@ export async function addForeignToCatalog(
 ): Promise<CatalogItem> {
   await putForeignModel(cid, bytes)
   const trimmedName = name.trim().slice(0, NAME_MAX_LEN)
-  const item: StoredItem = { cid, name: trimmedName, origin: 'foreign' }
+  // addedAt is when THIS DEVICE filed the item, not when the foreign author
+  // created it — there is no such timestamp to recover, and conflating the
+  // two would misrepresent provenance the same way a laundered upload would.
+  const item: StoredItem = { cid, name: trimmedName, origin: 'foreign', size: bytes.length, addedAt: Date.now() }
   const sanitizedSource = sanitizeSource(source)
   if (sanitizedSource) item.source = sanitizedSource
   if (extra?.asset) item.asset = extra.asset
@@ -437,8 +444,9 @@ export async function addForeignToCatalog(
  * Promotes an existing catalog entry to foreign in place — the migration
  * path for a legacy (pre-R6) entry whose bytes actually came from a
  * tc-town character or a peer, but which was filed as an ordinary local
- * upload before this distinction existed. Preserves the entry's cid, name
- * and thumbCid; only origin and source change.
+ * upload before this distinction existed. Preserves the entry's cid, name,
+ * thumbCid, size and addedAt; only origin and source change (the spread into
+ * `updated` below carries every other field through untouched).
  *
  * Deliberately does NOT touch the vault. The caller (the migration) is
  * expected to putForeignModel the bytes first; marking is still correct on

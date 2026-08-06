@@ -9,15 +9,15 @@
 // consumer imports by resolving each item's mistlib CID.
 //
 // SEND-ONLY, deliberately: tc-vrsns2 never subscribes to this topic and never
-// reads anything back from it. There is no receive direction here — see the
-// contract draft (this session's scratchpad, tc-space-contract-draft.md) for
-// why tc-storage → tc-vrsns2 is not attempted (tc-storage encrypts every
-// file with a per-folder key that never leaves it, so nothing published from
-// there could be decrypted by another app). Being strictly one-way also means
-// this module cannot loop on a future tc-storage echo: there is no listener
-// on our side for anything published under this topic name, publishing here
-// never re-enters storage/catalog.ts, and nothing in this file (or its
-// caller) ever calls readShared/subscribeShared for SPACE_TOPIC.
+// reads anything back from it (the receive direction exists but on a DIFFERENT
+// topic — tc-storage's "TC Space" folder flows back in under
+// "vrsns2-catalog-inbox", consumed by interop/spaceInbox.ts, which is why
+// tc-storage encrypts those items under a throwaway key instead of trusting a
+// folder-key cid this app could not decrypt). Being strictly one-way also
+// means this module cannot loop on a future tc-storage echo: there is no
+// listener on our side for anything published under this topic name,
+// publishing here never re-enters storage/catalog.ts, and nothing in this
+// file (or its caller) ever calls readShared/subscribeShared for SPACE_TOPIC.
 //
 // Only LOCAL items belong in the feed — bytes this device actually uploaded,
 // which are already plaintext in the shared mistlib content store the moment

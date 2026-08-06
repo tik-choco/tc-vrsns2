@@ -444,3 +444,187 @@ describe('setPlacements / reset', () => {
     expect(say).not.toHaveBeenCalled()
   })
 })
+
+// R8: the fixed-lines brain. See NpcRuntime's class doc for why lines ride
+// the wire while the persona never does, and why isHeld() means the same
+// thing in both modes.
+describe('lines mode', () => {
+  function linesPlacement(overrides: Partial<NpcPlacement> = {}): NpcPlacement {
+    return placement({ mode: 'lines', lines: ['Line A', 'Line B', 'Line C'], ...overrides })
+  }
+
+  it('walks lines in sequence order and wraps', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([linesPlacement({ lineOrder: 'sequence' })])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'Line C')
+
+    // Wraps back to the first line.
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(4, 'npc-1', 'Line A')
+  })
+
+  it('random order never immediately repeats the line just spoken', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([linesPlacement({ lines: ['Line A', 'Line B'], lineOrder: 'random' })])
+
+    // Force Math.random to pick index 0 both times — the second pick must
+    // get nudged away from it since it would otherwise repeat.
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+
+    randomSpy.mockRestore()
+  })
+
+  it('still applies cooldownMs between lines', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([linesPlacement()])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    clock.advance(NPC_LIMITS.cooldownMs - 1)
+    runtime.heard(speaker(), 'hi again')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(1)
+
+    clock.advance(2)
+    runtime.heard(speaker(), 'once more')
+    await flush()
+    expect(say).toHaveBeenCalledTimes(2)
+  })
+
+  it('never calls chat() or loadPersona() — the load-bearing guarantee of this mode', async () => {
+    const { deps, say, chat, loadPersona } = makeDeps()
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([linesPlacement({ radius: 5 })])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    runtime.observe([speaker({ x: 2, y: 0, z: 0 })])
+    await flush()
+    runtime.arrived('npc-1', speaker())
+    await flush()
+
+    expect(say.mock.calls.length).toBeGreaterThan(0)
+    expect(chat).not.toHaveBeenCalled()
+    expect(loadPersona).not.toHaveBeenCalled()
+  })
+
+  it('speaks even for an unknown/persona-less character', async () => {
+    const { deps, say, loadPersona } = makeDeps({ loadPersona: vi.fn().mockResolvedValue(null) })
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([linesPlacement({ characterId: 'not-a-real-character' })])
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenCalledWith('npc-1', 'Line A')
+    expect(loadPersona).not.toHaveBeenCalled()
+  })
+
+  it('stays silent with no state change when lines is empty/absent', async () => {
+    const { deps, say } = makeDeps()
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement({ mode: 'lines', lines: [] })])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).not.toHaveBeenCalled()
+    expect(runtime.isHeld('npc-1')).toBe(false)
+
+    // No cooldown burn from the silent attempt: a placement that later gains
+    // lines can speak right away, with no leftover wait.
+    runtime.setPlacements([placement({ mode: 'lines', lines: ['Now I have something to say'] })])
+    runtime.heard(speaker(), 'hi again')
+    await flush()
+    expect(say).toHaveBeenCalledWith('npc-1', 'Now I have something to say')
+  })
+
+  it('both the heard() trigger and the greet trigger (observe/arrived) speak a line', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([linesPlacement({ radius: 5 })])
+
+    runtime.observe([speaker({ x: 2, y: 0, z: 0 })])
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+
+    clock.advance(NPC_LIMITS.greetCooldownMs + NPC_LIMITS.cooldownMs + 1)
+    runtime.arrived('npc-1', speaker())
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.heard(speaker(), 'hello')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'Line C')
+  })
+
+  it('editing the lines resets the cursor; moving the NPC does not', async () => {
+    const clock = makeClock()
+    const { deps, say } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([linesPlacement()])
+
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(1, 'npc-1', 'Line A')
+
+    // Position-only edit: same lines, so the cursor carries on to Line B
+    // rather than restarting at Line A.
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.setPlacements([linesPlacement({ x: 3 })])
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(2, 'npc-1', 'Line B')
+
+    // Editing the authored list itself must restart the cursor at index 0.
+    clock.advance(NPC_LIMITS.cooldownMs + 1)
+    runtime.setPlacements([linesPlacement({ lines: ['New A', 'New B'] })])
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(say).toHaveBeenNthCalledWith(3, 'npc-1', 'New A')
+  })
+})
+
+describe('mode absent (back-compat)', () => {
+  it('behaves exactly like the original AI path when mode is not set on the placement', async () => {
+    const { deps, say, chat, loadPersona } = makeDeps()
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()]) // no `mode` field at all
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    expect(loadPersona).toHaveBeenCalled()
+    expect(chat).toHaveBeenCalled()
+    expect(say).toHaveBeenCalledWith('npc-1', 'Hello there!')
+  })
+})
