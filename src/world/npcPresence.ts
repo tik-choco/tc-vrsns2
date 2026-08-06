@@ -77,7 +77,8 @@ export const ADDRESSED_HOLD_SECONDS = 12
 export const EYE_HEIGHT_BELOW_TOP = 0.15
 
 /**
- * Eye position of an avatar standing at `root` with measured height `height`.
+ * Eye position of an avatar standing at `root` with measured, unscaled
+ * height `height`. `scaleY` is the avatar root's vertical scale.
  *
  * Used for BOTH ends of the gaze vector — the NPC's own eyes and those of the
  * player it is looking at. Aiming at a player's `root` instead would point the
@@ -86,8 +87,12 @@ export const EYE_HEIGHT_BELOW_TOP = 0.15
  * read as avoidant rather than attentive. Sharing one helper is what keeps the
  * two ends consistent as rigs of different heights come and go.
  */
-export function eyePosition(root: Vec3, height: number): Vec3 {
-  return { x: root.x, y: root.y + Math.max(0, height - EYE_HEIGHT_BELOW_TOP), z: root.z }
+export function eyePosition(root: Vec3, height: number, scaleY = 1): Vec3 {
+  return {
+    x: root.x,
+    y: root.y + Math.max(0, height - EYE_HEIGHT_BELOW_TOP) * scaleY,
+    z: root.z,
+  }
 }
 
 export type GazeState = { yaw: number; pitch: number }
