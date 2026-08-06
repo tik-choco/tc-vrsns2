@@ -59,7 +59,12 @@ export class CameraController {
   private currentLookAt = new THREE.Vector3()
   private lastTouchX = 0
   private lastTouchY = 0
-  private touching = false
+  // Track the finger that started on the canvas instead of relying on the
+  // total number of active touches. On mobile the movement joystick is a
+  // separate element, so holding it adds another entry to TouchEvent.touches.
+  // Requiring touches.length === 1 made camera look stop (or never start)
+  // whenever the player was moving.
+  private lookTouchId: number | null = null
   /**
    * Object-editing mode: the left button belongs to the editor (picking and
    * gizmo drags), so looking around moves to a held right button and the
@@ -112,17 +117,20 @@ export class CameraController {
   }
 
   private readonly onTouchStart = (e: TouchEvent): void => {
-    if (e.touches.length === 1) {
-      this.lastTouchX = e.touches[0].clientX
-      this.lastTouchY = e.touches[0].clientY
-      this.touching = true
-    }
+    if (!this.enabled || this.lookTouchId !== null) return
+    const touch = e.changedTouches[0]
+    if (!touch) return
+    this.lookTouchId = touch.identifier
+    this.lastTouchX = touch.clientX
+    this.lastTouchY = touch.clientY
   }
 
   private readonly onTouchMove = (e: TouchEvent): void => {
-    if (!this.touching || e.touches.length !== 1 || !this.enabled) return
-    const touchX = e.touches[0].clientX
-    const touchY = e.touches[0].clientY
+    if (this.lookTouchId === null || !this.enabled) return
+    const touch = findTouch(e.touches, this.lookTouchId)
+    if (!touch) return
+    const touchX = touch.clientX
+    const touchY = touch.clientY
     this.rotation.y -= (touchX - this.lastTouchX) * TOUCH_SENSITIVITY
     this.rotation.x = clampPitch(this.rotation.x - (touchY - this.lastTouchY) * TOUCH_SENSITIVITY)
     this.lastTouchX = touchX
@@ -130,8 +138,10 @@ export class CameraController {
     e.preventDefault()
   }
 
-  private readonly onTouchEnd = (): void => {
-    this.touching = false
+  private readonly onTouchEnd = (e: TouchEvent): void => {
+    if (this.lookTouchId !== null && findTouch(e.changedTouches, this.lookTouchId)) {
+      this.lookTouchId = null
+    }
   }
 
   constructor(camera: THREE.PerspectiveCamera, target: THREE.Object3D, domElement: HTMLElement) {
@@ -149,10 +159,12 @@ export class CameraController {
     domElement.addEventListener('touchstart', this.onTouchStart, { passive: false })
     domElement.addEventListener('touchmove', this.onTouchMove, { passive: false })
     domElement.addEventListener('touchend', this.onTouchEnd)
+    domElement.addEventListener('touchcancel', this.onTouchEnd)
   }
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled
+    if (!enabled) this.lookTouchId = null
     if (!enabled && document.pointerLockElement === this.domElement) {
       document.exitPointerLock()
     }
@@ -240,6 +252,7 @@ export class CameraController {
     this.domElement.removeEventListener('touchstart', this.onTouchStart)
     this.domElement.removeEventListener('touchmove', this.onTouchMove)
     this.domElement.removeEventListener('touchend', this.onTouchEnd)
+    this.domElement.removeEventListener('touchcancel', this.onTouchEnd)
     if (document.pointerLockElement === this.domElement) {
       document.exitPointerLock()
     }
@@ -248,4 +261,12 @@ export class CameraController {
 
 function clampPitch(value: number): number {
   return THREE.MathUtils.clamp(value, MIN_PITCH, MAX_PITCH)
+}
+
+function findTouch(touches: TouchList, identifier: number): Touch | null {
+  for (let i = 0; i < touches.length; i += 1) {
+    const touch = touches.item(i)
+    if (touch?.identifier === identifier) return touch
+  }
+  return null
 }
