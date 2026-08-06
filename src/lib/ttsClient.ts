@@ -174,11 +174,18 @@ export async function synthesizeDirect(req: TtsRequest, signal?: AbortSignal): P
 // for a future 'abort' event) does not, so the timing guarantee is worth
 // keeping exactly as strict as before this dispatcher existed.
 
-/** Synchronous "is the network route even worth trying" check: `connection:'network'` and a non-empty AI Network room id. */
+/**
+ * Synchronous "is the network route even worth trying" check. Explicit
+ * network mode still prefers the room, but a device with no local TTS also
+ * asks the configured AI Network room even when its LLM task mode is `api`:
+ * TTS availability is independent of where text generation runs.
+ */
 function networkRoomId(): string | null {
   const settings = loadLlmProviderSettings()
-  if (settings.connection !== 'network') return null
-  const roomId = loadLlmConfig()?.network.roomId.trim()
+  const shared = loadLlmConfig()
+  const localVoice = shared ? resolveVoice(shared, 'tts') : null
+  if (settings.connection !== 'network' && localVoice && !localVoice.baseUrl.startsWith('mist-network://')) return null
+  const roomId = shared?.network?.roomId?.trim()
   return roomId || null
 }
 

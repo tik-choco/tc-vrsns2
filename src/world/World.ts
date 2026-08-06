@@ -118,7 +118,7 @@ export class World {
   /** WorldObjects reports an owned NPC's approach walk arriving here; forwarded to onNpcArrived's listener — see both docs. */
   private npcArrivedListener: ((objectId: string, player: Vec3) => void) | null = null
   private soundResolver: ((cid: string) => Promise<Uint8Array | null>) | null = null
-  private scriptSayListener: ((objectId: string, text: string, preempt?: boolean) => void) | null = null
+  private scriptSayListener: ((objectId: string, text: string, preempt?: boolean, utteranceId?: string) => void) | null = null
   /** Fires once per frame with a non-trivial ScriptTickResult, so the net layer can broadcast it. See onScriptOutput(). */
   private scriptOutputListener: ((result: ScriptTickResult) => void) | null = null
   /** The caller's onObjectEdited callback, invoked after this class's own script sync. */
@@ -884,7 +884,7 @@ export class World {
         this.scriptRuntime.applyRemoteEffect(effect)
         break
       case 'say':
-        this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt)
+        this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt, effect.utteranceId)
         break
       case 'sound':
         void this.playScriptSound(effect.objectId, effect.cid)
@@ -980,7 +980,7 @@ export class World {
    * the effect (see ScriptEffect.preempt — absent means preempt, the legacy
    * behaviour scripts rely on).
    */
-  onScriptSay(cb: (objectId: string, text: string, preempt?: boolean) => void): void {
+  onScriptSay(cb: (objectId: string, text: string, preempt?: boolean, utteranceId?: string) => void): void {
     this.scriptSayListener = cb
   }
 
@@ -1226,7 +1226,7 @@ export class World {
   private applyScriptEffects(effects: ScriptEffect[]): void {
     for (const effect of effects) {
       if (effect.t === 'say') {
-        this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt)
+        this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt, effect.utteranceId)
       } else if (effect.t === 'sound') {
         void this.playScriptSound(effect.objectId, effect.cid)
       }

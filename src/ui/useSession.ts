@@ -100,6 +100,7 @@ import { NPC_LIMITS } from '../npc/limits'
 import { createNpcVoice } from '../npc/NpcVoice'
 import { createLoudnessSource } from '../lib/audioLoudness'
 import { runLlmTask } from '../lib/aiClient'
+import { publishSpeech, retrieveSpeech } from '../lib/speechSharing'
 import { t } from '../i18n'
 
 export type SessionPhase = 'idle' | 'joining' | 'joined' | 'error'
@@ -442,6 +443,11 @@ const NPC_OBSERVE_INTERVAL_MS = 1000
 const NPC_SILENCE_LEVEL = 0.02
 /** How long an NPC's voice must stay silent before its utterance is considered over. Longer than the gap between words, so a pause mid-sentence never ends the line early. */
 const NPC_SILENCE_HOLD_MS = 1200
+let speechSerial = 0
+function createSpeechId(): string {
+  speechSerial = (speechSerial + 1) >>> 0
+  return `${Date.now().toString(36)}-${speechSerial.toString(36)}`
+}
 /** Default appearance for a freshly authored box (placeBox) — mirrors net/protocol.ts's parsePlacedObject fallback exactly, so a box just placed and a wire-decoded box with no appearance render identically. */
 const DEFAULT_BOX_APPEARANCE: BoxAppearance = { sx: 1, sy: 1, sz: 1, color: '#9e9e9e' }
 /**
@@ -772,6 +778,8 @@ export function useSession(): SessionApi {
    * way to observe "did it actually reply") is fed from here instead.
    */
   const npcLastReplyAt = useRef(new Map<string, number>())
+  /** Latest announced line per NPC; rejects audio that finishes after a newer line. */
+  const latestNpcUtterance = useRef(new Map<string, string>())
   /**
    * One NpcRuntime for the whole hook lifetime (constructed once, like
    * `objects` above) — say/face/chat below read refs at call time rather than
@@ -787,6 +795,8 @@ export function useSession(): SessionApi {
       chat: (messages) => runLlmTask('npc', messages),
       say: (objectId, text, preempt) => {
         npcLastReplyAt.current.set(objectId, Date.now())
+        const utteranceId = createSpeechId()
+        latestNpcUtterance.current.set(objectId, utteranceId)
         // The exact channel a script's `say` effect takes: World.applyRemoteScriptEffect's
         // 'say' case just forwards to the onScriptSay listener wired in
         // attachCanvas below, which is what renders the `[Name]` chat line —
@@ -796,8 +806,8 @@ export function useSession(): SessionApi {
         // `preempt` (true = user spoke, may cut the current line off; false
         // = a greet, must not) rides the effect so every peer's voice layer
         // applies the same rule against its own audio state.
-        worldRef.current?.applyRemoteScriptEffect({ t: 'say', objectId, text, preempt })
-        sessionRef.current?.sendScriptEffects([{ t: 'say', objectId, text, preempt }])
+        worldRef.current?.applyRemoteScriptEffect({ t: 'say', objectId, text, preempt, utteranceId })
+        sessionRef.current?.sendScriptEffects([{ t: 'say', objectId, text, preempt, utteranceId }])
       },
       face: (objectId, yaw) => worldRef.current?.faceObject(objectId, yaw),
       // Leave-triggered stop (see NpcRuntime.cancelAbandonedUtterance): the
@@ -813,11 +823,9 @@ export function useSession(): SessionApi {
   )
 
   /**
-   * TTS for NPC lines (R5.1). Runs on EVERY peer, not just the owner: the
-   * `say` effect carries the text to everyone, and each tab synthesizes
-   * locally rather than the owner shipping audio bytes over the room (see
-   * lib/ttsClient.ts). A tab with no working TTS route gets neither audio nor
-   * a bubble for that line: the bubble now represents actual local playback.
+   * TTS analysis/playback state for NPC lines. Only the placement owner calls
+   * synthesize; it publishes the completed clip once, and every other peer
+   * installs those shared bytes into this same lipsync path.
    *
    * `analyze` runs on the AudioContext three's AudioListener already owns, so
    * lipsync analysis shares a clock with the audible playback instead of
@@ -902,7 +910,7 @@ export function useSession(): SessionApi {
    * greet that would overlap is dropped by NpcVoice instead (speak resolves
    * null and nothing plays). Absent means preempt, the legacy behaviour.
    */
-  const speakNpcLine = useCallback((objectId: string, text: string, preempt?: boolean) => {
+  const speakNpcLine = useCallback((objectId: string, text: string, utteranceId: string, preempt?: boolean) => {
     const world = worldRef.current
     if (!world) return
     const placement = world.listPlacedObjects().find((o) => o.id === objectId)
@@ -923,6 +931,12 @@ export function useSession(): SessionApi {
         if (!clip) return
         worldRef.current?.playNpcSpeech(objectId, text, clip.bytes, clip.mime)
         startNpcLevelPump(objectId)
+        const session = sessionRef.current
+        if (!session || !objects.current.ownsLocally(objectId)) return
+        void publishSpeech(clip.bytes).then((cid) => {
+          if (!cid || latestNpcUtterance.current.get(objectId) !== utteranceId) return
+          sessionRef.current?.sendNpcSpeech({ objectId, text, utteranceId, cid, mime: clip.mime })
+        })
       })
       .catch((e) => {
         console.debug('npc speech failed', objectId, e)
@@ -1181,7 +1195,7 @@ export function useSession(): SessionApi {
       // fromId is namespaced under a prefix no peer id can produce, and the
       // name is bracketed so it reads as "not a person" at a glance even
       // without inspecting color or fromId.
-      world.onScriptSay((objectId, text, preempt) => {
+      world.onScriptSay((objectId, text, preempt, receivedUtteranceId) => {
         const objectName = world.listPlacedObjects().find((o) => o.id === objectId)?.name ?? ''
         pushMessage({
           fromId: `script:${objectId}`,
@@ -1193,7 +1207,13 @@ export function useSession(): SessionApi {
         // Same trigger raises the bubble (inside World) and the voice, for both
         // our own NPCs and other peers' — so what is written and what is heard
         // can never disagree about which line was said.
-        speakNpcLine(objectId, text, preempt)
+        const utteranceId = receivedUtteranceId ?? createSpeechId()
+        latestNpcUtterance.current.set(objectId, utteranceId)
+        // Missing ids identify legacy peers; retain their old local-synthesis
+        // behaviour because they cannot send MSG_NPC_SPEECH.
+        if (objects.current.ownsLocally(objectId) || !receivedUtteranceId) {
+          speakNpcLine(objectId, text, utteranceId, preempt)
+        }
       })
       // Closes the owner-authoritative loop's local half: World already applied
       // these effects to itself (say/sound/window/emit) before calling this —
@@ -1203,7 +1223,15 @@ export function useSession(): SessionApi {
       world.onScriptOutput((result) => {
         const session = sessionRef.current
         if (!session) return
-        if (result.effects.length > 0) session.sendScriptEffects(result.effects)
+        if (result.effects.length > 0) {
+          session.sendScriptEffects(
+            result.effects.map((effect) =>
+              effect.t === 'say' && !effect.utteranceId
+                ? { ...effect, utteranceId: latestNpcUtterance.current.get(effect.objectId) ?? createSpeechId() }
+                : effect,
+            ),
+          )
+        }
         if (result.inputs.length > 0) session.sendScriptInputs(result.inputs)
       })
       // MSG_OBJ_STATE's sender half: a script that MOVES an object we own (the
@@ -1372,6 +1400,27 @@ export function useSession(): SessionApi {
       // play the same as if we'd produced them, emit reaches our own scripts.
       session.onScriptEffects = (_fromId, effects) => {
         for (const effect of effects) world.applyRemoteScriptEffect(effect)
+      }
+      session.onNpcSpeech = (fromId, speech) => {
+        // Only the current publisher may provide audio for its NPC. The
+        // utterance id also prevents a slow CID fetch from replaying a line
+        // after a newer say effect has superseded it.
+        if (!objects.current.isOwnedBy(speech.objectId, fromId)) return
+        if (latestNpcUtterance.current.get(speech.objectId) !== speech.utteranceId) return
+        const placement = world.listPlacedObjects().find((o) => o.id === speech.objectId)
+        if (!placement?.npc) return
+        const pose = world.getLocalPose()
+        const distance = pose
+          ? Math.hypot(placement.x - pose.x, placement.y - pose.y, placement.z - pose.z)
+          : 0
+        if (distance > NPC_LIMITS.ttsMaxDistance) return
+        void retrieveSpeech(speech.cid).then((bytes) => {
+          if (!bytes || latestNpcUtterance.current.get(speech.objectId) !== speech.utteranceId) return
+          const clip = { bytes, mime: speech.mime }
+          if (!npcVoiceRef.current.useSharedClip(speech.objectId, clip, distance)) return
+          worldRef.current?.playNpcSpeech(speech.objectId, speech.text, bytes, speech.mime)
+          startNpcLevelPump(speech.objectId)
+        })
       }
       // A peer reported a crossing/click/ui-press against one of OUR objects
       // (inputs flow actor -> owner). Untrusted by construction — World /
@@ -1585,6 +1634,7 @@ export function useSession(): SessionApi {
     npcVoiceRef.current.reset()
     npcSpeakingIds.current.clear()
     npcLastReplyAt.current.clear()
+    latestNpcUtterance.current.clear()
     objects.current.clear()
     worldRef.current?.setEditMode(false)
     worldRef.current?.setEditableObjects([])

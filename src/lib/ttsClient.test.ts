@@ -109,6 +109,19 @@ describe('synthesizeSpeech', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('uses AI Network TTS when local TTS is missing, independently of LLM mode', async () => {
+    loadLlmConfig.mockReturnValue({ network: { roomId: 'voice-room' } })
+    resolveVoice.mockReturnValue(null)
+    const requestTts = vi.fn().mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/ogg' }))
+    getAiConsumerClient.mockReturnValue({ requestTts })
+    const result = await synthesizeSpeech({ text: 'shared voice' })
+    expect(result).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: 'audio/ogg' })
+    expect(requestTts).toHaveBeenCalledWith('voice-room', {
+      text: 'shared voice', model: undefined, voice: undefined,
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('returns null on a non-2xx response', async () => {
     fetchMock.mockResolvedValue(new Response('boom', { status: 500 }))
     expect(await synthesizeSpeech({ text: 'hi' })).toBeNull()
