@@ -206,6 +206,7 @@ export const zh: Dict = {
   'objects.clear': '全部清除',
   'objects.selectPrompt': '选择要放置的内容。',
   'objects.count': '已放置 {count} 个',
+  'objects.placedCopies': '已放置 ×{count}',
   'objects.empty': '还没有放置任何物体。',
   'objects.hint': '支持 GLB / GLTF 模型、图片、视频和音频。视频和音频以空间音效播放，音量随距离衰减。',
   'objects.invalid': '无法将该文件读取为模型、图片、视频或音频。',

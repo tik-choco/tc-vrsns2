@@ -11,6 +11,8 @@ type Props = {
   /** cid shown in the preview pane; highlighted so the row you're looking at is visible in the list too. */
   selectedCid: string | null
   onSelect: (cid: string) => void
+  itemCounts?: Readonly<Record<string, number>>
+  itemCountLabel?: (count: number) => string
 }
 
 // The list-view counterpart to CatalogPanel's `.catalog-grid` of `.cat-card`s —
@@ -28,7 +30,7 @@ type Props = {
 // This scope is "pick one item to look at in the preview pane" — exactly what
 // CatalogPanel's grid already does — so a row is just a bigger, more legible
 // version of a `.cat-card`, not a new interaction surface.
-export function CatalogList({ items, currentCid, selectedCid, onSelect }: Props) {
+export function CatalogList({ items, currentCid, selectedCid, onSelect, itemCounts, itemCountLabel }: Props) {
   const { t } = useTranslation()
 
   return (
@@ -43,6 +45,7 @@ export function CatalogList({ items, currentCid, selectedCid, onSelect }: Props)
         const ext = fileExtension(item.name)
         const size = formatBytes(item.size)
         const added = formatAdded(item.addedAt)
+        const itemCount = itemCounts?.[item.cid] ?? 0
 
         return (
           <button
@@ -78,6 +81,9 @@ export function CatalogList({ items, currentCid, selectedCid, onSelect }: Props)
                tells the user nothing they didn't already know, whereas the
                detail pane (which has room for a label) spells it out properly. */}
             <span class="cat-row-meta">
+              {itemCount > 0 && itemCountLabel && (
+                <span class="cat-placement-count">{itemCountLabel(itemCount)}</span>
+              )}
               {size && <span>{size}</span>}
               {added && <span>{added}</span>}
             </span>

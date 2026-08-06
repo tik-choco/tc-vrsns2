@@ -152,6 +152,8 @@ export type SessionApi = {
   /** Shared skybox image, independent of currentWorld (see Skybox's doc) — null means no sky is set. */
   currentSkybox: Skybox | null
   placedCount: number
+  /** Visible placements grouped by their catalog/content cid. */
+  placedCountsByCid: Readonly<Record<string, number>>
   /** How many of the placed objects are ours — the only ones we may edit. */
   ownPlacedCount: number
   /** Room-wide advisory rule for who may edit the world (see setWorldPolicy). */
@@ -635,6 +637,7 @@ export function useSession(): SessionApi {
   const [currentWorld, setCurrentWorld] = useState<WorldEnvironment | null>(null)
   const [currentSkybox, setCurrentSkybox] = useState<Skybox | null>(null)
   const [placedCount, setPlacedCount] = useState(0)
+  const [placedCountsByCid, setPlacedCountsByCid] = useState<Readonly<Record<string, number>>>({})
   const [ownPlacedCount, setOwnPlacedCount] = useState(0)
   const [worldPolicy, setWorldPolicyState] = useState<WorldEditPolicy>('owner')
   const [orphanCount, setOrphanCount] = useState(0)
@@ -1128,8 +1131,10 @@ export function useSession(): SessionApi {
     setMessages((prev) => [...prev.slice(-(MAX_MESSAGES - 1)), m])
   }, [])
 
-  const refreshPlacedCount = useCallback(() => {
-    setPlacedCount(worldRef.current?.listPlacedObjects().length ?? 0)
+  const refreshPlacedCounts = useCallback(() => {
+    const union = objects.current.union()
+    setPlacedCount(union.length)
+    setPlacedCountsByCid(objects.current.countsByCid())
   }, [])
 
   /**
@@ -1144,11 +1149,12 @@ export function useSession(): SessionApi {
     const world = worldRef.current
     if (!world) return
     const union = objects.current.union()
-    const synced = world.syncObjects(union, resolveBytes).then(refreshPlacedCount)
+    const synced = world.syncObjects(union, resolveBytes).then(refreshPlacedCounts)
     setPlacedCount(union.length)
+    setPlacedCountsByCid(objects.current.countsByCid())
     setOrphanCount(objects.current.orphanCount())
     return synced
-  }, [refreshPlacedCount])
+  }, [refreshPlacedCounts])
 
   /**
    * A gizmo drag finished. The edited placement joins our published set — for
@@ -1648,6 +1654,7 @@ export function useSession(): SessionApi {
     setEditModeState(false)
     setSelectedObject(null)
     setPlacedCount(0)
+    setPlacedCountsByCid({})
     setOwnPlacedCount(0)
     setOrphanCount(0)
     setMicState('off')
@@ -2491,7 +2498,7 @@ export function useSession(): SessionApi {
         } else {
           commitOwnObjects([...objects.current.own(), state])
         }
-        refreshPlacedCount()
+        refreshPlacedCounts()
         // A new object lands at the placer's feet and almost always has to be
         // moved, so placing IS the start of editing it: drop into the mode
         // with it selected instead of making the player come back and find it.
@@ -2506,7 +2513,7 @@ export function useSession(): SessionApi {
         setObjectBusy(false)
       }
     },
-    [commitOwnObjects, reconcileObjects, refreshPlacedCount, setEditMode],
+    [commitOwnObjects, reconcileObjects, refreshPlacedCounts, setEditMode],
   )
 
   /**
@@ -3385,6 +3392,7 @@ export function useSession(): SessionApi {
     currentWorld,
     currentSkybox,
     placedCount,
+    placedCountsByCid,
     ownPlacedCount,
     worldPolicy,
     orphanCount,

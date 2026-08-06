@@ -208,6 +208,7 @@ export const en = {
   'objects.clear': 'Clear all',
   'objects.selectPrompt': 'Select something to place.',
   'objects.count': '{count} placed',
+  'objects.placedCopies': 'Placed ×{count}',
   'objects.empty': 'No objects placed yet.',
   'objects.hint': 'GLB / GLTF models, images, video and audio are supported. Video and audio play positionally, so sound fades with distance.',
   'objects.invalid': 'That file could not be read as a model, image, video or audio file.',

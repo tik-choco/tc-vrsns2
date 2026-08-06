@@ -115,6 +115,17 @@ export class ObjectRegistry {
     return out
   }
 
+  /** Number of visible placements for each catalog/content id. */
+  countsByCid(): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const object of this.union()) {
+      // Box primitives intentionally have no cid and no catalog entry.
+      if (!object.cid) continue
+      counts[object.cid] = (counts[object.cid] ?? 0) + 1
+    }
+    return counts
+  }
+
   /**
    * The placements the local player may select and edit under `policy`.
    * Orphans are never editable: with no publisher, an edit could not reach

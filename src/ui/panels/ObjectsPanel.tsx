@@ -9,6 +9,7 @@ type Props = Pick<
   GameOverlayProps,
   | 'objectModels'
   | 'placedCount'
+  | 'placedCountsByCid'
   | 'ownPlacedCount'
   | 'orphanCount'
   | 'objectBusy'
@@ -81,6 +82,8 @@ export function ObjectsPanel(props: Props) {
       )}
       <CatalogPanel
         items={props.objectModels}
+        itemCounts={props.placedCountsByCid}
+        itemCountLabel={(count) => t('objects.placedCopies', { count })}
         currentCid={null}
         busy={props.objectBusy}
         accept={PLACEABLE_ACCEPT}

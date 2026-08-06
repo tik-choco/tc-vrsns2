@@ -30,6 +30,14 @@ describe('ObjectRegistry', () => {
     expect(reg.union().map((o) => o.id)).toEqual(['a', 'b', 'c'])
   })
 
+  it('counts visible placements by content id across owners and orphans', () => {
+    const reg = new ObjectRegistry()
+    reg.setOwn([obj('a', { cid: 'shared' }), obj('box', { cid: '', kind: 'box' })])
+    reg.applyRemote('peer-1', [obj('b', { cid: 'shared' }), obj('c', { cid: 'other' })])
+    reg.orphan('peer-1')
+    expect(reg.countsByCid()).toEqual({ shared: 2, other: 1 })
+  })
+
   it('treats publishing an id as claiming it, dropping it from ours', () => {
     const reg = new ObjectRegistry()
     reg.setOwn([obj('a'), obj('b')])
