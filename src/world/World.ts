@@ -885,10 +885,6 @@ export class World {
         break
       case 'say':
         this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt)
-        // Same single trigger as applyScriptEffects below — see WorldObjects
-        // .npcSpeak's doc for why this must fire for a REMOTE say too, not
-        // just a locally-produced one: every peer sees the bubble.
-        this.worldObjects.npcSpeak(effect.objectId, effect.text)
         break
       case 'sound':
         void this.playScriptSound(effect.objectId, effect.cid)
@@ -1012,7 +1008,8 @@ export class World {
   }
 
   /**
-   * Plays a synthesized NPC line at its placement, through the very same
+   * Plays a synthesized NPC line at its placement and shows its matching
+   * bubble only once that clip is ready, through the very same
    * one-shot PositionalAudio path a script's `sound` effect uses — so an NPC
    * voice attenuates with distance and tracks the body if it moves, with no
    * second audio route to keep in sync. Bytes come from the session layer
@@ -1022,9 +1019,9 @@ export class World {
    * stops whatever the previous line is still audibly playing (the audible
    * half of NpcVoice's per-NPC single-utterance guarantee — see its doc).
    */
-  playNpcSpeech(objectId: string, bytes: Uint8Array, mime?: string): void {
+  playNpcSpeech(objectId: string, text: string, bytes: Uint8Array, mime?: string): void {
     if (this.disposed) return
-    this.worldObjects.playNpcSpeech(objectId, bytes, mime)
+    this.worldObjects.playNpcSpeech(objectId, text, bytes, mime)
   }
 
   /**
@@ -1230,7 +1227,6 @@ export class World {
     for (const effect of effects) {
       if (effect.t === 'say') {
         this.scriptSayListener?.(effect.objectId, effect.text, effect.preempt)
-        this.worldObjects.npcSpeak(effect.objectId, effect.text)
       } else if (effect.t === 'sound') {
         void this.playScriptSound(effect.objectId, effect.cid)
       }

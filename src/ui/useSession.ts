@@ -816,8 +816,8 @@ export function useSession(): SessionApi {
    * TTS for NPC lines (R5.1). Runs on EVERY peer, not just the owner: the
    * `say` effect carries the text to everyone, and each tab synthesizes
    * locally rather than the owner shipping audio bytes over the room (see
-   * lib/ttsClient.ts). A tab with no TTS configured simply gets a silent NPC
-   * with a speech bubble — synthesizeSpeech returns null rather than throwing.
+   * lib/ttsClient.ts). A tab with no working TTS route gets neither audio nor
+   * a bubble for that line: the bubble now represents actual local playback.
    *
    * `analyze` runs on the AudioContext three's AudioListener already owns, so
    * lipsync analysis shares a clock with the audible playback instead of
@@ -890,9 +890,10 @@ export function useSession(): SessionApi {
 
   /**
    * Speaks one NPC line aloud. Called from the `say` listener below, which
-   * fires on every peer for both local and remote effects — the same single
-   * trigger that raises the speech bubble, so bubble and voice can never
-   * disagree about what was said. A non-NPC placement (an ordinary scripted
+   * fires on every peer for both local and remote effects. The bubble is
+   * raised only after synthesis succeeds, at the same point playback starts,
+   * so a dropped or superseded line cannot replace the text still being read.
+   * A non-NPC placement (an ordinary scripted
    * prop saying something) is ignored: those have no voice identity.
    *
    * `preempt` is the say effect's flag (see ScriptEffect.preempt): a chat
@@ -920,7 +921,7 @@ export function useSession(): SessionApi {
       .speak(objectId, request, distance, preempt)
       .then((clip) => {
         if (!clip) return
-        worldRef.current?.playNpcSpeech(objectId, clip.bytes, clip.mime)
+        worldRef.current?.playNpcSpeech(objectId, text, clip.bytes, clip.mime)
         startNpcLevelPump(objectId)
       })
       .catch((e) => {

@@ -175,14 +175,17 @@ export class NpcView {
    * branch instead of waiting a frame for `speaking` (bubble visibility) to
    * flip. A no-op for blank text (nothing to show or speak).
    */
-  showSpeech(text: string): void {
+  showSpeech(text: string, persistUntilStopped = false): void {
     const trimmed = text.trim()
     if (!trimmed) return
     // bubbleDwellMs(trimmed) is now only the TRAILING dwell after the last
     // line finishes revealing (see ChatBubble.show's doc) — not this
     // utterance's whole lifetime, so it is passed through to show() as-is
     // and NOT used to seed speakingRemaining below.
-    this.chatBubble.show(trimmed, bubbleDwellMs(trimmed))
+    // Synthesized speech owns the bubble for the exact lifetime of the audio:
+    // WorldObjects stops it from the audio element's ended/error callback.
+    // Other callers retain the estimated trailing dwell used by player chat.
+    this.chatBubble.show(trimmed, persistUntilStopped ? Number.POSITIVE_INFINITY : bubbleDwellMs(trimmed))
     this.mouth = INITIAL_MOUTH_STATE
     this.lastLevel = IDLE_SPEAKING_LEVEL
     // Whether THIS line has a real voice behind it is unknown until the first
@@ -309,7 +312,11 @@ export class NpcView {
     // World.collectNearbyPlayers) — both ends of the gaze vector go through
     // eyePosition() so the NPC meets a player's eyes instead of watching
     // their feet.
-    const headPos = eyePosition(origin, this.height)
+    // The placement scale lives on this.root, outside AvatarRig, so
+    // AvatarRig.getHeight() remains the model's unscaled height. Scale the
+    // complete ground-to-eye offset here; multiplying `height` alone would
+    // leave EYE_HEIGHT_BELOW_TOP at an incorrect fixed world-space size.
+    const headPos = eyePosition(origin, this.height, this.root.scale.y)
     this.gaze = stepGaze(this.gaze, headPos, this.root.rotation.y, target, delta)
 
     // Count down this NPC's own utterance deadline — see speakingRemaining's

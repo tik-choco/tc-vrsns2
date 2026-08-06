@@ -52,6 +52,20 @@ describe('eyePosition', () => {
     const tallOne = eyePosition({ x: 0, y: 0, z: 0 }, 1.9)
     expect(tallOne.y).toBeGreaterThan(shortOne.y)
   })
+
+  it('scales the complete ground-to-eye offset with the avatar root', () => {
+    const root = { x: 1, y: 0.5, z: -2 }
+    const height = 1.7
+    const eyeOffset = height - EYE_HEIGHT_BELOW_TOP
+
+    expect(eyePosition(root, height, 2).y).toBeCloseTo(root.y + eyeOffset * 2, 10)
+    expect(eyePosition(root, height, 0.5).y).toBeCloseTo(root.y + eyeOffset * 0.5, 10)
+  })
+
+  it('keeps the existing eye position when scale is omitted', () => {
+    const root = { x: 0, y: 3, z: 0 }
+    expect(eyePosition(root, 1.7)).toEqual(eyePosition(root, 1.7, 1))
+  })
 })
 
 describe('stepGaze', () => {

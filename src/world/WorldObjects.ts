@@ -983,18 +983,6 @@ export class WorldObjects {
   }
 
   /**
-   * Shows a speech bubble + (re)starts the level-driven mouth for an NPC's
-   * `say` effect — the ONE trigger, fired from World.applyScriptEffects AND
-   * applyRemoteScriptEffect alike (a local reply and a peer's reply reach
-   * this the same way), so every peer shows the bubble, never just the
-   * owner. A no-op for a non-NPC placement (nothing to animate) or an id
-   * that isn't tracked.
-   */
-  npcSpeak(objectId: string, text: string): void {
-    this.objects.get(objectId)?.npc?.showSpeech(text)
-  }
-
-  /**
    * Ends an NPC's current utterance VISUALLY AND AUDIBLY — bubble hidden,
    * mouth shut (see NpcView.stopSpeech), and the line's audio element
    * stopped (stopNpcSpeechAudio — the tracked half of playNpcSpeech). The
@@ -1075,8 +1063,9 @@ export class WorldObjects {
   }
 
   /**
-   * Plays a synthesized NPC line — the audible half of NpcVoice's "at most
-   * one utterance per NPC" guarantee (see NpcVoice's header). Same one-shot
+   * Plays a synthesized NPC line and shows its matching bubble — the audible
+   * and visual half of NpcVoice's "at most one utterance per NPC" guarantee.
+   * Same one-shot
    * PositionalAudio pipeline as playOneShot (including voiceAnchor), plus
    * per-NPC tracking: a NEW line for the same NPC stops whatever the old
    * line's audio element is still playing, so a preempting reply can never
@@ -1084,12 +1073,15 @@ export class WorldObjects {
    * dropped non-preempting line never reaches this method at all — the
    * decision lives in NpcVoice.speak).
    *
+   * The bubble is deliberately created here rather than when the `say` effect
+   * arrives: synthesis can fail, be dropped, or be superseded, and none of
+   * those unheard lines may replace the text for the clip still playing.
    * The tracked audio is also stopped by stopNpcSpeech, so the leave-
    * triggered stop is a REAL stop: bubble hidden, mouth shut, AND the audio
    * element silenced — not just the analysis graph (NpcVoice.stop disposes
    * that half; this class owns the audible half).
    */
-  playNpcSpeech(objectId: string, bytes: Uint8Array, mime?: string): void {
+  playNpcSpeech(objectId: string, text: string, bytes: Uint8Array, mime?: string): void {
     const entry = this.objects.get(objectId)
     const object = entry?.npc ? this.voiceAnchor(entry) : entry?.object
     if (!object || !this.listener) return
@@ -1102,18 +1094,29 @@ export class WorldObjects {
       URL.revokeObjectURL(url)
       return
     }
+    let cleaned = false
     const cleanup = (): void => {
+      if (cleaned) return
+      cleaned = true
       // Only the NEWEST line for this NPC may own the map entry — a stale
       // cleanup firing after a replacement (already stopped and cleaned up
       // by stopNpcSpeechAudio) must not delete the new entry, though it
       // still tears down its own audio.
-      if (this.npcSpeechAudio.get(objectId) === cleanup) this.npcSpeechAudio.delete(objectId)
+      const wasCurrent = this.npcSpeechAudio.get(objectId) === cleanup
+      if (wasCurrent) {
+        this.npcSpeechAudio.delete(objectId)
+        entry?.npc?.stopSpeech()
+      }
       object.remove(sound)
       sound.disconnect()
       stopMedia(audio, url)
     }
     this.npcSpeechAudio.set(objectId, cleanup)
     audio.addEventListener('ended', cleanup, { once: true })
+    audio.addEventListener('error', cleanup, { once: true })
+    // A say effect can still be dropped, fail, or be superseded while TTS is
+    // in flight. Update the bubble only for the clip that actually starts.
+    entry?.npc?.showSpeech(text, true)
     startMedia(audio, this.listener)
   }
 
