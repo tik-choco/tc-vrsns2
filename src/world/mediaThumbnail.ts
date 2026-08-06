@@ -1,7 +1,7 @@
 // Catalog-card thumbnails for placeable media. An image thumbnails as itself
-// and a video as a frame from just inside its start; models and audio have no
-// visual to grab, so they keep the letter-badge fallback the card already
-// draws. Output matches World.captureThumbnail's shape — a small cover-fitted
+// and a video as a frame from just inside its start. Models are rendered in a
+// disposable Three.js scene; audio keeps the letter-badge fallback. Output
+// matches World.captureThumbnail's shape — a small cover-fitted
 // JPEG data URL — so catalog.ts can publish it by the same path.
 //
 // Blob URLs are used rather than data URLs so a large upload is never
@@ -9,6 +9,8 @@
 // element it created. Any failure resolves to null: a missing thumbnail is
 // never a reason to fail an upload.
 import type { PlacedKind } from '../shared/types'
+import * as THREE from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 const THUMB_WIDTH = 320
 const THUMB_HEIGHT = 180
@@ -83,13 +85,74 @@ function videoThumbnail(url: string): Promise<string | null> {
   })
 }
 
+/** Render an embedded glTF/GLB model into a small catalog-card image. */
+async function modelThumbnail(bytes: Uint8Array): Promise<string | null> {
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  const gltf = await new GLTFLoader().parseAsync(buffer, '')
+  const model = gltf.scene
+  const box = new THREE.Box3().setFromObject(model)
+  if (box.isEmpty()) return null
+
+  const size = box.getSize(new THREE.Vector3())
+  const center = box.getCenter(new THREE.Vector3())
+  const radius = Math.max(size.length() / 2, 0.001)
+  const canvas = document.createElement('canvas')
+  canvas.width = THUMB_WIDTH
+  canvas.height = THUMB_HEIGHT
+
+  let renderer: THREE.WebGLRenderer | null = null
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, preserveDrawingBuffer: true })
+    renderer.setSize(THUMB_WIDTH, THUMB_HEIGHT, false)
+    renderer.setPixelRatio(1)
+    renderer.outputColorSpace = THREE.SRGBColorSpace
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.15
+
+    const scene = new THREE.Scene()
+    scene.background = new THREE.Color(0xf1f3f6)
+    scene.add(model)
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x667080, 2.1))
+    const key = new THREE.DirectionalLight(0xffffff, 2.6)
+    key.position.set(3, 5, 4)
+    scene.add(key)
+
+    const camera = new THREE.PerspectiveCamera(32, THUMB_WIDTH / THUMB_HEIGHT, radius / 100, radius * 100)
+    const verticalHalfFov = THREE.MathUtils.degToRad(camera.fov / 2)
+    const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * camera.aspect)
+    const limitingHalfFov = Math.min(verticalHalfFov, horizontalHalfFov)
+    const distance = (radius / Math.sin(limitingHalfFov)) * 1.12
+    const direction = new THREE.Vector3(1, 0.65, 1).normalize()
+    camera.position.copy(center).addScaledVector(direction, distance)
+    camera.lookAt(center)
+    camera.updateProjectionMatrix()
+    renderer.render(scene, camera)
+    return canvas.toDataURL('image/jpeg', THUMB_QUALITY)
+  } finally {
+    renderer?.dispose()
+    model.traverse((object) => {
+      const mesh = object as THREE.Mesh
+      mesh.geometry?.dispose()
+      const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []
+      for (const material of materials) material.dispose()
+    })
+  }
+}
+
 /** Best-effort thumbnail for a placeable asset; null when there is nothing to show. */
 export async function captureMediaThumbnail(
   bytes: Uint8Array,
   kind: PlacedKind,
   mime?: string,
 ): Promise<string | null> {
-  if (kind !== 'image' && kind !== 'video') return null
+  if (kind === 'audio') return null
+  if (kind === 'model') {
+    try {
+      return await modelThumbnail(bytes)
+    } catch {
+      return null
+    }
+  }
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
   const url = URL.createObjectURL(new Blob([buffer], mime ? { type: mime } : undefined))
   try {

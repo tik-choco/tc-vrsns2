@@ -667,6 +667,7 @@ export function useSession(): SessionApi {
 
   // Guards catalog-thumb hydration (below) against setting state after unmount.
   const mountedRef = useRef(true)
+  const objectThumbBackfills = useRef(new Set<string>())
   useEffect(() => () => { mountedRef.current = false }, [])
 
   /**
@@ -687,13 +688,45 @@ export function useSession(): SessionApi {
     [],
   )
 
+  /**
+   * Older object entries predate model thumbnails. Fill those in lazily from
+   * their catalog bytes, one at a time, and persist them through the same
+   * thumbCid path used by new uploads. Existing thumbnails and audio entries
+   * are deliberately skipped.
+   */
+  const backfillObjectThumbs = useCallback((items: CatalogItem[]) => {
+    void (async () => {
+      for (const item of items) {
+        if (item.thumb || catalogHasThumb('object', item.cid) || objectThumbBackfills.current.has(item.cid)) continue
+        const asset = placeableAssetOf(item.cid)
+        if (asset.kind === 'audio') continue
+        objectThumbBackfills.current.add(item.cid)
+        try {
+          const bytes = await catalogBytes(item.cid)
+          const thumb = await captureMediaThumbnail(bytes, asset.kind, asset.mime)
+          if (!thumb) continue
+          await setCatalogThumb('object', item.cid, thumb)
+          if (mountedRef.current) {
+            setObjectModels((prev) => mergeCatalogThumbs(prev, [{ ...item, thumb }]))
+          }
+        } catch {
+          // Best-effort: an unavailable/corrupt legacy item stays a letter tile.
+        } finally {
+          objectThumbBackfills.current.delete(item.cid)
+        }
+      }
+    })()
+  }, [])
+
   // Hydrate the initial catalog lists once on mount (they're loaded raw above
   // via useState's lazy initializer, before any thumbCid is resolved).
   useEffect(() => {
     hydrateThumbs('avatar', listCatalog('avatar'), setAvatars)
     hydrateThumbs('world', listCatalog('world'), setWorlds)
-    hydrateThumbs('object', listCatalog('object'), setObjectModels)
-  }, [hydrateThumbs])
+    const objects = listCatalog('object')
+    hydrateThumbs('object', objects, setObjectModels)
+    backfillObjectThumbs(objects)
+  }, [backfillObjectThumbs, hydrateThumbs])
 
   // One-time background pass to relabel pre-R6 town-character equips that
   // were filed as plain uploads (see foreignMigration.ts). Fire-and-forget:
@@ -2416,7 +2449,8 @@ export function useSession(): SessionApi {
         thumb,
       })
       const list = listCatalog('object')
-      setObjectModels(list)
+      // Keep the freshly generated data URL while thumbCid hydration resolves.
+      setObjectModels(mergeCatalogThumbs(list, [item]))
       hydrateThumbs('object', list, setObjectModels)
       return item.cid
     } catch (e) {
