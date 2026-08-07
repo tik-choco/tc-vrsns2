@@ -24,6 +24,13 @@ const NOTIFICATION_TTL_MS = 6000
  * toast is actually dropped from state. */
 const NOTIFICATION_EXIT_MS = 220
 
+/** Must stay in step with .chat-panel--closing's animation-duration
+ * (var(--dur-med)) in style.css — how long the history half is kept mounted
+ * after logOpen goes false so the chat-panel-out slide can actually play,
+ * instead of the panel's content vanishing before the CSS exit animation
+ * even starts. */
+const CHAT_PANEL_EXIT_MS = 240
+
 type Props = {
   messages: ChatMessage[]
   onSend: (text: string) => void
@@ -122,7 +129,40 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId
     mountedRef.current = false
   }, [])
 
+  // The history half (header + body) stays mounted for CHAT_PANEL_EXIT_MS
+  // after `logOpen` goes false, so .chat-panel--closing's slide-out actually
+  // gets to play instead of the content disappearing before the CSS
+  // animation starts — mirrors the toast leaving/removal pattern above, one
+  // level up (the whole panel, not a single row).
+  const [panelRendered, setPanelRendered] = useState(logOpen)
+  const [panelClosing, setPanelClosing] = useState(false)
   useEffect(() => {
+    if (logOpen) {
+      setPanelClosing(false)
+      setPanelRendered(true)
+      return
+    }
+    if (!panelRendered) return
+    setPanelClosing(true)
+    const id = window.setTimeout(() => {
+      if (!mountedRef.current) return
+      setPanelRendered(false)
+      setPanelClosing(false)
+    }, CHAT_PANEL_EXIT_MS)
+    return () => window.clearTimeout(id)
+    // panelRendered deliberately excluded: this effect should only react to
+    // logOpen changing, not to its own setPanelRendered(false) call re-firing it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logOpen])
+
+  useEffect(() => {
+    // Skip on the transition to closed: the body is still mounted through
+    // panelClosing (see below), but scrolling it serves no one once it's on
+    // its way out — and el.scrollHeight/scrollTop force a synchronous
+    // layout, which right on the same tick the chat-panel-out animation
+    // starts is exactly the kind of main-thread work that shows up as a
+    // dropped frame in the slide-out.
+    if (!logOpen) return
     const el = panelBodyRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, logOpen])
@@ -252,15 +292,26 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId
           mobile chat button) before the panel has ever been opened; opening
           is driven entirely by the .chat-panel--open modifier below
           (opacity/pointer-events), never by mount/unmount, so that ref is
-          never lost. Only the history half (header + body) mounts/unmounts
-          with `logOpen` — that's what lets the modal-in pop animation replay
-          on every open, and keeps a closed panel from doing pointless scroll
+          never lost. The history half (header + body) mounts/unmounts with
+          `panelRendered`, which follows `logOpen` but lags behind it by
+          CHAT_PANEL_EXIT_MS on the way to false (see that state's own
+          comment above) — that's what lets both the chat-panel-in slide-in
+          replay on every open AND chat-panel-out actually get to play on
+          close, while keeping a closed panel from doing pointless scroll
           bookkeeping. .chat-msg / .chat-name / .chat-text are read directly
           by several e2e harnesses (scripts/e2e-npc.mjs, e2e-bubble.mjs,
           e2e-npc-edit.mjs, e2e-sync.mjs) — those three selectors must keep
           existing here. */}
-      <div class={logOpen ? 'chat-panel chat-panel--open' : 'chat-panel'}>
-        {logOpen && (
+      <div
+        class={
+          logOpen
+            ? 'chat-panel chat-panel--open'
+            : panelClosing
+              ? 'chat-panel chat-panel--closing'
+              : 'chat-panel'
+        }
+      >
+        {panelRendered && (
           <>
             <div class="chat-panel-header">
               <button type="button" class="icon-btn chat-panel-close" aria-label={t('chat.close')} onClick={closeLog}>

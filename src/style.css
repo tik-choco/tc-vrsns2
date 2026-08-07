@@ -1061,15 +1061,34 @@ body {
   overflow: hidden;
   z-index: 5;
   /* Closed by default: fully invisible and click-through (see the header
-     comment above for why this is a CSS state, not a mount/unmount). No
-     transition on the way OUT — matches the old conditionally-rendered
-     panel's instant disappearance; only the way IN is animated, below. */
+     comment above for why this is a CSS state, not a mount/unmount). Both
+     directions are animated below (--open on the way in, --closing on the
+     way out) — ChatPanel.tsx holds the history half mounted for the
+     duration of --closing's animation before actually dropping it, so the
+     exit gets the same eased treatment as the entrance instead of the old
+     instant snap. */
   opacity: 0;
   pointer-events: none;
 }
+.chat-panel--open,
+.chat-panel--closing {
+  /* Animating transform on an element that also carries backdrop-filter is
+     expensive — without this hint the browser tends to re-sample the
+     backdrop blur against the moving box on every frame instead of
+     compositing the already-blurred layer, which is what actually shows up
+     as jank on the slide. Scoped to these two states only, not the base
+     .chat-panel rule, so an idle (closed or fully open) panel doesn't carry
+     the promoted-layer cost indefinitely. */
+  will-change: transform, opacity;
+}
 .chat-panel--open {
   pointer-events: auto;
-  animation: modal-in var(--dur-med) var(--ease-out) both;
+  animation: chat-panel-in var(--dur-med) var(--ease-out) both;
+}
+.chat-panel--closing {
+  /* Not interactive while it's on its way out. */
+  pointer-events: none;
+  animation: chat-panel-out var(--dur-med) var(--ease) both;
 }
 .chat-panel-header {
   display: flex;
@@ -2527,6 +2546,39 @@ body {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+/* .chat-panel's own entrance/exit — a slide+fade toward/away from its own
+   inline-start edge (where it's anchored; see .chat-panel's own comment),
+   rather than modal-in's scale-from-center, so it reads as a drawer sliding
+   off its own edge instead of a dialog popping up in place. --slide-x is
+   the physical translateX distance and flips sign under RTL so "toward the
+   inline-start edge" stays correct once .chat-panel itself mirrors to the
+   right (document.documentElement.dir, set by src/i18n/index.ts). */
+.chat-panel {
+  --slide-x: -20px;
+}
+:dir(rtl) .chat-panel {
+  --slide-x: 20px;
+}
+@keyframes chat-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--slide-x));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes chat-panel-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(var(--slide-x));
   }
 }
 /* Shared modal/menu entrance — a soft ease-out scale+fade rather than an
