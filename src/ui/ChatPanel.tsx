@@ -162,15 +162,16 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId
     if (logOpen) setToasts([])
   }, [logOpen])
 
-  // Send, then blur back to the world (mirrors tc-vrsns: Enter sends + closes
-  // the composer, and pressing Enter again reopens it) — but unlike the old
+  // Send, keeping focus in the input so multiple messages can be typed in a
+  // row without the world stealing focus back (and without the composer
+  // itself blinking closed and reopening on every send) — unlike the old
   // single-block chat, sending does NOT close the history panel: chatting is
   // exactly the kind of activity the R7 brief says must leave it open.
   const send = () => {
     const text = draft.trim()
     if (text) onSend(text)
     setDraft('')
-    inputRef.current?.blur()
+    inputRef.current?.focus()
   }
 
   // The explicit "I'm done" path — Esc, or Enter on an empty draft (see

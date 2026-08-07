@@ -160,6 +160,38 @@ describe('history trim', () => {
   })
 })
 
+describe('system prompt date/time', () => {
+  it('puts the current date and time into the system prompt', async () => {
+    // Built from LOCAL components (like formatNpcTimestamp reads them back),
+    // so the expected string is identical on any machine or timezone.
+    const clock = makeClock(new Date(2026, 6, 7, 18, 41).getTime())
+    const { deps, chat } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+    runtime.heard(speaker(), 'hi')
+    await flush()
+    const system = chat.mock.calls[0]?.[0]?.[0] as ChatMessage
+    expect(system.role).toBe('system')
+    expect(system.content).toContain('2026-07-07 18:41')
+  })
+
+  it('rebuilds the timestamp fresh per reply, never cached', async () => {
+    const clock = makeClock(new Date(2026, 6, 7, 8, 0).getTime())
+    const { deps, chat } = makeDeps({}, clock)
+    const runtime = new NpcRuntime(deps)
+    runtime.setPlacements([placement()])
+    runtime.heard(speaker(), 'good morning')
+    await flush()
+    clock.advance(10 * 60 * 60 * 1000) // 10 hours later, same NPC, new line
+    runtime.heard(speaker(), 'good evening')
+    await flush()
+    const firstSystem = chat.mock.calls[0]?.[0]?.[0] as ChatMessage
+    const secondSystem = chat.mock.calls[1]?.[0]?.[0] as ChatMessage
+    expect(firstSystem.content).toContain('2026-07-07 08:00')
+    expect(secondSystem.content).toContain('2026-07-07 18:00')
+  })
+})
+
 describe('reply sanitization', () => {
   it('collapses whitespace/newlines and strips surrounding quotes', async () => {
     const { deps, say, chat } = makeDeps()

@@ -518,6 +518,11 @@ async function runScenario(browser) {
     )
   }
   log('confirmed: the near-radius LLM call\'s system prompt contained the seeded persona text')
+  const TS_RE = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/
+  if (!systemMsg || !TS_RE.test(systemMsg.content)) {
+    throw new Error(`the LLM call's system prompt carried no current date/time (YYYY-MM-DD HH:mm): ${JSON.stringify(systemMsg)}`)
+  }
+  log("confirmed: the near-radius LLM call's system prompt carried the current date and time")
 
   const callsAfterNear = calls.length
 
