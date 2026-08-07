@@ -136,6 +136,19 @@ const STAGE_DIRECTION =
   'Keep replies to 1-3 short sentences of plain speech: no narration, no stage directions, no markdown, no emoting asterisks. ' +
   'Reply in the language the other person used.'
 
+/**
+ * The owning peer's LOCAL wall-clock — the only clock the runtime has, since
+ * the LLM runs on that peer (see the file header's owner-authoritative note).
+ * Formatted `YYYY-MM-DD HH:mm` so the persona can reason about it naturally
+ * ("good evening", "just this morning"). Built from Date's local getters, so
+ * the same instant reads as the owner's own time wherever that peer is.
+ */
+export function formatNpcTimestamp(ms: number): string {
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 /** A leading "Name: " echo of the speaker cue the model was fed — only matches a letter-led, colon-terminated prefix so it doesn't eat a reply that legitimately starts with something like "10:30". */
 const LEADING_NAME_ECHO_RE = /^[A-Za-z][A-Za-z0-9 '.-]{0,39}:\s+/
 
@@ -592,7 +605,12 @@ export class NpcRuntime {
     speaker: NpcSpeaker,
     turn: { kind: 'chat'; heardText: string } | { kind: 'greet' },
   ): ChatMessage[] {
-    const system: ChatMessage = { role: 'system', content: `${persona}\n\n${STAGE_DIRECTION}` }
+    // Rebuilt fresh every call, so the timestamp reflects NOW (the moment of
+    // this reply), not the moment the NPC was placed or last spoke.
+    const system: ChatMessage = {
+      role: 'system',
+      content: `${persona}\n\n${STAGE_DIRECTION}\n\nThe current date and time is ${formatNpcTimestamp(this.deps.now())}.`,
+    }
     const userTurn: ChatMessage =
       turn.kind === 'chat'
         ? { role: 'user', content: `${speaker.name}: ${turn.heardText}` }

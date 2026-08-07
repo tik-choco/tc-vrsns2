@@ -681,6 +681,7 @@ export function GameOverlay(props: GameOverlayProps) {
         <span class="hint"><kbd class="kbd">G</kbd>{t('hud.hintView')}</span>
         <span class="hint"><kbd class="kbd">C</kbd>{t('hud.hintCrouch')}</span>
         {canEdit && <span class="hint"><kbd class="kbd">E</kbd>{t('hud.hintEdit')}</span>}
+        <span class="hint"><kbd class="kbd">Shift</kbd>{t('hud.hintSprint')}</span>
       </div>
 
       {/* Chat (R7): a persistent tc-chat-style history panel, opened by
