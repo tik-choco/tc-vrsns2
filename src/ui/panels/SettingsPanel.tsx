@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks'
-import { Sun, Moon, Monitor } from 'lucide-preact'
+import { Sun, Moon, Monitor, CircleHelp } from 'lucide-preact'
 import { useTranslation } from '../../i18n'
 import type { GameOverlayProps } from '../uiContract'
 import { PanelShell } from './PanelShell'
@@ -7,7 +7,7 @@ import { LanguageSelect } from '../LanguageSelect'
 import { AccentColor } from '../AccentColor'
 import { useTheme, type Theme } from '../theme'
 
-type Props = Pick<GameOverlayProps, 'profile' | 'onUpdateProfile'> & { onClose: () => void }
+type Props = Pick<GameOverlayProps, 'profile' | 'onUpdateProfile'> & { onClose: () => void; onStartOnboarding: () => void }
 
 type Quality = 'settings.qualityLow' | 'settings.qualityMedium' | 'settings.qualityHigh'
 const QUALITIES: Quality[] = ['settings.qualityLow', 'settings.qualityMedium', 'settings.qualityHigh']
@@ -18,7 +18,7 @@ const THEMES: { value: Theme; labelKey: 'settings.themeLight' | 'settings.themeD
   { value: 'system', labelKey: 'settings.themeSystem', Icon: Monitor },
 ]
 
-export function SettingsPanel({ profile, onUpdateProfile, onClose }: Props) {
+export function SettingsPanel({ profile, onUpdateProfile, onClose, onStartOnboarding }: Props) {
   const { t } = useTranslation()
   const [theme, setTheme] = useTheme()
   const [name, setName] = useState(profile.name)
@@ -96,6 +96,14 @@ export function SettingsPanel({ profile, onUpdateProfile, onClose }: Props) {
               </button>
             ))}
           </div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">{t('settings.guide')}</span>
+          <button type="button" class="btn btn-ghost settings-guide" onClick={onStartOnboarding}>
+            <CircleHelp size={17} aria-hidden="true" />
+            {t('settings.guideStart')}
+          </button>
         </div>
 
         <button type="submit" class="btn btn-primary settings-save" disabled={!nameOk || (!dirty && !saved)}>

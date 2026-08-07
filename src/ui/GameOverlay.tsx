@@ -46,6 +46,8 @@ import { RoomPanel } from './panels/RoomPanel'
 import { DiscoveryPanel } from './panels/DiscoveryPanel'
 import { SettingsPanel } from './panels/SettingsPanel'
 import { AiPanel } from './panels/AiPanel'
+import { Onboarding } from './Onboarding'
+import { markOnboardingDone, shouldShowOnboarding } from '../lib/onboarding'
 
 type PanelId = 'avatar' | 'world' | 'objects' | 'characters' | 'room' | 'discover' | 'ai' | 'settings'
 
@@ -103,6 +105,9 @@ export function GameOverlay(props: GameOverlayProps) {
   // only literal input focus (chatFocused) may freeze them, or they'd be
   // stuck with no visible reason why.
   const [chatLogOpen, setChatLogOpen] = useState(false)
+  const [onboardingOpen, setOnboardingOpen] = useState(shouldShowOnboarding)
+  const [movementSignal, setMovementSignal] = useState(0)
+  const [viewSignal, setViewSignal] = useState(0)
   // The "Describe it…" dialog (R3), opened from EditToolbar's Behavior
   // picker. Owned here (not by EditToolbar) because, like a panel, it must
   // gate world input and take over Escape/Delete/V while it's up — see the
@@ -361,6 +366,20 @@ export function GameOverlay(props: GameOverlayProps) {
   }
 
   const closePanel = () => setPanel(null)
+
+  const closeOnboarding = () => {
+    markOnboardingDone()
+    setOnboardingOpen(false)
+  }
+
+  const startOnboarding = () => {
+    setPanel(null)
+    setMenuOpen(false)
+    setChatLogOpen(false)
+    setMovementSignal(0)
+    setViewSignal(0)
+    setOnboardingOpen(true)
+  }
 
   // Window-level drag-and-drop import. Registered once on mount and torn
   // down on unmount, which for this component only ever happens by leaving
@@ -837,11 +856,17 @@ export function GameOverlay(props: GameOverlayProps) {
       {/* Mobile on-screen controls (CSS-gated to touch devices) */}
       <MobileControls
         micState={micState}
-        onMove={props.onMobileMove}
+        onMove={(x, y) => {
+          if (x !== 0 || y !== 0) setMovementSignal((n) => n + 1)
+          props.onMobileMove(x, y)
+        }}
         onJump={props.onMobileJump}
         onSprint={props.onMobileSprint}
         onCrouch={props.onMobileCrouch}
-        onToggleView={props.onToggleView}
+        onToggleView={() => {
+          setViewSignal((n) => n + 1)
+          props.onToggleView()
+        }}
         onToggleMic={props.onToggleMic}
         onOpenMenu={() => setMenuOpen(true)}
         onOpenChat={() => setChatFocus((n) => n + 1)}
@@ -889,7 +914,16 @@ export function GameOverlay(props: GameOverlayProps) {
       {panel === 'room' && <RoomPanel {...props} onClose={closePanel} />}
       {panel === 'discover' && <DiscoveryPanel {...props} onClose={closePanel} />}
       <AiPanel active={panel === 'ai'} onClose={closePanel} />
-      {panel === 'settings' && <SettingsPanel {...props} onClose={closePanel} />}
+      {panel === 'settings' && <SettingsPanel {...props} onClose={closePanel} onStartOnboarding={startOnboarding} />}
+      {onboardingOpen && (
+        <Onboarding
+          chatFocused={chatFocused}
+          menuOpen={menuOpen}
+          movementSignal={movementSignal}
+          viewSignal={viewSignal}
+          onClose={closeOnboarding}
+        />
+      )}
     </div>
   )
 }
