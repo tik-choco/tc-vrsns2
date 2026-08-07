@@ -1304,6 +1304,327 @@ body {
    The hamburger dock: a glass modal with a 3-column grid of tonal nav tiles.
    Items stagger in on open for a touch of polish. */
 
+/* --- First-run controls tour ---------------------------------------------- */
+
+.onboarding {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  justify-items: center;
+  color: var(--text);
+}
+
+.onboarding-modal {
+  place-items: center;
+  padding: var(--sp-4);
+  background: var(--scrim);
+  backdrop-filter: blur(8px);
+  animation: fade var(--dur-med) ease both;
+}
+
+.onboarding-coach {
+  align-items: start;
+  padding: calc(var(--sa-t) + var(--sp-5)) var(--sp-4) var(--sp-4);
+  pointer-events: none;
+}
+
+.onboarding-card {
+  position: relative;
+  inline-size: min(38rem, 100%);
+  padding: var(--sp-6);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  background: var(--glass-2);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(calc(var(--blur) + 8px));
+  text-align: center;
+  animation: modal-in var(--dur-med) var(--ease-out) both;
+}
+
+.onboarding-card.is-coach {
+  inline-size: min(46rem, calc(100% - 7rem));
+  padding: var(--sp-4) 3.25rem var(--sp-4) var(--sp-4);
+  pointer-events: none;
+}
+
+.onboarding-card h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 1.75rem);
+  line-height: 1.25;
+}
+
+.onboarding-close {
+  position: absolute;
+  inset-block-start: var(--sp-3);
+  inset-inline-end: var(--sp-3);
+  display: inline-grid;
+  place-items: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.onboarding-close:hover {
+  color: var(--text);
+  background: var(--fill-2);
+}
+
+.onboarding-hero {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 5rem;
+  block-size: 5rem;
+  margin-block-end: var(--sp-3);
+  border-radius: 1.5rem;
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+
+.onboarding-hero.is-success {
+  background: var(--success-tint);
+  color: var(--success);
+}
+
+.onboarding-eyebrow {
+  margin: 0 0 var(--sp-2);
+  color: var(--accent-strong);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.onboarding-copy {
+  max-inline-size: 31rem;
+  margin: var(--sp-3) auto 0;
+  color: var(--text-dim);
+  line-height: 1.75;
+}
+
+.onboarding-preview {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-block: var(--sp-5);
+}
+
+.onboarding-preview span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+  font-weight: 700;
+}
+
+.onboarding-start {
+  inline-size: min(20rem, 100%);
+}
+
+.onboarding-skip-link {
+  display: block;
+  margin: var(--sp-3) auto 0;
+  padding: var(--sp-1) var(--sp-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.onboarding-coach-content {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+  text-align: start;
+}
+
+.onboarding-coach-icon {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  border-radius: var(--r-md);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+
+.onboarding-coach-text h2 {
+  font-size: 1rem;
+}
+
+.onboarding-coach-text p {
+  margin: 0.25rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.onboarding-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+}
+
+.onboarding-keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1.75rem);
+  gap: 0.2rem;
+}
+
+.onboarding-keys > :first-child { grid-column: 2; }
+.onboarding-keys > span { grid-column: 1; }
+
+.onboarding kbd {
+  display: inline-grid;
+  place-items: center;
+  min-inline-size: 1.75rem;
+  block-size: 1.75rem;
+  padding-inline: 0.35rem;
+  border: 1px solid var(--border-strong);
+  border-block-end-width: 3px;
+  border-radius: 0.4rem;
+  background: var(--surface-solid);
+  color: var(--text);
+  font: 700 0.75rem/1 var(--font-mono, ui-monospace, monospace);
+}
+
+.onboarding-keys.is-complete kbd,
+.onboarding-wide-key {
+  border-color: var(--accent-line) !important;
+  color: var(--accent-strong) !important;
+}
+
+.onboarding-wide-key {
+  min-inline-size: 4.5rem !important;
+}
+
+.onboarding-success {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--success);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.onboarding-key-row {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 0.15rem var(--sp-2);
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.onboarding-touch-copy {
+  display: none;
+  max-inline-size: 9rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.onboarding-mouse-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-inline-size: 10rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.onboarding-mouse-action svg {
+  flex: none;
+  color: var(--accent-strong);
+}
+
+.onboarding-wheel {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--accent-strong);
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.onboarding-summary {
+  display: grid;
+  gap: var(--sp-2);
+  max-inline-size: 23rem;
+  margin: var(--sp-5) auto;
+  padding: 0;
+  list-style: none;
+  text-align: start;
+}
+
+.onboarding-summary li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+
+.onboarding-summary svg {
+  flex: none;
+  color: var(--success);
+}
+
+.onboarding-progress {
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-block-start: var(--sp-4);
+}
+
+.onboarding-progress span {
+  inline-size: 1.25rem;
+  block-size: 0.25rem;
+  border-radius: var(--r-pill);
+  background: var(--fill-3);
+  transition: background var(--dur-med) var(--ease), inline-size var(--dur-med) var(--ease);
+}
+
+.onboarding-progress span.is-active {
+  inline-size: 2rem;
+  background: var(--accent);
+}
+
+@media (pointer: coarse) {
+  .onboarding-touch-copy { display: inline; }
+  .onboarding-wide-key { display: none !important; }
+  .onboarding-mouse-action { display: none; }
+}
+
+@media (max-width: 640px) {
+  .onboarding-card { padding: var(--sp-5); }
+  .onboarding-card.is-coach {
+    inline-size: 100%;
+    padding: var(--sp-3) 2.75rem var(--sp-3) var(--sp-3);
+  }
+  .onboarding-coach { padding: calc(var(--sa-t) + 4.75rem) var(--sp-3) var(--sp-3); }
+  .onboarding-coach-content { grid-template-columns: auto minmax(0, 1fr); }
+  .onboarding-action { grid-column: 1 / -1; }
+  .onboarding-preview { margin-block: var(--sp-4); }
+}
+
 .menu-backdrop {
   position: absolute;
   inset: 0;
@@ -2207,6 +2528,12 @@ body {
 }
 .settings-save {
   align-self: flex-start;
+}
+
+.settings-guide {
+  justify-content: flex-start;
+  gap: var(--sp-2);
+  inline-size: 100%;
 }
 
 .seg {
