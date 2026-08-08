@@ -37,6 +37,8 @@ type Props = {
   onUpload: (file: File) => void
   /** Detail + action area for the selected item (equip / apply / place / remove). */
   renderActions: (item: CatalogItem, isCurrent: boolean) => ComponentChildren
+  /** Optional catalog-specific visual for the selected item's preview pane. */
+  renderPreview?: (item: CatalogItem) => ComponentChildren
   /** Optional per-item usage count, shown in cards, rows, and the preview. */
   itemCounts?: Readonly<Record<string, number>>
   itemCountLabel?: (count: number) => string
@@ -80,6 +82,7 @@ export function CatalogPanel({
   defaultCard,
   onUpload,
   renderActions,
+  renderPreview,
   itemCounts,
   itemCountLabel,
   footer,
@@ -334,7 +337,7 @@ export function CatalogPanel({
       <div class="catalog-preview">
         {selectedItem ? (
           <>
-            {selectedItem.thumb ? (
+            {renderPreview ? renderPreview(selectedItem) : selectedItem.thumb ? (
               <img class="preview-thumb" src={selectedItem.thumb} alt="" />
             ) : (
               <div class="preview-thumb preview-thumb-blank" aria-hidden="true">

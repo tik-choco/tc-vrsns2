@@ -1184,6 +1184,12 @@ body {
   font-weight: 700;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
   box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.chat-avatar-image {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
 }
 .chat-bubble-col {
   display: flex;
@@ -2209,6 +2215,33 @@ body {
   border-radius: var(--r-md);
   object-fit: cover;
   background: var(--fill-2);
+}
+.avatar-preview-3d {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+}
+.avatar-preview-fallback,
+.avatar-preview-canvas {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+}
+.avatar-preview-fallback {
+  object-fit: contain;
+}
+.avatar-preview-canvas {
+  display: block;
+  opacity: 0;
+  cursor: grab;
+  transition: opacity var(--dur-med) var(--ease);
+}
+.avatar-preview-canvas.is-ready {
+  opacity: 1;
+}
+.avatar-preview-canvas:active {
+  cursor: grabbing;
 }
 .preview-thumb-blank {
   display: flex;

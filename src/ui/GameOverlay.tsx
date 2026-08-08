@@ -711,6 +711,7 @@ export function GameOverlay(props: GameOverlayProps) {
           its state lives here rather than inside ChatPanel. */}
       <ChatPanel
         messages={props.messages}
+        avatarThumbs={props.avatarThumbs}
         onSend={props.onSendChat}
         onFocusChange={setChatFocused}
         focusSignal={chatFocus}

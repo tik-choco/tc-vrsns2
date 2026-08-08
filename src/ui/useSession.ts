@@ -48,6 +48,7 @@ import type { ScreenProjection } from './ScriptWindow'
 import { detectPlacedAsset, MAX_PLACEABLE_BYTES, MAX_SKYBOX_BYTES, SKYBOX_MIME_TYPES } from '../world/mediaFormat'
 import { shrinkImageForPlacement } from '../storage/imageResize'
 import { captureMediaThumbnail } from '../world/mediaThumbnail'
+import { extractVrmThumbnail } from '../world/vrmLoader'
 import { RoomSession } from '../net/RoomSession'
 import { OBJECT_NAME_MAX_LEN } from '../net/protocol'
 import { DiscoverySession, type DiscoveredRoom } from '../net/DiscoverySession'
@@ -134,6 +135,7 @@ export type SessionApi = {
   roomId: string
   peerCount: number
   messages: ChatMessage[]
+  avatarThumbs: Readonly<Record<string, string>>
   micState: MicState
   profile: PlayerProfile
   inviteUrl: string
@@ -628,6 +630,7 @@ export function useSession(): SessionApi {
   const [profile, setProfileState] = useState<PlayerProfile>(profileRef.current)
 
   const [avatars, setAvatars] = useState<CatalogItem[]>(() => listCatalog('avatar'))
+  const [remoteAvatarThumbs, setRemoteAvatarThumbs] = useState<Readonly<Record<string, string>>>({})
   const [worlds, setWorlds] = useState<CatalogItem[]>(() => listCatalog('world'))
   const [objectModels, setObjectModels] = useState<CatalogItem[]>(() => listCatalog('object'))
   const [townCharacters, setTownCharacters] = useState<CharacterIndexEntry[]>(() => listTownCharacters())
@@ -667,6 +670,8 @@ export function useSession(): SessionApi {
 
   // Guards catalog-thumb hydration (below) against setting state after unmount.
   const mountedRef = useRef(true)
+  const avatarThumbBackfills = useRef(new Set<string>())
+  const remoteAvatarThumbRequests = useRef(new Set<string>())
   const objectThumbBackfills = useRef(new Set<string>())
   useEffect(() => () => { mountedRef.current = false }, [])
 
@@ -687,6 +692,53 @@ export function useSession(): SessionApi {
     },
     [],
   )
+
+  /**
+   * Avatar uploads historically never received catalog thumbnails. Extract
+   * the creator-provided image embedded in both new and legacy VRMs and
+   * persist it so the avatar picker has visual cards without photographing
+   * the 3D model ourselves. A VRM with no embedded image stays a letter tile.
+   */
+  const backfillAvatarThumbs = useCallback((items: CatalogItem[]) => {
+    void (async () => {
+      for (const item of items) {
+        if (item.thumb || catalogHasThumb('avatar', item.cid) || avatarThumbBackfills.current.has(item.cid)) continue
+        avatarThumbBackfills.current.add(item.cid)
+        try {
+          const bytes = await catalogBytes(item.cid)
+          const thumb = await extractVrmThumbnail(bytes)
+          if (!thumb) continue
+          await setCatalogThumb('avatar', item.cid, thumb)
+          if (mountedRef.current) {
+            setAvatars((prev) => mergeCatalogThumbs(prev, [{ ...item, thumb }]))
+          }
+        } catch {
+          // Best-effort: an unavailable/corrupt avatar stays a letter tile.
+        } finally {
+          avatarThumbBackfills.current.delete(item.cid)
+        }
+      }
+    })()
+  }, [])
+
+  /** Extracts an in-memory embedded thumbnail for a remote avatar that is not in our catalog. */
+  const captureRemoteAvatarThumb = useCallback((cid: string) => {
+    if (catalogHasThumb('avatar', cid) || remoteAvatarThumbRequests.current.has(cid)) return
+    remoteAvatarThumbRequests.current.add(cid)
+    void (async () => {
+      try {
+        const bytes = await catalogBytes(cid)
+        const thumb = await extractVrmThumbnail(bytes)
+        if (thumb && mountedRef.current) {
+          setRemoteAvatarThumbs((prev) => (prev[cid] ? prev : { ...prev, [cid]: thumb }))
+        }
+      } catch {
+        // Chat keeps its colored initial when the remote model is unavailable.
+      } finally {
+        remoteAvatarThumbRequests.current.delete(cid)
+      }
+    })()
+  }, [])
 
   /**
    * Older object entries predate model thumbnails. Fill those in lazily from
@@ -721,12 +773,14 @@ export function useSession(): SessionApi {
   // Hydrate the initial catalog lists once on mount (they're loaded raw above
   // via useState's lazy initializer, before any thumbCid is resolved).
   useEffect(() => {
-    hydrateThumbs('avatar', listCatalog('avatar'), setAvatars)
+    const avatars = listCatalog('avatar')
+    hydrateThumbs('avatar', avatars, setAvatars)
+    backfillAvatarThumbs(avatars)
     hydrateThumbs('world', listCatalog('world'), setWorlds)
     const objects = listCatalog('object')
     hydrateThumbs('object', objects, setObjectModels)
     backfillObjectThumbs(objects)
-  }, [backfillObjectThumbs, hydrateThumbs])
+  }, [backfillAvatarThumbs, backfillObjectThumbs, hydrateThumbs])
 
   // One-time background pass to relabel pre-R6 town-character equips that
   // were filed as plain uploads (see foreignMigration.ts). Fire-and-forget:
@@ -739,9 +793,10 @@ export function useSession(): SessionApi {
         const list = listCatalog('avatar')
         setAvatars(list)
         hydrateThumbs('avatar', list, setAvatars)
+        backfillAvatarThumbs(list)
       }
     })
-  }, [hydrateThumbs])
+  }, [backfillAvatarThumbs, hydrateThumbs])
 
   // --- discovery (public room gossip lobby) -----------------------------------
   const discoverySessionRef = useRef<DiscoverySession | null>(null)
@@ -1393,6 +1448,7 @@ export function useSession(): SessionApi {
           if (!ok && remoteAvatarCids.current.get(id) === p.avatarCid) {
             remoteAvatarCids.current.delete(id)
           }
+          if (ok) captureRemoteAvatarThumb(p.avatarCid!)
         })
       }
       session.onRemoteState = (id, s) => {
@@ -1491,7 +1547,7 @@ export function useSession(): SessionApi {
     // only ever called from these handlers — listing them here would read
     // them in their temporal dead zone. All three are stable, so the closure
     // stays correct.
-    [pushMessage, reconcileObjects, commitOwnObjects, refreshEditable],
+    [captureRemoteAvatarThumb, pushMessage, reconcileObjects, commitOwnObjects, refreshEditable],
   )
 
   /**
@@ -1861,6 +1917,7 @@ export function useSession(): SessionApi {
         const list = listCatalog('avatar')
         setAvatars(list)
         hydrateThumbs('avatar', list, setAvatars)
+        backfillAvatarThumbs(list)
         await equipAvatarBytes(bytes, item.cid)
       } catch (e) {
         console.debug('avatar upload failed', e)
@@ -1869,7 +1926,7 @@ export function useSession(): SessionApi {
         setAvatarBusy(false)
       }
     },
-    [equipAvatarBytes, hydrateThumbs],
+    [backfillAvatarThumbs, equipAvatarBytes, hydrateThumbs],
   )
 
   /**
@@ -1890,6 +1947,7 @@ export function useSession(): SessionApi {
         const list = listCatalog('avatar')
         setAvatars(list)
         hydrateThumbs('avatar', list, setAvatars)
+        backfillAvatarThumbs(list)
       } catch (e) {
         console.debug('avatar catalog save failed', e)
         setAvatarError('invalid')
@@ -1897,7 +1955,7 @@ export function useSession(): SessionApi {
         setAvatarBusy(false)
       }
     },
-    [hydrateThumbs],
+    [backfillAvatarThumbs, hydrateThumbs],
   )
 
   const equipAvatar = useCallback(
@@ -1960,6 +2018,7 @@ export function useSession(): SessionApi {
         const list = listCatalog('avatar')
         setAvatars(list)
         hydrateThumbs('avatar', list, setAvatars)
+        backfillAvatarThumbs(list)
         await equipAvatarBytes(bytes, item.cid)
       } catch (e) {
         console.debug('town character equip failed', entry.id, e)
@@ -1967,7 +2026,7 @@ export function useSession(): SessionApi {
         setAvatarBusy(false)
       }
     },
-    [equipAvatarBytes, hydrateThumbs],
+    [backfillAvatarThumbs, equipAvatarBytes, hydrateThumbs],
   )
 
   const removeAvatar = useCallback(
@@ -3410,6 +3469,13 @@ export function useSession(): SessionApi {
   }, [phase, roomId])
 
   const inviteUrl = useMemo(() => computeInviteUrl(roomId), [roomId])
+  const avatarThumbs = useMemo<Readonly<Record<string, string>>>(() => {
+    const thumbs: Record<string, string> = { ...remoteAvatarThumbs }
+    for (const avatar of avatars) {
+      if (avatar.thumb) thumbs[avatar.cid] = avatar.thumb
+    }
+    return thumbs
+  }, [avatars, remoteAvatarThumbs])
 
   return {
     phase,
@@ -3419,6 +3485,7 @@ export function useSession(): SessionApi {
     roomId,
     peerCount,
     messages,
+    avatarThumbs,
     micState,
     profile,
     inviteUrl,
