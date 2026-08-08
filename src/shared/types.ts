@@ -56,6 +56,8 @@ export type ChatMessage = {
   fromId: string
   name: string
   color: string
+  /** Avatar active when this line was sent, used as the chat portrait when a thumbnail is available. */
+  avatarCid?: string
   text: string
   at: number
 }

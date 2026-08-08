@@ -33,6 +33,7 @@ const CHAT_PANEL_EXIT_MS = 240
 
 type Props = {
   messages: ChatMessage[]
+  avatarThumbs: Readonly<Record<string, string>>
   onSend: (text: string) => void
   onFocusChange: (focused: boolean) => void
   /** Increment to pull keyboard focus into the input (used by the mobile chat button). */
@@ -88,15 +89,15 @@ type BubbleBase = 'chat-msg' | 'chat-toast'
  * ../tc-chat/src/components/Avatar.tsx derives its own chip color, which
  * would give the same person two different colors inside one app.
  */
-function ChatBubbleRow(props: { message: ChatMessage; isOwn: boolean; base: BubbleBase; grouped?: boolean; leaving?: boolean }) {
-  const { message, isOwn, base, grouped = false, leaving = false } = props
+function ChatBubbleRow(props: { message: ChatMessage; avatarThumb?: string; isOwn: boolean; base: BubbleBase; grouped?: boolean; leaving?: boolean }) {
+  const { message, avatarThumb, isOwn, base, grouped = false, leaving = false } = props
   const rowClass = [base, isOwn && `${base}--own`, grouped && `${base}--grouped`, leaving && `${base}--leaving`]
     .filter(Boolean)
     .join(' ')
   return (
     <div class={rowClass}>
       <span class="chat-avatar" style={{ background: message.color }} aria-hidden="true">
-        {initialOf(message.name)}
+        {avatarThumb ? <img class="chat-avatar-image" src={avatarThumb} alt="" /> : initialOf(message.name)}
       </span>
       <span class="chat-bubble-col">
         <span class="chat-name" style={{ color: message.color }}>
@@ -112,7 +113,7 @@ function ChatBubbleRow(props: { message: ChatMessage; isOwn: boolean; base: Bubb
 
 type Toast = { message: ChatMessage; leaving: boolean }
 
-export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId, logOpen, onLogOpenChange }: Props) {
+export function ChatPanel({ messages, avatarThumbs, onSend, onFocusChange, focusSignal, selfId, logOpen, onLogOpenChange }: Props) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -275,6 +276,7 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId
             <ChatBubbleRow
               key={msgKey(toast.message)}
               message={toast.message}
+              avatarThumb={toast.message.avatarCid ? avatarThumbs[toast.message.avatarCid] : undefined}
               isOwn={!!selfId && toast.message.fromId === selfId}
               base="chat-toast"
               leaving={toast.leaving}
@@ -326,6 +328,7 @@ export function ChatPanel({ messages, onSend, onFocusChange, focusSignal, selfId
                   <ChatBubbleRow
                     key={msgKey(m)}
                     message={m}
+                    avatarThumb={m.avatarCid ? avatarThumbs[m.avatarCid] : undefined}
                     isOwn={!!selfId && m.fromId === selfId}
                     base="chat-msg"
                     grouped={grouped}

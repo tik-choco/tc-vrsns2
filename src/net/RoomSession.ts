@@ -277,6 +277,7 @@ export class RoomSession {
       fromId: this.selfId,
       name: this.profile.name,
       color: this.profile.color,
+      ...(this.profile.avatarCid ? { avatarCid: this.profile.avatarCid } : {}),
       text: clean,
       at: Date.now(),
     }
@@ -617,6 +618,7 @@ export class RoomSession {
           fromId,
           name: entry.profile?.name ?? FALLBACK_NAME,
           color: entry.profile?.color ?? FALLBACK_COLOR,
+          ...(entry.profile?.avatarCid ? { avatarCid: entry.profile.avatarCid } : {}),
           text: msg.text,
           at: Date.now(),
         })

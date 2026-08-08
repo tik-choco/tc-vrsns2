@@ -4,6 +4,7 @@ import type { GameOverlayProps } from '../uiContract'
 import type { CharacterIndexEntry } from '../../interop/townCharacters'
 import { PanelShell } from './PanelShell'
 import { CatalogPanel } from './CatalogPanel'
+import { AvatarPreview3D } from './AvatarPreview3D'
 
 type Props = Pick<
   GameOverlayProps,
@@ -71,6 +72,7 @@ export function AvatarPanel(props: Props) {
           onSelect: () => equipAvatar(null),
         }}
         onUpload={uploadAvatar}
+        renderPreview={(item) => <AvatarPreview3D item={item} />}
         renderActions={(item, isCurrent) => {
           // A foreign avatar (tc-town character, peer's upload) must read as
           // not-the-user's-own here — this is the visible half of the R6

@@ -143,6 +143,7 @@ export function App() {
           roomId={session.roomId}
           peerCount={session.peerCount}
           messages={session.messages}
+          avatarThumbs={session.avatarThumbs}
           onSendChat={session.sendChat}
           micState={session.micState}
           onToggleMic={() => void session.toggleMic()}

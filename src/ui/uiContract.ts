@@ -97,6 +97,8 @@ export type GameOverlayProps = {
   roomId: string
   peerCount: number
   messages: ChatMessage[]
+  /** Rendered avatar thumbnails keyed by the profile's avatar CID. */
+  avatarThumbs: Readonly<Record<string, string>>
   onSendChat: (text: string) => void
   micState: MicState
   onToggleMic: () => void
