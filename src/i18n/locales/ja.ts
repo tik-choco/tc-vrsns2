@@ -408,12 +408,6 @@ export const ja: Dict = {
 
   // AI panel（LLM接続・AI Network・タスクの設定）
   'ai.title': 'AI',
-  'ai.task.script.label': 'スクリプト生成',
-  'ai.task.script.tip': '自然言語での指示をワールド内の動作スクリプトに変換します。',
-  'ai.network.modelNotShared': 'そのモデルはこの端末では共有されていません。',
-  'ai.network.notConfigured': 'AIがまだ設定されていません。',
-  'settings.ai.npcPreset': 'NPCの返答',
-  'settings.ai.npcPresetHelp': 'ワールドに配置したキャラクターの近くで誰かが話しかけると、そのキャラクターになりきって返答します。',
 
   // Settings panel
   'settings.title': '設定',

@@ -1,160 +1,84 @@
-// tc-vrsns2's app-local LLM settings — the "which preset for what" half of
-// the split described in tc-docs/drafts/llm-settings-common-v1.md §1/§2.3.
-// The "where to connect" / "which model" halves (providers/presets/default
-// preset/AI Network room id) live in the shared, cross-app
-// tc-shared-llm-config-v1 config, owned by @tik-choco/mistai/llm-config —
-// this module never duplicates or reaches into that shape, it only stores
-// which of those shared presets each of tc-vrsns2's tasks points at, plus the
-// couple of settings that are genuinely local to this app (its own
-// consumption route, and whether it serves AI Network room peers).
-//
-// tc-vrsns2 has no prior LLM feature, so unlike tc-note's equivalent module
-// there is no legacy shape to migrate from — this is a pristine, one-shape
-// store from the start.
+// Connections are shared across apps; task refs, effort and sharing stay local.
+import {
+  emptyLlmConfig, isModelRef, loadLlmConfig, migrateSharedLlmConfig,
+  presetIdToRef, providerKind, roomIdFromBaseUrl, saveLlmConfig,
+  type ModelRefV1, type SharedLlmConfigV1,
+} from '@tik-choco/mistai/llm-config'
+import type { LlmLocalSettings, ReasoningEffort, TaskModelV1 } from '@tik-choco/mistai/preact'
 
-/** This app's own outgoing route for the 既定 task: call the resolved preset's endpoint directly, or ask the AI Network room for a reply. */
-export type LlmConnection = 'api' | 'network'
-
-/**
- * reasoning_effort values, always sent explicitly with a chat request —
- * `'none'` is a real API value (explicitly disables reasoning on servers
- * that support it), not "omit the field" (llm-settings-common-v1.md §4.1).
- */
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high'
-export const REASONING_EFFORT_OPTIONS: readonly ReasoningEffort[] = [
-  'none',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-]
-
-function parseReasoningEffort(value: unknown): ReasoningEffort | null {
-  return typeof value === 'string' && (REASONING_EFFORT_OPTIONS as readonly string[]).includes(value)
-    ? (value as ReasoningEffort)
-    : null
-}
-
-function parseStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
-}
-
-/**
- * Shape persisted under `tc-vrsns2-provider-settings-v1`
- * (llm-settings-common-v1.md §5.3 checklist item 2). Every `*PresetId` field
- * is a shared-config preset id, or `''` meaning "follow the shared config's
- * default preset" — pass it straight to mistai's `resolvePreset`, which
- * already implements that fallback, so callers never special-case the empty
- * string themselves.
- */
-export interface LlmProviderSettings {
-  connection: LlmConnection
-  /** Whether this device also serves llm_request traffic from AI Network room peers (independent of `connection`). */
-  networkProviderEnabled: boolean
-  /** Ids of shared presets advertised to the room while `networkProviderEnabled` — never includes a mist-network:// origin preset (checklist item 3, re-share loop). */
-  networkProviderPresetIds: string[]
-  /** reasoning_effort for the 既定 task. */
-  defaultReasoningEffort: ReasoningEffort
-  /** Preset used by tc-vrsns2's one app task: turning a natural-language request into an in-world behavior script. */
-  scriptPresetId: string
-  scriptReasoningEffort: ReasoningEffort
-  /** Preset used to answer in-character as a placed tc-town NPC (src/npc/NpcRuntime.ts). */
-  npcPresetId: string
-  npcReasoningEffort: ReasoningEffort
-}
-
-export const DEFAULT_LLM_PROVIDER_SETTINGS: LlmProviderSettings = {
-  connection: 'api',
-  networkProviderEnabled: false,
-  networkProviderPresetIds: [],
-  defaultReasoningEffort: 'none',
-  scriptPresetId: '',
-  scriptReasoningEffort: 'none',
-  npcPresetId: '',
-  npcReasoningEffort: 'none',
-}
-
+export type { ReasoningEffort }
+export type LlmProviderSettings = LlmLocalSettings
 const SETTINGS_KEY = 'tc-vrsns2-provider-settings-v1'
+const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
-/** Reads and validates the stored settings; any missing/malformed field falls back to its default rather than failing the whole load. Never throws. */
+export function loadSharedLlmConfig(): SharedLlmConfigV1 {
+  const config = loadLlmConfig() ?? emptyLlmConfig()
+  if (migrateSharedLlmConfig(config).changed) saveLlmConfig(config)
+  return config
+}
+
+function effort(value: unknown, fallback?: unknown): ReasoningEffort {
+  if (typeof value === 'string' && EFFORTS.includes(value)) return value as ReasoningEffort
+  if (typeof fallback === 'string' && EFFORTS.includes(fallback)) return fallback as ReasoningEffort
+  return 'none'
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+function refs(value: unknown): ModelRefV1[] {
+  return Array.isArray(value) ? value.filter(isModelRef) : []
+}
+
+/** The tasks object is the migration marker. Clearing a ref never revives its old preset. */
 export function loadLlmProviderSettings(): LlmProviderSettings {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY)
-    if (!raw) return DEFAULT_LLM_PROVIDER_SETTINGS
-    const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object') return DEFAULT_LLM_PROVIDER_SETTINGS
-    const record = parsed as Record<string, unknown>
-    return {
-      connection: record.connection === 'network' ? 'network' : 'api',
-      networkProviderEnabled: record.networkProviderEnabled === true,
-      networkProviderPresetIds: parseStringArray(record.networkProviderPresetIds),
-      defaultReasoningEffort: parseReasoningEffort(record.defaultReasoningEffort) ?? 'none',
-      scriptPresetId: typeof record.scriptPresetId === 'string' ? record.scriptPresetId : '',
-      scriptReasoningEffort: parseReasoningEffort(record.scriptReasoningEffort) ?? 'none',
-      npcPresetId: typeof record.npcPresetId === 'string' ? record.npcPresetId : '',
-      npcReasoningEffort: parseReasoningEffort(record.npcReasoningEffort) ?? 'none',
+  const config = loadSharedLlmConfig()
+  let raw: Record<string, unknown> = {}
+  try { raw = record(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}')) } catch { /* Use defaults. */ }
+  const tasks: Record<string, TaskModelV1> = {}
+  const roomProvide: LlmLocalSettings['roomProvide'] = {}
+  const migrated = raw.tasks !== undefined
+  for (const id of ['default', 'script', 'npc']) {
+    if (migrated) {
+      const stored = record(record(raw.tasks)[id])
+      tasks[id] = { ...(isModelRef(stored.ref) ? { ref: stored.ref } : {}), reasoningEffort: effort(stored.reasoningEffort) }
+    } else {
+      const oldId = typeof raw[id + 'PresetId'] === 'string' ? raw[id + 'PresetId'] as string : ''
+      const ref = presetIdToRef(config, oldId)
+      const preset = config.presets.find(p => p.id === (oldId || (id === 'default' ? config.defaultPresetId : '')))
+      tasks[id] = { ...(ref ? { ref } : {}), reasoningEffort: effort(raw[id + 'ReasoningEffort'], preset?.reasoningEffort) }
     }
-  } catch {
-    return DEFAULT_LLM_PROVIDER_SETTINGS
   }
+  if (migrated) {
+    for (const [id, value] of Object.entries(record(raw.roomProvide))) {
+      const stored = record(value)
+      roomProvide[id] = { enabled: stored.enabled === true, shared: refs(stored.shared) }
+    }
+  } else {
+    const room = config.providers.find(p => providerKind(p) === 'room' && roomIdFromBaseUrl(p.baseUrl) === config.network.roomId.trim())
+    if (room) {
+      const ids = Array.isArray(raw.networkProviderPresetIds) ? raw.networkProviderPresetIds : []
+      const shared = ids.flatMap(id => typeof id === 'string' ? presetIdToRef(config, id) ?? [] : [])
+        .filter(ref => config.providers.some(p => p.id === ref.providerId && providerKind(p) === 'http'))
+      roomProvide[room.id] = { enabled: raw.networkProviderEnabled === true, shared }
+    }
+  }
+  const settings = { tasks, roomProvide, recentModels: refs(raw.recentModels).slice(0, 8) }
+  if (!migrated) saveLlmProviderSettings(settings)
+  return settings
 }
 
-/** Persists `settings`. Never throws: a storage failure (quota, disabled storage, ...) just means the change won't survive a reload. */
+const listeners = new Set<() => void>()
 export function saveLlmProviderSettings(settings: LlmProviderSettings): void {
-  try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
-  } catch {
-    // Non-fatal — see doc comment above.
-  }
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)) } catch { /* Storage can be unavailable. */ }
+  listeners.forEach(listener => listener())
 }
-
-// Immutable-update helpers, one per field — callers (AiPanel.tsx) read the
-// current settings from state, call one of these, and persist+setState the
-// result, mirroring tc-note's src/lib/llmSettings.ts equivalents.
-
-export function setConnection(settings: LlmProviderSettings, connection: LlmConnection): LlmProviderSettings {
-  return { ...settings, connection }
+export function subscribeLlmProviderSettings(listener: () => void): () => void {
+  listeners.add(listener)
+  const onStorage = (event: StorageEvent) => { if (event.key === SETTINGS_KEY) listener() }
+  window.addEventListener('storage', onStorage)
+  return () => { listeners.delete(listener); window.removeEventListener('storage', onStorage) }
 }
-
-export function setNetworkProviderEnabled(
-  settings: LlmProviderSettings,
-  networkProviderEnabled: boolean,
-): LlmProviderSettings {
-  return { ...settings, networkProviderEnabled }
-}
-
-export function setNetworkProviderPresetIds(
-  settings: LlmProviderSettings,
-  networkProviderPresetIds: string[],
-): LlmProviderSettings {
-  return { ...settings, networkProviderPresetIds }
-}
-
-export function setDefaultReasoningEffort(
-  settings: LlmProviderSettings,
-  defaultReasoningEffort: ReasoningEffort,
-): LlmProviderSettings {
-  return { ...settings, defaultReasoningEffort }
-}
-
-export function setScriptPresetId(settings: LlmProviderSettings, scriptPresetId: string): LlmProviderSettings {
-  return { ...settings, scriptPresetId }
-}
-
-export function setScriptReasoningEffort(
-  settings: LlmProviderSettings,
-  scriptReasoningEffort: ReasoningEffort,
-): LlmProviderSettings {
-  return { ...settings, scriptReasoningEffort }
-}
-
-export function setNpcPresetId(settings: LlmProviderSettings, npcPresetId: string): LlmProviderSettings {
-  return { ...settings, npcPresetId }
-}
-
-export function setNpcReasoningEffort(
-  settings: LlmProviderSettings,
-  npcReasoningEffort: ReasoningEffort,
-): LlmProviderSettings {
-  return { ...settings, npcReasoningEffort }
+export const localLlmSettings = {
+  get: loadLlmProviderSettings, set: saveLlmProviderSettings, subscribe: subscribeLlmProviderSettings,
 }

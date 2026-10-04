@@ -1,135 +1,74 @@
-// Node-environment tests for the app-local LLM provider settings store.
-// localStorage isn't available under vitest's node environment and this repo
-// adds no DOM-mock dependency, so — mirroring worldSave.test.ts's convention —
-// a minimal in-memory Storage stand-in is stubbed in below.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  DEFAULT_LLM_PROVIDER_SETTINGS,
-  loadLlmProviderSettings,
-  saveLlmProviderSettings,
-  setConnection,
-  setDefaultReasoningEffort,
-  setNetworkProviderEnabled,
-  setNetworkProviderPresetIds,
-  setNpcPresetId,
-  setNpcReasoningEffort,
-  setScriptPresetId,
-  setScriptReasoningEffort,
-  type LlmProviderSettings,
-} from './llmSettings'
+import { loadLlmProviderSettings, loadSharedLlmConfig, saveLlmProviderSettings } from './llmSettings'
 
-function fakeStorage() {
-  const map = new Map<string, string>()
-  return {
-    getItem: (k: string) => map.get(k) ?? null,
-    setItem: (k: string, v: string) => void map.set(k, String(v)),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-    key: (i: number) => [...map.keys()][i] ?? null,
-    get length() {
-      return map.size
-    },
-    raw: map,
-  }
-}
-
-let storage: ReturnType<typeof fakeStorage>
-
+let data: Map<string, string>
 beforeEach(() => {
-  storage = fakeStorage()
-  vi.stubGlobal('localStorage', storage)
-})
-
-afterEach(() => {
-  vi.unstubAllGlobals()
-})
-
-describe('loadLlmProviderSettings', () => {
-  it('returns the defaults when nothing is stored', () => {
-    expect(loadLlmProviderSettings()).toEqual(DEFAULT_LLM_PROVIDER_SETTINGS)
-  })
-
-  it('returns the defaults for corrupt JSON without throwing', () => {
-    storage.raw.set('tc-vrsns2-provider-settings-v1', '{not json')
-    expect(loadLlmProviderSettings()).toEqual(DEFAULT_LLM_PROVIDER_SETTINGS)
-  })
-
-  it('returns the defaults for a non-object value', () => {
-    storage.raw.set('tc-vrsns2-provider-settings-v1', '"just a string"')
-    expect(loadLlmProviderSettings()).toEqual(DEFAULT_LLM_PROVIDER_SETTINGS)
-  })
-
-  it('round-trips a fully populated record', () => {
-    const settings: LlmProviderSettings = {
-      connection: 'network',
-      networkProviderEnabled: true,
-      networkProviderPresetIds: ['preset-a', 'preset-b'],
-      defaultReasoningEffort: 'high',
-      scriptPresetId: 'preset-c',
-      scriptReasoningEffort: 'low',
-      npcPresetId: 'preset-d',
-      npcReasoningEffort: 'medium',
-    }
-    saveLlmProviderSettings(settings)
-    expect(loadLlmProviderSettings()).toEqual(settings)
-  })
-
-  it('falls back per-field for malformed values instead of discarding the whole record', () => {
-    storage.raw.set(
-      'tc-vrsns2-provider-settings-v1',
-      JSON.stringify({
-        connection: 'carrier-pigeon',
-        networkProviderEnabled: 'yes',
-        networkProviderPresetIds: 'not-an-array',
-        defaultReasoningEffort: 'ludicrous',
-        scriptPresetId: 42,
-        scriptReasoningEffort: null,
-        npcPresetId: 42,
-        npcReasoningEffort: null,
-      }),
-    )
-    expect(loadLlmProviderSettings()).toEqual(DEFAULT_LLM_PROVIDER_SETTINGS)
-  })
-
-  it('defaults npcPresetId/npcReasoningEffort when the key is entirely missing (migration from a pre-NPC record)', () => {
-    storage.raw.set(
-      'tc-vrsns2-provider-settings-v1',
-      JSON.stringify({
-        connection: 'api',
-        networkProviderEnabled: false,
-        networkProviderPresetIds: [],
-        defaultReasoningEffort: 'none',
-        scriptPresetId: 'preset-c',
-        scriptReasoningEffort: 'low',
-      }),
-    )
-    const loaded = loadLlmProviderSettings()
-    expect(loaded.npcPresetId).toBe('')
-    expect(loaded.npcReasoningEffort).toBe('none')
-    expect(loaded.scriptPresetId).toBe('preset-c')
-  })
-
-  it('drops non-string entries from networkProviderPresetIds', () => {
-    storage.raw.set(
-      'tc-vrsns2-provider-settings-v1',
-      JSON.stringify({ networkProviderPresetIds: ['ok', 5, null, 'also-ok'] }),
-    )
-    expect(loadLlmProviderSettings().networkProviderPresetIds).toEqual(['ok', 'also-ok'])
+  data = new Map()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => data.set(key, value),
   })
 })
-
-describe('setters', () => {
-  it('each setter returns a new object with only its own field changed', () => {
-    const base = DEFAULT_LLM_PROVIDER_SETTINGS
-    expect(setConnection(base, 'network')).toEqual({ ...base, connection: 'network' })
-    expect(setNetworkProviderEnabled(base, true)).toEqual({ ...base, networkProviderEnabled: true })
-    expect(setNetworkProviderPresetIds(base, ['x'])).toEqual({ ...base, networkProviderPresetIds: ['x'] })
-    expect(setDefaultReasoningEffort(base, 'medium')).toEqual({ ...base, defaultReasoningEffort: 'medium' })
-    expect(setScriptPresetId(base, 'p1')).toEqual({ ...base, scriptPresetId: 'p1' })
-    expect(setScriptReasoningEffort(base, 'high')).toEqual({ ...base, scriptReasoningEffort: 'high' })
-    expect(setNpcPresetId(base, 'p2')).toEqual({ ...base, npcPresetId: 'p2' })
-    expect(setNpcReasoningEffort(base, 'medium')).toEqual({ ...base, npcReasoningEffort: 'medium' })
-    // Original is untouched (immutable update).
-    expect(base).toEqual(DEFAULT_LLM_PROVIDER_SETTINGS)
+afterEach(() => vi.unstubAllGlobals())
+const sharedKey = 'tc-shared-llm-config-v1'
+const localKey = 'tc-vrsns2-provider-settings-v1'
+function seed() {
+  data.set(sharedKey, JSON.stringify({
+    v: 1, providers: [
+      { id: 'http', label: 'Endpoint', baseUrl: 'https://example.test/v1', apiKey: '', models: ['cached'] },
+      { id: 'off', label: 'Disabled', baseUrl: 'https://disabled.test', apiKey: '', enabled: false },
+      { id: 'mirror', label: 'Old room', baseUrl: 'mist-network://other', apiKey: '' },
+    ],
+    presets: [
+      { id: 'p', providerId: 'http', model: 'chosen', label: 'Old label', reasoningEffort: 'high', temperature: 0.3 },
+      { id: 'disabled', providerId: 'off', model: 'offline', label: 'Disabled' },
+      { id: 'network', providerId: 'mirror', model: 'mirrored', label: 'Mirror' },
+      { id: 'dangling', providerId: 'removed', model: 'kept', label: 'Deleted' },
+    ],
+    defaultPresetId: 'p', network: { roomId: 'legacy-room' }, updatedAt: 'old',
+  }))
+}
+describe('model reference migration', () => {
+  it('migrates once, preserving legacy shared fields, task effort and disabled/dangling refs', () => {
+    seed()
+    const legacy = JSON.parse(data.get(sharedKey)!)
+    data.set(localKey, JSON.stringify({
+      scriptPresetId: 'p', npcPresetId: 'disabled', npcReasoningEffort: 'low',
+      networkProviderEnabled: true, networkProviderPresetIds: ['p', 'network'],
+    }))
+    const local = loadLlmProviderSettings()
+    expect(local.tasks.script).toEqual({ ref: { providerId: 'http', model: 'chosen' }, reasoningEffort: 'high' })
+    expect(local.tasks.npc).toEqual({ ref: { providerId: 'off', model: 'offline' }, reasoningEffort: 'low' })
+    const migrated = loadSharedLlmConfig()
+    expect(migrated.defaultModel).toEqual({ providerId: 'http', model: 'chosen' })
+    expect(migrated.presets).toEqual(legacy.presets)
+    expect(migrated.defaultPresetId).toEqual(legacy.defaultPresetId)
+    expect(migrated.network).toEqual(legacy.network)
+    const room = migrated.providers.find(p => p.baseUrl === 'mist-network://legacy-room')!
+    expect(local.roomProvide[room.id]).toEqual({ enabled: true, shared: [{ providerId: 'http', model: 'chosen' }] })
+    const sharedStored = data.get(sharedKey)
+    const localStored = data.get(localKey)
+    expect(loadLlmProviderSettings()).toEqual(local)
+    expect(data.get(sharedKey)).toBe(sharedStored)
+    expect(data.get(localKey)).toBe(localStored)
+    local.tasks.script.ref = undefined
+    saveLlmProviderSettings(local)
+    expect(loadLlmProviderSettings().tasks.script.ref).toBeUndefined()
+  })
+  it('keeps dangling HTTP preset refs and discards retired room mirrors', () => {
+    seed()
+    data.set(localKey, JSON.stringify({ scriptPresetId: 'dangling', npcPresetId: 'network' }))
+    const local = loadLlmProviderSettings()
+    expect(local.tasks.script.ref).toEqual({ providerId: 'removed', model: 'kept' })
+    expect(local.tasks.npc.ref).toBeUndefined()
+  })
+  it('loads corrupt local data safely and accepts the full effort range', () => {
+    data.set(localKey, '{bad')
+    expect(loadLlmProviderSettings().tasks.script.reasoningEffort).toBe('none')
+    const local = loadLlmProviderSettings()
+    local.tasks.script.reasoningEffort = 'max'
+    local.tasks.npc.reasoningEffort = 'xhigh'
+    saveLlmProviderSettings(local)
+    expect(loadLlmProviderSettings()).toEqual(local)
   })
 })

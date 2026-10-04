@@ -1,0 +1,16 @@
+/* Resolve aliases on the host: mistai defines its own --text/--border tokens. */
+:root {
+  --mistai-surface: var(--surface-solid);
+  --mistai-surface-2: var(--fill-1);
+  --mistai-border: var(--border);
+  --mistai-border-strong: var(--border-strong);
+  --mistai-text: var(--text);
+  --mistai-text-muted: var(--text-dim);
+  --mistai-text-strong: var(--text);
+  --mistai-primary: var(--accent);
+  --mistai-primary-soft: var(--accent-tint);
+  --mistai-focus: var(--accent-line);
+  --mistai-focus-ring: var(--accent-tint-strong);
+  --mistai-danger-text: var(--danger);
+  --mistai-font-family: 'Inter', 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
+}

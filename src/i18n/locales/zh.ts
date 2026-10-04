@@ -118,8 +118,6 @@ export const zh: Dict = {
   'npc.orderRandom': '随机',
 
   // AI panel
-  'settings.ai.npcPreset': 'NPC 回复',
-  'settings.ai.npcPresetHelp': '当有人在你放置在世界中的角色附近说话时，会以该角色的身份回答。',
 
   // World panel
   'world.title': '世界',

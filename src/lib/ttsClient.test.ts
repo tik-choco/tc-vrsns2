@@ -8,35 +8,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const loadLlmConfig = vi.fn()
 const resolveVoice = vi.fn()
-const loadLlmProviderSettings = vi.fn()
-const getAiConsumerClient = vi.fn()
+const requestRoomTts = vi.fn()
 
-vi.mock('@tik-choco/mistai/llm-config', () => ({
+vi.mock('@tik-choco/mistai/llm-config', async () => ({
+  ...await vi.importActual('@tik-choco/mistai/llm-config'),
   loadLlmConfig: (...args: unknown[]) => loadLlmConfig(...args),
   resolveVoice: (...args: unknown[]) => resolveVoice(...args),
 }))
 
-vi.mock('./llmSettings', () => ({
-  loadLlmProviderSettings: (...args: unknown[]) => loadLlmProviderSettings(...args),
-}))
-
-vi.mock('./aiClient', () => ({
-  getAiConsumerClient: (...args: unknown[]) => getAiConsumerClient(...args),
-}))
+vi.mock('./aiRooms', () => ({ aiRooms: { requestRoomTts: (...args: unknown[]) => requestRoomTts(...args) } }))
 
 import { NETWORK_TTS_TIMEOUT_MS, synthesizeSpeech } from './ttsClient'
-
-/** Matches DEFAULT_LLM_PROVIDER_SETTINGS's shape (llmSettings.ts) with connection:'api' — the same effective value the real, unmocked module falls back to in this Node test env (no localStorage), so mocking the module wholesale doesn't change the 11 pre-existing tests below, none of which care about the network route. */
-const API_CONNECTION_SETTINGS = {
-  connection: 'api' as const,
-  networkProviderEnabled: false,
-  networkProviderPresetIds: [],
-  defaultReasoningEffort: 'none' as const,
-  scriptPresetId: '',
-  scriptReasoningEffort: 'none' as const,
-  npcPresetId: '',
-  npcReasoningEffort: 'none' as const,
-}
 
 const VOICE_TARGET = { baseUrl: 'https://api.example.com/v1', apiKey: 'sk-test', model: 'tts-1', voice: 'nova', speed: 1 }
 
@@ -54,13 +36,9 @@ describe('synthesizeSpeech', () => {
   beforeEach(() => {
     loadLlmConfig.mockReset()
     resolveVoice.mockReset()
-    loadLlmProviderSettings.mockReset()
-    getAiConsumerClient.mockReset()
+    requestRoomTts.mockReset()
     loadLlmConfig.mockReturnValue({ v: 1 })
     resolveVoice.mockReturnValue(VOICE_TARGET)
-    // Default to the same "network route not applicable" state the 11 tests
-    // below already assumed before ./llmSettings was mocked at all.
-    loadLlmProviderSettings.mockReturnValue(API_CONNECTION_SETTINGS)
     fetchMock = vi.fn().mockResolvedValue(okResponse(1024))
     vi.stubGlobal('fetch', fetchMock)
   })
@@ -109,11 +87,11 @@ describe('synthesizeSpeech', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('uses AI Network TTS when local TTS is missing, independently of LLM mode', async () => {
+  it('uses the selected room TTS target and strips its auto-model sentinel', async () => {
     loadLlmConfig.mockReturnValue({ network: { roomId: 'voice-room' } })
-    resolveVoice.mockReturnValue(null)
+    resolveVoice.mockReturnValue({ ...VOICE_TARGET, baseUrl: 'mist-network://voice-room', model: 'network-auto', voice: undefined })
     const requestTts = vi.fn().mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/ogg' }))
-    getAiConsumerClient.mockReturnValue({ requestTts })
+    requestRoomTts.mockImplementation((...args: unknown[]) => requestTts(...args))
     const result = await synthesizeSpeech({ text: 'shared voice' })
     expect(result).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: 'audio/ogg' })
     expect(requestTts).toHaveBeenCalledWith('voice-room', {
@@ -203,24 +181,18 @@ function unhandledRejectionProcess(): {
 // deliberately avoid (they all default to connection:'api').
 describe('synthesizeSpeech — network route timeout (R8 follow-up)', () => {
   let fetchMock: ReturnType<typeof vi.fn>
-  let requestTts: ReturnType<typeof vi.fn>
+  let requestTts: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<Blob>>>
 
   beforeEach(() => {
     loadLlmConfig.mockReset()
     resolveVoice.mockReset()
-    loadLlmProviderSettings.mockReset()
-    getAiConsumerClient.mockReset()
+    requestRoomTts.mockReset()
 
-    // network.roomId is read via the SAME loadLlmConfig() mock synthesizeDirect
-    // uses for the shared config — networkRoomId() reads `.network.roomId`,
-    // synthesizeDirect's fallback path only reads top-level voice fields via
-    // resolveVoice(), so one mock return value safely serves both.
     loadLlmConfig.mockReturnValue({ network: { roomId: 'spike-room' } })
-    resolveVoice.mockReturnValue(VOICE_TARGET)
-    loadLlmProviderSettings.mockReturnValue({ ...API_CONNECTION_SETTINGS, connection: 'network' })
+    resolveVoice.mockReturnValue({ ...VOICE_TARGET, baseUrl: 'mist-network://spike-room', model: 'network-auto' })
 
     requestTts = vi.fn()
-    getAiConsumerClient.mockReturnValue({ requestTts })
+    requestRoomTts.mockImplementation((...args: unknown[]) => requestTts(...args))
 
     fetchMock = vi.fn().mockResolvedValue(okResponse(1024))
     vi.stubGlobal('fetch', fetchMock)
@@ -232,7 +204,7 @@ describe('synthesizeSpeech — network route timeout (R8 follow-up)', () => {
     vi.unstubAllGlobals()
   })
 
-  it('falls through to synthesizeDirect when the network route has not settled after NETWORK_TTS_TIMEOUT_MS', async () => {
+  it('returns silence when a selected room does not settle within the timeout', async () => {
     // Never resolves within the test — stands in for the measured 120s hang.
     requestTts.mockReturnValue(new Promise(() => {}))
 
@@ -240,9 +212,8 @@ describe('synthesizeSpeech — network route timeout (R8 follow-up)', () => {
     await vi.advanceTimersByTimeAsync(NETWORK_TTS_TIMEOUT_MS)
     const clip = await pending
 
-    expect(clip).not.toBeNull()
-    expect(clip?.bytes.length).toBe(1024) // came from the direct-HTTP fallback's okResponse
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(clip).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it("never lets the abandoned network promise's later settlement surface as an unhandled rejection", async () => {
@@ -261,7 +232,7 @@ describe('synthesizeSpeech — network route timeout (R8 follow-up)', () => {
     try {
       const pending = synthesizeSpeech({ text: 'hi' })
       await vi.advanceTimersByTimeAsync(NETWORK_TTS_TIMEOUT_MS)
-      expect(await pending).not.toBeNull() // fell through to direct, same as the test above
+      expect(await pending).toBeNull() // The selected room never falls back to an arbitrary HTTP endpoint.
 
       // The abandoned mistai request "settles late" — reject it well after
       // the race that was waiting on it has already been decided.

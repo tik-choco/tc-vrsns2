@@ -35,10 +35,16 @@ class FakeNode {
 
   /** Opts this fake into the awaitable-join API mistlib really exposes. */
   enableAsyncJoin(): void {
-    this.joinRoomAsync = (roomId: string) =>
-      new Promise((resolve, reject) => {
+    const waits = new Map<string, Promise<unknown>>()
+    this.joinRoomAsync = (roomId: string) => {
+      let wait = waits.get(roomId)
+      if (wait) return wait
+      wait = new Promise((resolve, reject) => {
         this.joinCompletions.set(roomId, { resolve: () => resolve(undefined), reject })
       })
+      waits.set(roomId, wait)
+      return wait
+    }
   }
 
   /** Completes a pending join and lets the adapter's flush microtasks run. */
@@ -127,6 +133,35 @@ beforeEach(() => {
 // network.send() into the .then() resolving the join, turning a good join
 // into a hard error. These cover the sequencing that fixes it.
 describe('sends during the join window', () => {
+  it('releases a room after an abandoned join finishes', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomId)
+    handle.leaveRoom(roomId)
+    expect(fakeNode.leftRooms).toEqual([])
+    await fakeNode.completeJoin(roomId)
+    await vi.waitFor(() => expect(fakeNode.leftRooms).toEqual([roomId]))
+  })
+  it('defers release until a pending join completes and preserves new room owners', async () => {
+    const roomId = freshRoomId()
+    fakeNode.enableAsyncJoin()
+    const first = createMistaiNode('ignored-id')
+    await first.init()
+    first.joinRoom(roomId)
+    first.leaveRoom(roomId)
+    expect(fakeNode.leftRooms).toEqual([])
+    const second = createMistaiNode('ignored-id')
+    await second.init()
+    second.joinRoom(roomId)
+    await fakeNode.completeJoin(roomId)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(fakeNode.leftRooms).toEqual([])
+    second.leaveRoom(roomId)
+    await vi.waitFor(() => expect(fakeNode.leftRooms).toEqual([roomId]))
+  })
   it('holds a send until the join actually completes, then delivers it', async () => {
     const roomId = freshRoomId()
     fakeNode.enableAsyncJoin()
@@ -228,6 +263,21 @@ describe('mistaiNodeId', () => {
 })
 
 describe('createMistaiNode', () => {
+  it('honours explicit send rooms while preserving another room after a leave', async () => {
+    const roomA = freshRoomId()
+    const roomB = freshRoomId()
+    const handle = createMistaiNode('ignored-id')
+    await handle.init()
+    handle.joinRoom(roomA)
+    handle.joinRoom(roomB)
+    handle.sendMessage('peer-a', new Uint8Array([1]), 0, roomA)
+    handle.sendMessage('peer-b', new Uint8Array([2]), 0, roomB)
+    expect(fakeNode.sent.map(message => message.roomId)).toEqual([roomA, roomB])
+    handle.leaveRoom(roomA)
+    handle.sendMessage('peer-b', new Uint8Array([3]), 0, roomB)
+    expect(fakeNode.sent[2].roomId).toBe(roomB)
+    handle.leaveRoom(roomB)
+  })
   it('init() resolves the shared node without constructing a new one', async () => {
     const handle = createMistaiNode('ignored-id')
     await expect(handle.init()).resolves.toBeUndefined()

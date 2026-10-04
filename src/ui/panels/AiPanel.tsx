@@ -1,233 +1,35 @@
-// AI settings panel — thin app-local wiring around @tik-choco/mistai's
-// shipped 3-tab settings block (AI接続 / AI Network / タスク,
-// tc-docs/drafts/llm-settings-common-v1.md §3/§6). The component itself
-// manages the shared tc-shared-llm-config-v1 config (providers/presets/
-// default preset/room id) internally — this file only supplies the bits that
-// are genuinely app-local: tc-vrsns2's one task ("script"), this app's own
-// connection mode, and the AI Network provider role's lifecycle (join/leave,
-// upstream resolver), none of which the shared component can own itself.
-//
-// The `voice` adapter exposes the TTS row ONLY. NPCs speak their replies aloud
-// (src/lib/ttsClient.ts), so `config.tts` has to be settable somewhere in this
-// app — without this row it could only ever be inherited from a sibling tc-*
-// app that happens to share the same origin, which silently left NPC voices
-// dead for anyone who had not configured TTS elsewhere. `stt`/`mic` stay
-// omitted rather than stubbed (checklist item 8): tc-vrsns2 still has no
-// speech input, and a row that configures nothing is worse than no row.
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
-import type { LlmCallFn, SynthesizeFn } from '@tik-choco/mistai'
-import { streamChatCompletion } from '@tik-choco/mistai'
-import {
-  LlmSettings,
-  useConsumerConnection,
-  useConsumerStatus,
-  useNetworkProvider,
-} from '@tik-choco/mistai/preact'
+import { useEffect, useState } from 'preact/hooks'
+import { LlmSettings, useLlmConfig, useRoomProviders } from '@tik-choco/mistai/preact'
 import '@tik-choco/mistai/ui.css'
-import {
-  advertisedModelName,
-  emptyLlmConfig,
-  isNetworkProviderBaseUrl,
-  loadLlmConfig,
-  resolvePreset,
-  resolveVoice,
-  subscribeLlmConfig,
-  type ResolvedLlmTargetV1,
-  type SharedLlmConfigV1,
-} from '@tik-choco/mistai/llm-config'
+import './ai-settings.css'
 import { useTranslation } from '../../i18n'
-import { PanelShell } from './PanelShell'
-import { createMistaiNode } from '../../lib/mistaiNode'
-import { getAiConsumerClient } from '../../lib/aiClient'
-import { synthesizeDirect } from '../../lib/ttsClient'
+import { aiTaskMessages } from '../../i18n/aiTasks'
+import { aiRooms } from '../../lib/aiRooms'
+import { localLlmSettings, loadLlmProviderSettings } from '../../lib/llmSettings'
 import { useTtsVoices } from '../../lib/ttsVoices'
-import {
-  loadLlmProviderSettings,
-  saveLlmProviderSettings,
-  setConnection,
-  setDefaultReasoningEffort,
-  setNetworkProviderEnabled,
-  setNetworkProviderPresetIds,
-  setNpcPresetId,
-  setNpcReasoningEffort,
-  setScriptPresetId,
-  setScriptReasoningEffort,
-  type LlmProviderSettings,
-} from '../../lib/llmSettings'
-
-/** localStorage key mistai's provider hook resolves a bookkeeping nodeId from — same caveat as aiClient.ts's own key (unused for wire identity, see lib/mistaiNode.ts). Namespaced separately from aiClient's own so the two roles never fight over the same stored value. */
-const PROVIDER_NODE_ID_STORAGE_KEY = 'tc-vrsns2:mistai-provider-node-id'
 
 type Props = { active: boolean; onClose: () => void }
-
 export function AiPanel({ active, onClose }: Props) {
   const { t, locale } = useTranslation()
-  const [settings, setSettings] = useState<LlmProviderSettings>(loadLlmProviderSettings)
-  const [shared, setShared] = useState<SharedLlmConfigV1>(() => loadLlmConfig() ?? emptyLlmConfig())
+  const { config } = useLlmConfig()
+  const [local, setLocal] = useState(loadLlmProviderSettings)
   const ttsVoices = useTtsVoices()
-
-  useEffect(() => subscribeLlmConfig((next) => setShared(next ?? emptyLlmConfig())), [])
-
-  function persist(next: LlmProviderSettings): void {
-    setSettings(next)
-    saveLlmProviderSettings(next)
-  }
-
-  const roomId = shared.network.roomId
-
-  // Same ConsumerClient instance aiClient.ts's 'network' transport uses, so
-  // the status shown here always reflects the exact session real task
-  // requests go out on (see aiClient.ts's getAiConsumerClient doc comment).
-  const consumer = getAiConsumerClient()
-  useConsumerConnection(consumer, { enabled: settings.connection === 'network', roomId })
-  const consumerStatus = useConsumerStatus(consumer)
-
-  // Presets this device is willing to serve to AI Network room peers — shared
-  // HTTP presets only, never a mist-network:// one (checklist item 3: sharing
-  // a preset that is itself someone else's room-shared model would loop it
-  // straight back into the room it came from).
-  const shareablePresets = useMemo(
-    () =>
-      shared.presets.filter((preset) => {
-        const provider = shared.providers.find((p) => p.id === preset.providerId)
-        return provider !== undefined && !isNetworkProviderBaseUrl(provider.baseUrl)
-      }),
-    [shared.presets, shared.providers],
-  )
-  const sharedPresets = useMemo(
-    () => shareablePresets.filter((preset) => settings.networkProviderPresetIds.includes(preset.id)),
-    [shareablePresets, settings.networkProviderPresetIds],
-  )
-  const advertisedModels = useMemo(() => sharedPresets.map((preset) => advertisedModelName(preset)), [sharedPresets])
-
-  // Provider-side upstream resolver (§4.5): a request naming a model must
-  // match one of the checked/shared presets' advertised name, or is rejected
-  // outright — never silently answered by an unshared preset. No model named
-  // falls back to this device's own default preset. Uses mistai's own
-  // streamChatCompletion (never a second HTTP implementation), same as
-  // aiClient.ts's direct-API path.
-  const callLlm: LlmCallFn = async (chatMessages, model, onDelta) => {
-    let target: ResolvedLlmTargetV1 | null
-    if (!model) {
-      target = resolvePreset(shared)
-    } else {
-      const preset = sharedPresets.find((p) => advertisedModelName(p) === model)
-      if (!preset) throw new Error(t('ai.network.modelNotShared'))
-      target = resolvePreset(shared, preset.id)
-    }
-    if (!target) throw new Error(t('ai.network.notConfigured'))
-    return streamChatCompletion(
-      { baseUrl: target.baseUrl, apiKey: target.apiKey, model: target.model, temperature: target.temperature },
-      chatMessages,
-      onDelta,
-    )
-  }
-
-  // Whether this device can actually answer a tts_request right now — gates
-  // both `synthesize` and `advertisedVoices` below. mistai derives
-  // provider_hello.services purely from which upstream functions are
-  // non-null (deriveHelloServices, @tik-choco/mistai/preact — it never asks
-  // whether the function would succeed), so passing a `synthesize` here
-  // unconditionally would make this device advertise 'tts' even with no TTS
-  // configured at all; a consumer would then route a request here just to
-  // collect a voice_error instead of failing over to a provider that can
-  // actually serve it. Mirrors tc-translate's ttsConfigured gate
-  // (src/hooks/useNetworkProvider.ts). The isNetworkProviderBaseUrl check is
-  // load-bearing on its own, same as shareablePresets' filter above: a
-  // device whose own TTS is itself "use the network" must not advertise
-  // TTS, or a room could route a request straight back into itself.
-  const ttsConfigured = useMemo(() => {
-    const voice = resolveVoice(shared, 'tts')
-    return Boolean(voice?.baseUrl && !isNetworkProviderBaseUrl(voice.baseUrl))
-  }, [shared])
-
-  // Provider-side TTS handler: paired with `ttsConfigured` below, this is
-  // the thing that actually makes this device advertise 'tts' in
-  // provider_hello (see this file's header comment on why NPC voice config
-  // already lives here). Reuses the same direct-HTTP path NPCs already
-  // synthesize their own lines through (ttsClient.ts's synthesizeDirect)
-  // instead of a second TTS implementation. synthesizeDirect never throws on
-  // its own — it resolves null on every unhappy path, including a config
-  // that goes away between the hello and this request — but mistai only
-  // knows to reply voice_error when the upstream function throws, so a null
-  // result is re-thrown here. Memoized (useCallback) for the same reason
-  // advertisedModels is memoized above: useNetworkProvider re-broadcasts
-  // provider_hello whenever its hello inputs change identity, and a fresh
-  // closure every render would thrash the room with hellos.
-  const synthesize: SynthesizeFn = useCallback(
-    async (text, model, voice) => {
-      const clip = await synthesizeDirect({ text, voiceModel: model, voiceName: voice })
-      if (!clip) throw new Error(t('ai.network.notConfigured'))
-      // Cast matches profile/sharedProfile.ts's base64ToBlob: lib.dom's
-      // Uint8Array<ArrayBufferLike> vs BlobPart's narrower
-      // ArrayBufferView<ArrayBuffer> is a TS/lib mismatch, not a real runtime
-      // concern — Blob has always accepted a plain Uint8Array.
-      return { blob: new Blob([clip.bytes as unknown as BlobPart], { type: clip.mime }), mime: clip.mime }
-    },
-    [t],
-  )
-
-  const providerResult = useNetworkProvider({
-    enabled: settings.networkProviderEnabled,
-    roomId,
-    createNode: createMistaiNode,
-    nodeIdStorageKey: PROVIDER_NODE_ID_STORAGE_KEY,
-    callLlm,
-    advertisedModels,
-    synthesize: ttsConfigured ? synthesize : undefined,
-    // useTtsVoices() falls back to OPENAI_TTS_VOICES whenever TTS is
-    // unconfigured or the live fetch came back empty (lib/ttsVoices.ts,
-    // getTtsVoices), so advertising it unconditionally would announce voice
-    // names this device's upstream may not actually have. Gating on the
-    // same ttsConfigured flag keeps the advertisement honest.
-    advertisedVoices: ttsConfigured ? ttsVoices : undefined,
+  useEffect(() => localLlmSettings.subscribe(() => setLocal(localLlmSettings.get())), [])
+  useRoomProviders({
+    config, consumers: aiRooms, roomProvide: local.roomProvide,
+    taskRefs: Object.values(local.tasks).map(task => task.ref), settingsOpen: active,
+    reasoningEffort: local.tasks.default?.reasoningEffort ?? 'none',
   })
-
-  // Keep the hooks above mounted for the whole game session. In particular,
-  // a device sharing TTS must remain a provider after its settings panel is
-  // closed; `active` controls only the visible shell.
   if (!active) return null
-
-  return (
-    <PanelShell title={t('ai.title')} onClose={onClose} wide>
-      <LlmSettings
-        tasks={[
-          {
-            key: 'script',
-            label: t('ai.task.script.label'),
-            tip: t('ai.task.script.tip'),
-            presetId: settings.scriptPresetId,
-            reasoningEffort: settings.scriptReasoningEffort,
-            onPresetChange: (id) => persist(setScriptPresetId(settings, id)),
-            onReasoningEffortChange: (effort) => persist(setScriptReasoningEffort(settings, effort)),
-          },
-          {
-            key: 'npc',
-            label: t('settings.ai.npcPreset'),
-            tip: t('settings.ai.npcPresetHelp'),
-            presetId: settings.npcPresetId,
-            reasoningEffort: settings.npcReasoningEffort,
-            onPresetChange: (id) => persist(setNpcPresetId(settings, id)),
-            onReasoningEffortChange: (effort) => persist(setNpcReasoningEffort(settings, effort)),
-          },
-        ]}
-        defaultReasoningEffort={settings.defaultReasoningEffort}
-        onDefaultReasoningEffortChange={(effort) => persist(setDefaultReasoningEffort(settings, effort))}
-        connection={{
-          mode: settings.connection,
-          onModeChange: (mode) => persist(setConnection(settings, mode)),
-        }}
-        provider={{
-          enabled: settings.networkProviderEnabled,
-          onEnabledChange: (enabled) => persist(setNetworkProviderEnabled(settings, enabled)),
-          sharedPresetIds: settings.networkProviderPresetIds,
-          onSharedPresetIdsChange: (ids) => persist(setNetworkProviderPresetIds(settings, ids)),
-          status: settings.networkProviderEnabled ? providerResult : undefined,
-        }}
-        consumerStatus={consumerStatus}
-        voice={{ tts: { voiceOptions: ttsVoices } }}
-        lang={locale === 'ja' ? 'ja' : 'en'}
-      />
-    </PanelShell>
-  )
+  const lang = locale === 'zh' ? 'zh-CN' : locale
+  const messages = aiTaskMessages[lang]
+  return <LlmSettings
+    className="vrsns-ai-settings" title={t('ai.title')} onClose={onClose} locale={lang}
+    tasks={[
+      { id: 'default', label: messages.default, reasoning: true },
+      { id: 'script', label: messages.script, tip: messages.scriptTip, reasoning: true },
+      { id: 'npc', label: messages.npc, tip: messages.npcTip, reasoning: true },
+    ]}
+    localSettings={localLlmSettings} voice={{ tts: { voiceOptions: ttsVoices } }}
+  />
 }

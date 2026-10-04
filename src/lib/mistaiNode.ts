@@ -43,9 +43,10 @@ import type { MistNodeLike } from '@tik-choco/mistai'
  * doesn't rip that room out from under another stack (e.g. the consumer)
  * still using it. Mirrors createSharedNodeScope's own per-scope ref-counting,
  * but at module scope since every stack in this app shares one page identity
- * anyway (there is only one AI Network room at a time).
+ * anyway, including concurrent AI rooms.
  */
 const roomRefCounts = new Map<string, number>()
+const roomReleaseTokens = new Map<string, object>()
 
 type EventHandler = (eventType: number, fromId: string, payload: unknown, roomId?: string) => void
 
@@ -111,6 +112,7 @@ class MistaiNodeHandle implements MistNodeLike {
     this.trackJoinCompletion(roomId)
     if (!this.joinedRooms.has(roomId)) {
       this.joinedRooms.add(roomId)
+      roomReleaseTokens.delete(roomId)
       roomRefCounts.set(roomId, (roomRefCounts.get(roomId) ?? 0) + 1)
       const unsubscribe = subscribeRoomEvents(roomId, (eventType, fromId, payload) => {
         this.handler?.(eventType, fromId, payload, roomId)
@@ -143,10 +145,32 @@ class MistaiNodeHandle implements MistNodeLike {
         // Room-scoped leave only — never the argless form, which would tear
         // down the page's single shared node out from under RoomSession /
         // DiscoverySession (see mistNode.ts's header comment).
-        this.node?.leaveRoom(room)
+        const joining = this.joinWaits.get(room)
+        if (joining) {
+          // Closing settings can release an on-demand room before its join completes.
+          // A new consumer may acquire it while we wait, so check ownership again.
+          const token = {}
+          roomReleaseTokens.set(room, token)
+          void joining.then(() => {
+            if (roomReleaseTokens.get(room) === token && !roomRefCounts.has(room)) {
+              roomReleaseTokens.delete(room)
+              this.releaseRoom(room)
+            }
+          })
+        } else {
+          this.releaseRoom(room)
+        }
       } else {
         roomRefCounts.set(room, remaining)
       }
+    }
+  }
+
+  private releaseRoom(room: string): void {
+    try {
+      this.node?.leaveRoom(room)
+    } catch (err) {
+      if (!isRoomNotJoined(err)) throw err
     }
   }
 
@@ -185,6 +209,7 @@ class MistaiNodeHandle implements MistNodeLike {
     const wait = node
       .joinRoomAsync(roomId)
       .then(() => {
+        if (!this.joinedRooms.has(roomId)) return
         this.readyRooms.add(roomId)
         this.flushPending(roomId)
       })
@@ -233,9 +258,9 @@ class MistaiNodeHandle implements MistNodeLike {
    * flight): losing one best-effort announce is survivable, but letting it
    * propagate is exactly what broke the session before.
    */
-  sendMessage(toId: string | null | undefined, payload: Uint8Array, delivery?: number): void {
-    if (!this.node || !this.sendRoomId) return
-    const roomId = this.sendRoomId
+  sendMessage(toId: string | null | undefined, payload: Uint8Array, delivery?: number, explicitRoomId?: string): void {
+    const roomId = explicitRoomId ?? this.sendRoomId
+    if (!this.node || !roomId || !this.joinedRooms.has(roomId)) return
     if (!this.readyRooms.has(roomId)) {
       const queued = this.pending.get(roomId) ?? []
       // Bounded so a room that never finishes joining cannot grow this without

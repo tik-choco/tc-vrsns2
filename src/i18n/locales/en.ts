@@ -423,12 +423,6 @@ export const en = {
 
   // AI panel (settings for the LLM connection, AI Network room, and tasks)
   'ai.title': 'AI',
-  'ai.task.script.label': 'Script generation',
-  'ai.task.script.tip': 'Turns a natural-language request into an in-world behavior script.',
-  'ai.network.modelNotShared': 'That model is not shared by this device.',
-  'ai.network.notConfigured': 'AI is not configured yet.',
-  'settings.ai.npcPreset': 'NPC replies',
-  'settings.ai.npcPresetHelp': 'Answers in character when someone talks near a character you placed in the world.',
 
   // Settings panel
   'settings.title': 'Settings',
