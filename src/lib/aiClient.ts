@@ -1,151 +1,45 @@
-// Single entry point the rest of tc-vrsns2 calls to run an LLM task: resolve
-// a task key to a target (app-local llmSettings.ts + the shared, cross-app
-// tc-shared-llm-config-v1 config) and dispatch it over whichever transport
-// that target implies, using mistai's own OpenAI-compatible client and
-// AI Network consumer — never a second HTTP or wire implementation.
-//
-// Transport is derived per llm-settings-common-v1.md §1 ("api/network/browser
-// の経路は選んだ preset の provider から自動導出する"), not chosen explicitly
-// at the call site:
-//  - the resolved preset is itself AI-Network-origin (a `mist-network://`
-//    pseudo-provider, i.e. the user explicitly picked a model someone else is
-//    sharing) -> always routed over the room, naming the preset's advertised
-//    label so the room's provider can match it back to the exact preset it
-//    shared (§4.2/§4.5's "named" request path);
-//  - otherwise this app's own `connection` setting (llmSettings.ts) decides:
-//    'api' calls the resolved endpoint directly; 'network' still asks the
-//    room, but without pinning a model — the connected peer answers with
-//    whatever its own default preset resolves to (§4.5's "model指定なし"
-//    row), exactly like tc-note's `LlmConnection === 'network'` behavior.
-//
-// This module owns transport selection only. Prompt construction and
-// interpreting the result are the caller's job (e.g. the script-generation
-// workstream) — `runLlmTask` takes ready-made ChatMessage[] and returns the
-// assistant's reply text unchanged.
-import { ConsumerClient, streamChatCompletion, type ChatMessage } from '@tik-choco/mistai'
-import {
-  advertisedModelName,
-  isNetworkProviderBaseUrl,
-  loadLlmConfig,
-  resolvePreset,
-} from '@tik-choco/mistai/llm-config'
-import { createMistaiNode } from './mistaiNode'
-import { loadLlmProviderSettings, type ReasoningEffort } from './llmSettings'
+// Resolve each task's model ref; its provider determines the transport.
+import { streamChatCompletion, type ChatMessage } from '@tik-choco/mistai'
+import { providerKind, resolveModel, roomIdFromBaseUrl } from '@tik-choco/mistai/llm-config'
+import { loadLlmProviderSettings, loadSharedLlmConfig } from './llmSettings'
+import { aiRooms } from './aiRooms'
+import { getLocale } from '../i18n'
+import { aiTaskMessages } from '../i18n/aiTasks'
 
 export type { ChatMessage }
-
-/** The task keys tc-vrsns2 exposes to runLlmTask — 'default' resolves through the shared config's own default preset (app-local presetId is always ''); 'script' and 'npc' are this app's two tasks (llm-settings-common-v1.md §5.3 checklist item 3 — no internal roles exposed as tasks). 'npc' is the in-character reply an owner-run NpcRuntime generates for a placed tc-town character (see src/npc/NpcRuntime.ts). */
 export type LlmTaskKey = 'default' | 'script' | 'npc'
-
 export interface RunLlmTaskOptions {
-  /** Invoked for each streamed content fragment, on both transports. */
   onDelta?: (delta: string, full: string) => void
-  /**
-   * Requests a JSON-only reply. Neither mistai's OpenAI-compatible client nor
-   * the mistllm-wire protocol carries a `response_format` field (there is
-   * nowhere to put one without hand-rolling a second HTTP call, which this
-   * module deliberately avoids — see its header comment), so this appends an
-   * instruction message instead of setting an API-level flag. Callers that
-   * need a strict schema should still validate/parse the result defensively
-   * and retry on failure; this only makes compliance likely, not guaranteed.
-   */
   jsonMode?: boolean
 }
-
 export class AiClientError extends Error {}
-
 const JSON_MODE_DIRECTIVE: ChatMessage = {
   role: 'system',
-  content: 'Respond with a single valid JSON object only — no markdown code fences, no commentary before or after it.',
+  content: 'Respond with a single valid JSON object only - no markdown code fences, no commentary before or after it.',
 }
-
-/** localStorage key mistai resolves a bookkeeping nodeId from — unused for actual wire identity (see mistaiNode.ts's header comment), namespaced so it doesn't collide with another app's key on the same origin. */
-const NODE_ID_STORAGE_KEY = 'tc-vrsns2:mistai-node-id'
-
-let sharedConsumer: ConsumerClient | null = null
-
-/**
- * The one ConsumerClient this app uses for AI Network chat traffic, shared
- * between `runLlmTask`'s 'network' transport and the settings UI's
- * connection-status display (AiPanel.tsx) — so the status shown always
- * reflects the exact session real requests go out on, instead of each owning
- * an independent room join.
- */
-export function getAiConsumerClient(): ConsumerClient {
-  if (!sharedConsumer) {
-    sharedConsumer = new ConsumerClient({
-      createNode: createMistaiNode,
-      nodeIdStorageKey: NODE_ID_STORAGE_KEY,
-    })
-  }
-  return sharedConsumer
-}
-
-function taskPresetAndEffort(task: LlmTaskKey): { presetId: string; reasoningEffort: ReasoningEffort } {
+export async function runLlmTask(task: LlmTaskKey, messages: ChatMessage[], options: RunLlmTaskOptions = {}): Promise<string> {
   const settings = loadLlmProviderSettings()
-  if (task === 'script') {
-    return { presetId: settings.scriptPresetId, reasoningEffort: settings.scriptReasoningEffort }
-  }
-  if (task === 'npc') {
-    return { presetId: settings.npcPresetId, reasoningEffort: settings.npcReasoningEffort }
-  }
-  return { presetId: '', reasoningEffort: settings.defaultReasoningEffort }
-}
-
-/**
- * Resolves `task`'s configured preset and runs it, choosing the transport as
- * described in this module's header comment. Throws `AiClientError` when
- * nothing is configured yet (no shared config, or the resolved preset's
- * provider no longer exists) or the AI Network room isn't set when a network
- * request is required — callers should catch and surface these as "AI isn't
- * set up" rather than a generic failure.
- */
-export async function runLlmTask(
-  task: LlmTaskKey,
-  messages: ChatMessage[],
-  options: RunLlmTaskOptions = {},
-): Promise<string> {
-  const shared = loadLlmConfig()
-  if (!shared) throw new AiClientError('AI is not configured yet.')
-
-  const { presetId, reasoningEffort } = taskPresetAndEffort(task)
-  const target = resolvePreset(shared, presetId)
-  if (!target) throw new AiClientError('AI is not configured yet.')
-
+  const target = resolveModel(loadSharedLlmConfig(), settings.tasks[task]?.ref)
+  const locale = getLocale()
+  const text = aiTaskMessages[locale === 'zh' ? 'zh-CN' : locale]
+  if (!target) throw new AiClientError(text.notConfigured)
   const outgoing = options.jsonMode ? [JSON_MODE_DIRECTIVE, ...messages] : messages
-
-  // §2.2: a preset whose provider is the mist-network:// pseudo-provider was
-  // explicitly picked as a room-shared model — always route it to the room,
-  // by its advertised name, regardless of this app's own `connection` mode.
-  if (isNetworkProviderBaseUrl(target.baseUrl)) {
-    const roomId = shared.network.roomId.trim()
-    if (!roomId) throw new AiClientError('The AI Network room is not set.')
-    return getAiConsumerClient().requestChat(roomId, outgoing, {
-      model: advertisedModelName(target),
-      onDelta: options.onDelta,
+  const reasoningEffort = settings.tasks[task]?.reasoningEffort ?? 'none'
+  if (providerKind(target) === 'room') {
+    // The HTTP tunnel carries per-task reasoning effort as well as vision messages.
+    const response = await aiRooms.requestRoomOpenAi(roomIdFromBaseUrl(target.baseUrl), {
+      path: '/chat/completions', method: 'POST', contentType: 'application/json',
+      body: JSON.stringify({ model: target.model, messages: outgoing, reasoning_effort: reasoningEffort, stream: false }),
     })
+    if (response.status < 200 || response.status >= 300) throw new AiClientError(text.roomRequestFailed.replace('{status}', String(response.status)))
+    const data = JSON.parse(response.body) as { choices?: { message?: { content?: string } }[] }
+    const answer = data.choices?.[0]?.message?.content ?? ''
+    if (answer) options.onDelta?.(answer, answer)
+    return answer
   }
-
-  const local = loadLlmProviderSettings()
-  if (local.connection === 'network') {
-    const roomId = shared.network.roomId.trim()
-    if (!roomId) throw new AiClientError('The AI Network room is not set.')
-    // No model named: let the connected peer answer with its own default
-    // preset (§4.5's "model指定なし" row) rather than guessing a name it may
-    // not recognize.
-    return getAiConsumerClient().requestChat(roomId, outgoing, { onDelta: options.onDelta })
-  }
-
   let full = ''
-  const onDelta = options.onDelta
-  return streamChatCompletion(
-    { baseUrl: target.baseUrl, apiKey: target.apiKey, model: target.model, temperature: target.temperature, reasoningEffort },
-    outgoing,
-    onDelta
-      ? (delta) => {
-          full += delta
-          onDelta(delta, full)
-        }
-      : undefined,
-  )
+  return streamChatCompletion({ ...target, reasoningEffort }, outgoing, options.onDelta ? delta => {
+    full += delta
+    options.onDelta?.(delta, full)
+  } : undefined)
 }

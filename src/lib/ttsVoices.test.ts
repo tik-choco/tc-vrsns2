@@ -15,7 +15,10 @@ const fetchVoices = vi.fn()
 // as a plain outer const (see https://vitest.dev/api/vi.html#vi-mock).
 const { FALLBACK_VOICES } = vi.hoisted(() => ({ FALLBACK_VOICES: ['alloy', 'echo', 'fable'] }))
 
-vi.mock('@tik-choco/mistai/llm-config', () => ({
+vi.mock('./aiRooms', () => ({ aiRooms: { roomConsumer: () => ({ status: { phase: 'connected', voices: ['room-voice'] } }) } }))
+
+vi.mock('@tik-choco/mistai/llm-config', async () => ({
+  ...await vi.importActual('@tik-choco/mistai/llm-config'),
   loadLlmConfig: (...args: unknown[]) => loadLlmConfig(...args),
   resolveVoice: (...args: unknown[]) => resolveVoice(...args),
   subscribeLlmConfig: () => () => {},
@@ -79,6 +82,12 @@ describe('getTtsVoices', () => {
     fetchVoices.mockResolvedValue(['shimmer'])
     expect(await getTtsVoices()).toEqual(['shimmer'])
     expect(fetchVoices).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses room advertisements without fetching a pseudo URL', async () => {
+    resolveVoice.mockReturnValue({ ...VOICE_TARGET, baseUrl: 'mist-network://voice-room' })
+    expect(await getTtsVoices()).toEqual(['room-voice'])
+    expect(fetchVoices).not.toHaveBeenCalled()
   })
 
   it('never throws even if fetchVoices unexpectedly rejects', async () => {

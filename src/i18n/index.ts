@@ -19,7 +19,7 @@ import zh from './locales/zh'
 
 export type { TranslationKey } from './locales/en'
 
-export type Locale = 'en' | 'ja' | 'zh'
+export type Locale = 'en' | 'ja' | 'zh' | 'zh-CN' | 'zh-TW'
 
 export type LocaleInfo = {
   code: Locale
@@ -32,7 +32,8 @@ export type LocaleInfo = {
 export const LOCALES: readonly LocaleInfo[] = [
   { code: 'en', label: 'English' },
   { code: 'ja', label: '日本語' },
-  { code: 'zh', label: '中文' },
+  { code: 'zh-CN', label: '简体中文' },
+  { code: 'zh-TW', label: '繁體中文' },
 ]
 
 const RTL_LOCALES = new Set<Locale>(
@@ -48,10 +49,12 @@ const DICTS: Partial<Record<Locale, Dict>> = {
   en,
   ja,
   zh,
+  'zh-CN': zh,
+  'zh-TW': zh,
 }
 
 function isLocale(value: string): value is Locale {
-  return LOCALES.some((l) => l.code === value)
+  return value === 'zh' || LOCALES.some((l) => l.code === value)
 }
 
 function detectInitialLocale(): Locale {
@@ -63,6 +66,8 @@ function detectInitialLocale(): Locale {
   }
   const langs = typeof navigator !== 'undefined' ? navigator.languages ?? [navigator.language] : []
   for (const raw of langs) {
+    if (/^zh-(tw|hk|hant)/i.test(raw)) return 'zh-TW'
+    if (/^zh/i.test(raw)) return 'zh-CN'
     const base = raw.toLowerCase().split('-')[0]
     if (isLocale(base)) return base
   }
