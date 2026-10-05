@@ -342,7 +342,7 @@ body {
   transform: scale(0.94);
 }
 
-:where(button, a, input, [tabindex]):focus-visible {
+:where(button, a, input, [tabindex]):focus-visible:not(.mistai-switch) {
   outline: 2px solid var(--accent-strong);
   outline-offset: 2px;
   border-radius: var(--r-sm);
