@@ -1,4 +1,6 @@
 import { useState } from 'preact/hooks'
+import { Switch } from '@tik-choco/mistai/preact'
+import '@tik-choco/mistai/ui.css'
 import { Shuffle, LogIn } from 'lucide-preact'
 import type { PlayerProfile } from '../shared/types'
 import { useTranslation, type TranslationKey } from '../i18n'
@@ -112,16 +114,12 @@ export function JoinScreen({ busy, error, errorCode, initialProfile, initialRoom
           <LanguageSelect />
         </div>
 
-        <label class="field-row" style="align-items: center; cursor: pointer;">
-          <input
-            type="checkbox"
-            checked={makePublic}
-            onChange={(e) => setMakePublic((e.target as HTMLInputElement).checked)}
-          />
+        <div class="field-row" style="align-items: center;">
+          <Switch checked={makePublic} onChange={setMakePublic} label={t('join.makePublic')} />
           <span class="field-label" style="text-transform: none; letter-spacing: normal;">
             {t('join.makePublic')}
           </span>
-        </label>
+        </div>
 
         {/* A classified errorCode always wins over the raw error string — it
             is the more specific, localized explanation (dead renderer, resume

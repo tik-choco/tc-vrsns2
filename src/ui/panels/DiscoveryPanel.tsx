@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'preact/hooks'
+import { Switch } from '@tik-choco/mistai/preact'
+import '@tik-choco/mistai/ui.css'
 import { useTranslation } from '../../i18n'
 import type { GameOverlayProps, RoomVisibility } from '../uiContract'
 import { PanelShell } from './PanelShell'
@@ -9,7 +11,7 @@ type ToggleProps = {
 }
 
 /**
- * Public/private segmented toggle for the *current* room. Shared between
+ * Public-room switch for the *current* room. Shared between
  * DiscoveryPanel (top of the public-room list) and RoomPanel — both just
  * import it from here rather than duplicating the markup.
  */
@@ -18,23 +20,10 @@ export function RoomVisibilityToggle({ value, onChange }: ToggleProps) {
   return (
     <div class="field">
       <span class="field-label">{t('room.visibility.label')}</span>
-      <div class="seg" role="group" aria-label={t('room.visibility.label')}>
-        <button
-          type="button"
-          class={value === 'private' ? 'seg-btn is-active' : 'seg-btn'}
-          aria-pressed={value === 'private'}
-          onClick={() => onChange('private')}
-        >
-          {t('room.visibility.private')}
-        </button>
-        <button
-          type="button"
-          class={value === 'public' ? 'seg-btn is-active' : 'seg-btn'}
-          aria-pressed={value === 'public'}
-          onClick={() => onChange('public')}
-        >
-          {t('room.visibility.public')}
-        </button>
+      <div class="field-row" style="align-items: center;">
+        <Switch checked={value === 'public'} label={t('join.makePublic')}
+          onChange={next => onChange(next ? 'public' : 'private')} />
+        <span>{t(value === 'public' ? 'room.visibility.public' : 'room.visibility.private')}</span>
       </div>
     </div>
   )

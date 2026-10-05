@@ -69,6 +69,29 @@ describe('synthesizeSpeech', () => {
     expect(init.headers.Authorization).toBeUndefined()
   })
 
+  it('uses the shared voice speed unless the caller overrides it', async () => {
+    resolveVoice.mockReturnValue({ ...VOICE_TARGET, speed: 1.75 })
+    await synthesizeSpeech({ text: 'hi' })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).speed).toBe(1.75)
+    await synthesizeSpeech({ text: 'hi', speed: 0.75 })
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).speed).toBe(0.75)
+  })
+
+  it('requests an explicit format but trusts the actual response MIME', async () => {
+    fetchMock.mockResolvedValue(okResponse(3, { 'content-type': 'audio/ogg; codecs=opus' }))
+    const clip = await synthesizeSpeech({ text: 'hi', responseFormat: 'wav' })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).response_format).toBe('wav')
+    expect(clip?.mime).toBe('audio/ogg')
+  })
+
+  it('ignores invalid TTS hints independently', async () => {
+    resolveVoice.mockReturnValue({ ...VOICE_TARGET, speed: 1.5 })
+    await synthesizeSpeech({ text: 'hi', speed: Number.NaN, responseFormat: 'unknown' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.speed).toBe(1.5)
+    expect(body).not.toHaveProperty('response_format')
+  })
+
   it("a character's voiceModel/voiceName override the resolved voice config", async () => {
     await synthesizeSpeech({ text: 'hi', voiceModel: 'tts-2', voiceName: 'shimmer' })
     const [, init] = fetchMock.mock.calls[0]
@@ -97,6 +120,17 @@ describe('synthesizeSpeech', () => {
     expect(requestTts).toHaveBeenCalledWith('voice-room', {
       text: 'shared voice', model: undefined, voice: undefined,
     })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('passes caller speed/format hints to the room helper', async () => {
+    resolveVoice.mockReturnValue({ ...VOICE_TARGET, baseUrl: 'mist-network://voice-room', model: 'network-auto' })
+    requestRoomTts.mockResolvedValue(new Blob([new Uint8Array([1])], { type: 'audio/flac' }))
+    const clip = await synthesizeSpeech({ text: 'hi', speed: 0.5, responseFormat: 'wav' })
+    expect(requestRoomTts).toHaveBeenCalledWith('voice-room', {
+      text: 'hi', model: undefined, voice: 'nova', speed: 0.5, responseFormat: 'wav',
+    })
+    expect(clip?.mime).toBe('audio/flac')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

@@ -1,10 +1,10 @@
 // NPC speech uses its resolved voice provider, with bounded waits and audio size.
 import { loadLlmConfig, resolveVoice, providerKind, roomIdFromBaseUrl, networkVoiceModelParam } from '@tik-choco/mistai/llm-config'
-import { MistaiError } from '@tik-choco/mistai'
+import { isTtsResponseFormat, isTtsSpeed, MistaiError, type TtsOptions } from '@tik-choco/mistai'
 import { aiRooms } from './aiRooms'
 import { vrsnsDebug } from './debugHook'
 
-export type TtsRequest = {
+export type TtsRequest = TtsOptions & {
   text: string
   /** Overrides the resolved voice config's model/voice when present — the tc-town character's own voice identity (NpcBinding.voiceModel/.voiceName), so every peer voices the same NPC the same way. */
   voiceModel?: string
@@ -66,7 +66,8 @@ export async function synthesizeDirect(req: TtsRequest, signal?: AbortSignal): P
         model,
         voice: req.voiceName?.trim() || voice.voice || 'alloy',
         input: text,
-        speed: voice.speed ?? 1,
+        speed: isTtsSpeed(req.speed) ? req.speed : voice.speed ?? 1,
+        ...(isTtsResponseFormat(req.responseFormat) ? { response_format: req.responseFormat } : {}),
       }),
     })
     if (!response.ok) return null
@@ -102,6 +103,8 @@ async function requestTtsOverNetworkRaw(roomId: string, req: TtsRequest): Promis
     text: req.text,
     model: networkVoiceModelParam(req.voiceModel?.trim() || voice?.model || ''),
     voice: req.voiceName?.trim() || voice?.voice,
+    ...(req.speed !== undefined ? { speed: req.speed } : {}),
+    ...(req.responseFormat !== undefined ? { responseFormat: req.responseFormat } : {}),
   })
   if (blob.size === 0) return null
   const buffer = await blob.arrayBuffer()
