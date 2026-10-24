@@ -3,7 +3,7 @@
 // CID. This keeps the expensive TTS API call at one per utterance while the
 // P2P content layer handles distribution and deduplication.
 import { ensureMistNode } from './mistNode'
-import { storage_add, storage_get } from '../vendor/mistlib/wrappers/web/index.js'
+import { storage_add, storage_get } from '@tik-choco/mistlib-web'
 
 const SPEECH_MAX_BYTES = 8 * 1024 * 1024
 const RETRIEVE_ATTEMPTS = 5

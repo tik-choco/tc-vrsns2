@@ -16,8 +16,8 @@ import {
   EVENT_NEIGHBORS,
   EVENT_PEER_CONNECTED,
   EVENT_RAW,
-} from '../vendor/mistlib/wrappers/web/index.js'
-import type { MistNode } from '../vendor/mistlib/wrappers/web/index.js'
+} from '@tik-choco/mistlib-web'
+import type { MistNode } from '@tik-choco/mistlib-web'
 import { currentNodeId, ensureMistNode, subscribeRoomEvents, toBytes } from '../lib/mistNode'
 import {
   ANNOUNCE_ROOMS_MAX,
@@ -154,7 +154,7 @@ export class DiscoverySession {
     this.ownRoom = null
     try {
       // Room-scoped leave (mist_leave_room_id) — same mechanism as
-      // RoomSession.leave(), confirmed by reading the vendored wrapper's
+      // RoomSession.leave(), confirmed by reading the @tik-choco/mistlib-web wrapper's
       // leaveRoom(roomId): it leaves this room only, leaving the node (and
       // any other joined room) untouched.
       this.node.leaveRoom(DISCOVERY_ROOM_ID)

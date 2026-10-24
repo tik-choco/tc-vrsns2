@@ -5,12 +5,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "predev": "node scripts/fetch-mistlib.mjs",
     "dev": "vite --host",
-    "prebuild": "node scripts/fetch-mistlib.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "fetch-mistlib": "node scripts/fetch-mistlib.mjs",
     "test": "vitest run",
     "test:e2e": "node scripts/e2e-sync.mjs",
     "test:e2e:script": "node scripts/e2e-script.mjs",
@@ -38,6 +35,7 @@
     "@pixiv/three-vrm": "^3.5.1",
     "@tik-choco/mistai": "github:tik-choco-lab/mistai",
     "@tik-choco/mistlib": "0.6.6",
+    "@tik-choco/mistlib-web": "0.1.0",
     "lucide-preact": "^0.469.0",
     "preact": "^10.29.3",
     "three": "^0.183.2"

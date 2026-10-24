@@ -37,11 +37,11 @@ tc-vrsns2 is the shared space, not a character runtime.
 
 ```sh
 npm install
-cp .env.example .env   # MISTLIB_REPO/MISTLIB_REF (build is skipped when the vendored copy matches)
+cp .env.example .env   # Optional: MISTLIB_LOCAL for local engine development
 npm run dev
 ```
 
-`src/vendor/mistlib/` is the committed canonical build (99616055, includes the mistlib-dev#16 double-wrap fix). CI bypasses the `prebuild` hook and runs `npx tsc -b && npx vite build` directly.
+The engine and JS wrapper come from npm: `@tik-choco/mistlib` and `@tik-choco/mistlib-web`. CI installs the latest versions of both before type-checking and building.
 
 Branches: `main` (release) / `develop` (work).
 
@@ -60,7 +60,7 @@ Branches: `main` (release) / `develop` (work).
 - Cross-version compatibility shims (see `unwrapEnvelope` in
   `src/net/protocol.ts`): mistlib builds before the mistlib-dev#16 fix
   double-wrap app payloads in their overlay envelope, so inbound frames are
-  defensively unwrapped app-side (a no-op with the fixed vendored build); and
+  defensively unwrapped app-side (a no-op with the fixed npm engine); and
   because targeted RELIABLE sends jam in those builds' seq-reorder buffers,
   chat/profile go out as seq-free reliable *broadcasts* and targeted hellos as
   unreliable sends with an app-level retry loop — both correct on every build.
@@ -82,8 +82,7 @@ Note: dev servers run on per-port origins, so localStorage/OPFS are NOT shared a
 ## License
 
 This repository is licensed under the [Mozilla Public License 2.0](LICENSE)
-(the same license as mistlib, whose built WASM output is vendored at
-`src/vendor/mistlib/`).
+(the same license as mistlib, installed from npm alongside `@tik-choco/mistlib-web`).
 
 Motion clips in `public/animations/` (walk/run) are first-party works created
 by tik-choco and are covered by this repository's license. The repository

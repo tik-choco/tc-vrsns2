@@ -34,7 +34,7 @@
 // not this tab's real one — cosmetic only, since actual wire messages carry
 // the real node's identity assigned by mistlib-wasm, not mistai's id.
 import { ensureMistNode, currentNodeId, subscribeRoomEvents } from './mistNode'
-import type { MistNode } from '../vendor/mistlib/wrappers/web/index.js'
+import type { MistNode } from '@tik-choco/mistlib-web'
 import type { MistNodeLike } from '@tik-choco/mistai'
 
 /**
@@ -180,7 +180,7 @@ class MistaiNodeHandle implements MistNodeLike {
    *
    * This exists because mistlib's `joinRoom()` is fire-and-forget — it posts
    * the join request and returns long before the signaling round trip
-   * finishes (see the vendored wrapper's own comment on it) — while mistai's
+   * finishes (see the @tik-choco/mistlib-web wrapper's own comment on it) — while mistai's
    * `Network.join()` (dist/node.js) treats that return as "joined" and
    * resolves. Every mistai role then sends its `consumer_hello`/`provider_hello`
    * announce in the very next microtask. Room-scoped sends throw

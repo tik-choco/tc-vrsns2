@@ -10,7 +10,7 @@
  * in the same JSON record, since mistlib storage stores one blob per CID.
  *
  * A full JSON copy is always also written to a shared localStorage fallback
- * key, so apps without a vendored mistlib module can still interoperate.
+ * key, so apps without the mistlib npm packages can still interoperate.
  *
  * This file is part of src/profile/, designed to be copied verbatim into
  * other tc-* apps.

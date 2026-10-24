@@ -4,7 +4,7 @@
 // mistlib exposes exactly one onEvent slot for the whole node, shared with
 // DiscoverySession's always-on discovery-lobby room — so events are received
 // via mistNode.ts's subscribeRoomEvents(), which fans the one slot out by
-// roomId. Per the vendored wrapper, onRemoteTrack()/onMediaEvent() still
+// roomId. Per the @tik-choco/mistlib-web wrapper, onRemoteTrack()/onMediaEvent() still
 // share a single `_onMediaEvent` slot, and the discovery room has no media
 // use for it, so RoomSession keeps sole, direct ownership of that one (never
 // register onRemoteTrack alongside). Every handler is guarded so events
@@ -21,12 +21,12 @@ import {
   EVENT_RAW,
   MEDIA_EVENT_TRACK_ADDED,
   MEDIA_EVENT_TRACK_REMOVED,
-} from '../vendor/mistlib/wrappers/web/index.js'
+} from '@tik-choco/mistlib-web'
 import type {
   DeliveryMethod,
   MediaEventPayload,
   MistNode,
-} from '../vendor/mistlib/wrappers/web/index.js'
+} from '@tik-choco/mistlib-web'
 import { currentNodeId, ensureMistNode, subscribeRoomEvents, toBytes } from '../lib/mistNode'
 import { vrsnsDebug } from '../lib/debugHook'
 import type {
@@ -407,7 +407,7 @@ export class RoomSession {
    * sequence numbers to RELIABLE unicast envelopes, and their double-wrap bug
    * (see unwrapEnvelope) burns two seqs per message — the receiver's reorder
    * buffer then waits forever for the odd seqs that were never transmitted.
-   * The vendored build is fixed, but broadcast stays: it's correct semantics
+   * The npm engine is fixed, but broadcast stays: it's correct semantics
    * for room-wide messages and keeps rooms with older-build peers working.
    * Broadcast envelopes are never sequenced (seq 0 → delivered immediately)
    * while still riding the reliable channel when `delivery` says so.
@@ -495,12 +495,12 @@ export class RoomSession {
   // --- teardown --------------------------------------------------------------
 
   /**
-   * Leaves this room only. Unlike the vendored wrapper's argument-less
+   * Leaves this room only. Unlike the @tik-choco/mistlib-web wrapper's argument-less
    * leaveRoom() — which decommissions the WHOLE page node (mist_leave_room(),
    * clears MistNode.initialized) — leaveRoom(fullRoomId) calls
    * mist_leave_room_id(roomId) and leaves the node (and any other joined
    * room, e.g. DiscoverySession's discovery lobby) untouched. Confirmed by
-   * reading src/vendor/mistlib/wrappers/web/index.js's leaveRoom(roomId).
+   * reading @tik-choco/mistlib-web's leaveRoom(roomId).
    */
   leave(): void {
     if (this.closed) return
@@ -565,7 +565,7 @@ export class RoomSession {
       }
       let senderId = fromId
       let msg = decode(bytes)
-      // The vendored mistlib delivers our frame directly, but peers on builds
+      // The npm mistlib engine delivers our frame directly, but peers on builds
       // predating mistlib-dev#16's fix double-wrap payloads and the engine
       // only unwraps the outer layer — peel any remaining envelopes until our
       // frame appears (see unwrapEnvelope in protocol.ts). Bounded: garbage
@@ -767,7 +767,7 @@ export class RoomSession {
    * The poll MUST be scoped to our room. The page runs one MistNode shared by
    * every room it is in (lib/mistNode.ts), and a bare getNeighbors() asks the
    * NODE, not the room — `mist_get_neighbors()` versus
-   * `mist_get_neighbors_in_room(roomId)` in the vendored wrapper. Unscoped, it
+   * `mist_get_neighbors_in_room(roomId)` in the @tik-choco/mistlib-web wrapper. Unscoped, it
    * also returns everyone in the always-on discovery lobby and everyone in the
    * AI Network room, which since the LLM integration includes peers that are
    * not players at all (other tc-* tabs on this origin, a `mistl ai provide`
@@ -841,7 +841,7 @@ export class RoomSession {
    * Every outbound frame, room-scoped. The roomId argument is NOT optional in
    * practice — it is the same trap syncPresence() documents, on the sending
    * side. The page runs ONE MistNode shared by every room it is in, and the
-   * vendored wrapper dispatches on this argument: with it,
+   * @tik-choco/mistlib-web dispatches on this argument: with it,
    * `mist_send_message_in_room(roomId, …)`; without it,
    * `mist_send_message(…)`, which is NODE-wide. Unscoped, a broadcast (an
    * empty target) therefore went to every peer on the node — our room, plus

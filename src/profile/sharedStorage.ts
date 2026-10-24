@@ -4,17 +4,17 @@
  * shared across every tc-* app deployed under the same origin).
  *
  * Kept behind a small interface so profile/identity persistence can be unit
- * tested with a mock backend, without needing the vendored wasm module.
+ * tested with a mock backend, without needing the mistlib wasm module.
  *
  * Ported from tc-vrm-viewer's src/profile/sharedStorage.ts, ADAPTED for this
  * app: mistlib allows exactly one active MistNode per page, and tc-vrsns2
  * centralizes that singleton in src/lib/mistNode.ts (ensureMistNode). This
  * module therefore never creates its own runtime or calls init_with_config —
  * every store/retrieve awaits ensureMistNode() first and then uses the
- * module-level storage_add/storage_get of the vendored wrapper.
+ * module-level storage_add/storage_get of the @tik-choco/mistlib-web wrapper.
  */
 import { ensureMistNode } from '../lib/mistNode.js'
-import { storage_add, storage_get } from '../vendor/mistlib/wrappers/web/index.js'
+import { storage_add, storage_get } from '@tik-choco/mistlib-web'
 
 export type SharedStorageBackend = {
   store(bytes: Uint8Array): Promise<string>

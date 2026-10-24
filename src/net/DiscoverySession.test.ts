@@ -1,14 +1,14 @@
 // Node-environment tests for DiscoverySession's gossip announce/relay/prune
-// behavior. Follows RoomSession.test.ts's mocking pattern: the vendored
-// mistlib wrapper is mocked (its module pulls in the wasm glue), and
+// behavior. Follows RoomSession.test.ts's mocking pattern: the npm package
+// @tik-choco/mistlib-web is mocked (its module pulls in the wasm glue), and
 // src/lib/mistNode.ts is stubbed with a fake in-memory node plus a minimal
 // re-implementation of subscribeRoomEvents()'s roomId-fanout.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MSG_ROOM_ANNOUNCE, decode, encodeRoomAnnounce } from './protocol'
 import type { RoomAnnounceEntry } from './protocol'
 
-// Constants mirror src/vendor/mistlib/wrappers/web/index.js.
-vi.mock('../vendor/mistlib/wrappers/web/index.js', () => ({
+// Constants mirror @tik-choco/mistlib-web.
+vi.mock('@tik-choco/mistlib-web', () => ({
   EVENT_RAW: 0,
   EVENT_OVERLAY: 1,
   EVENT_NEIGHBORS: 2,

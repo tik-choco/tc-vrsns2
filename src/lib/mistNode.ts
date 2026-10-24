@@ -4,13 +4,12 @@
 // `new MistNode(...).init()` calls race for that single slot; whichever inits
 // second throws. Every consumer (net layer, shared profile storage, VRM
 // distribution) must go through this one shared instance.
-import { MistNode } from "../vendor/mistlib/wrappers/web/index.js";
+import { MistNode } from "@tik-choco/mistlib-web";
 import * as mistWasmUntyped from "@tik-choco/mistlib";
 import { mistSignalingConfig } from "./mistSignaling";
 
-// get_version/get_build_info exist only on engine builds newer than the
-// published 0.6.1, so node_modules' .d.ts (what tsc reads) doesn't declare
-// them — hence the cast, rather than extending the vendored wrapper's surface.
+// The pinned npm engine (0.6.6) declares both get_version and get_build_info.
+// Keep these diagnostics optional for local engine builds that omit either API.
 const mistWasm = mistWasmUntyped as unknown as {
   get_version: (() => string) | undefined;
   get_build_info: (() => string) | undefined;
@@ -60,25 +59,23 @@ let initPromise: Promise<InstanceType<typeof MistNode>> | null = null;
 // down — mistlib-wasm's leaveRoom() fully decommissions the node (not just
 // the room), so the next consumer needs to bring it back up.
 export async function ensureMistNode(): Promise<InstanceType<typeof MistNode>> {
-  // `initialized` is a real runtime property the vendor JS wrapper sets
+  // `initialized` is a real runtime property the @tik-choco/mistlib-web wrapper sets
   // (flipped back to false by leaveRoom()) but it isn't part of the
-  // vendored .d.ts's public surface — hence the cast rather than a type
+  // package .d.ts's public surface — hence the cast rather than a type
   // error, since that .d.ts is regenerated upstream and not ours to extend.
   if (node && (node as unknown as { initialized: boolean }).initialized) return node;
   if (!initPromise) {
     initPromise = (async () => {
       if (!node) node = new MistNode(getPageNodeId(), mistSignalingConfig());
       await node.init();
-      // Log which engine build this page is running. get_version/get_build_info
-      // only exist on builds newer than the published 0.6.1 — real values here
-      // mean the MISTLIB_LOCAL (local wasm-pack) engine is loaded; "n/a"
-      // means node_modules' published engine.
+      // Log version/build metadata for either the npm or MISTLIB_LOCAL engine.
+      // Metadata availability alone does not identify the engine's source.
       const engineVersion = mistWasm.get_version?.();
       const engineBuild = mistWasm.get_build_info?.();
       if (engineVersion !== undefined && engineBuild !== undefined) {
         console.log(`[mistlib] engine version=${engineVersion} build=${engineBuild}`);
       } else {
-        console.log("[mistlib] get_version/get_build_info absent — published npm build (MISTLIB_LOCAL not active)");
+        console.log("[mistlib] get_version/get_build_info unavailable in this engine build");
       }
       return node;
     })();
@@ -103,7 +100,7 @@ export function currentNodeId(): string {
 // (DiscoverySession). Both need their own event stream, so this module owns
 // the single onEvent slot and fans events out by roomId — the wasm bridge's
 // register_event_callback passes it as the 4th argument (confirmed in
-// src/vendor/mistlib/wrappers/web/index.js: `(eventType, fromId, payload,
+// @tik-choco/mistlib-web: `(eventType, fromId, payload,
 // roomId) => this._onEvent(...)`, and typed as such in index.d.ts).
 //
 // Not every event carries a roomId (e.g. some topology hints arrive before a
@@ -158,7 +155,7 @@ export function subscribeRoomEvents(fullRoomId: string, handler: RoomEventHandle
 
 /**
  * Coerces an EVENT_RAW (or other opaque wasm) payload into bytes. The wasm
- * bridge does not guarantee a Uint8Array — the vendored wrapper's own
+ * bridge does not guarantee a Uint8Array — the @tik-choco/mistlib-web wrapper's own
  * onRawMessage falls back to `new Uint8Array(payload)`, i.e. payloads can
  * arrive as plain number arrays (or other views) depending on the build.
  * Shared by RoomSession and DiscoverySession so both apply the same

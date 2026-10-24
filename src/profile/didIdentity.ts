@@ -15,8 +15,8 @@
  * mistlib storage has no identity yet, we migrate from localStorage — first
  * this app's own legacy key, then other known tc-* keys — so apps that ran
  * before this shared store existed keep their DID. A localStorage mirror is
- * kept under this app's own key for environments without a vendored
- * mistlib module.
+ * kept under this app's own key for environments without the mistlib npm
+ * packages.
  */
 import { base64ToBytes, bytesToBase64, concatBytes, toArrayBuffer } from './cryptoEncoding.js'
 import type { SharedStorageBackend } from './sharedStorage.js'

@@ -57,7 +57,7 @@ import { ensureMistNode } from '../lib/mistNode.js'
 import { toArrayBuffer } from '../profile/cryptoEncoding.js'
 import { addForeignToCatalog } from '../storage/catalog.js'
 import { base64ToBytes, sha256Hex } from '../storage/tcCrypto.js'
-import { storage_get } from '../vendor/mistlib/wrappers/web/index.js'
+import { storage_get } from '@tik-choco/mistlib-web'
 import { detectPlacedAsset, MAX_PLACEABLE_BYTES } from '../world/mediaFormat.js'
 
 /** Shared-bus topic name (see this file's header + the contract doc). */

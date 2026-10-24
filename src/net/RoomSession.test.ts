@@ -1,5 +1,5 @@
 // Node-environment tests for RoomSession's peer discovery, presence
-// reconciliation, and outbound sync cadence. The vendored mistlib wrapper is
+// reconciliation, and outbound sync cadence. The @tik-choco/mistlib-web wrapper is
 // mocked (its module pulls in the wasm glue), and the page-singleton
 // mistNode module is stubbed with a fake in-memory node.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,8 +19,8 @@ import {
   encode,
 } from './protocol'
 
-// Constants mirror src/vendor/mistlib/wrappers/web/index.js.
-vi.mock('../vendor/mistlib/wrappers/web/index.js', () => ({
+// Constants mirror @tik-choco/mistlib-web.
+vi.mock('@tik-choco/mistlib-web', () => ({
   EVENT_RAW: 0,
   EVENT_OVERLAY: 1,
   EVENT_NEIGHBORS: 2,
@@ -48,7 +48,7 @@ type Sent = {
 
 class FakeNode {
   // Real signature is (eventType, fromId, payload, roomId) — see
-  // src/vendor/mistlib/wrappers/web/index.js's register_event_callback.
+  // @tik-choco/mistlib-web's register_event_callback.
   // Tests that call this directly with 3 args leave roomId undefined, which
   // the fake dispatcher below (mirroring mistNode.ts's real one) forwards to
   // every subscribed room — fine here since each test only joins one room.
@@ -423,7 +423,7 @@ describe('outbound sync', () => {
     session.sendState(STATE)
     session.sendState({ ...STATE, x: 2 })
     // Empty broadcast target on purpose: broadcast envelopes carry no e2e
-    // seq, which sidesteps the vendored build's reorder-buffer jam.
+    // seq, which sidesteps older engines' reorder-buffer jam.
     expect(kindsSentTo(null)).toEqual([MSG_STATE, MSG_STATE])
     expect(sentTo(null).every((s) => s.delivery === 2)).toBe(true)
     expect(fakeNode.positions).toEqual([[1, 0, -2]]) // second call throttled

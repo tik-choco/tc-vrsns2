@@ -7,7 +7,7 @@
 // All mistlib access goes through the page's single MistNode via
 // ensureMistNode() — this module never creates its own runtime.
 import { ensureMistNode } from '../lib/mistNode.js'
-import { storage_add, storage_get } from '../vendor/mistlib/wrappers/web/index.js'
+import { storage_add, storage_get } from '@tik-choco/mistlib-web'
 import { decryptJson, type EncryptedPayload } from './tcCrypto.js'
 import type { FileBundle, FileRecord, FolderBundle } from './domain.js'
 

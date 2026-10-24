@@ -3,7 +3,7 @@
 // "N of M assets unavailable" figure WorldPanel's import-confirm step shows
 // BEFORE the user applies an imported world.
 //
-// mistlib's web wrapper (src/vendor/mistlib/wrappers/web/index.js) exposes no
+// mistlib's web wrapper (@tik-choco/mistlib-web) exposes no
 // cheap "does this cid exist" probe. The only read primitives it offers are
 // storage_get (always performs, or awaits, a real fetch — local-cache hit or
 // not, there is no way to ask it "would this resolve" without actually

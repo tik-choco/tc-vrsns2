@@ -1125,7 +1125,7 @@ const ENVELOPE_ID_MAX_LEN = 256
  * hands the result to `ctx.transport` — the core `OverlayTransport`, whose
  * `send()` calls `wrap_data` AGAIN. The receiving engine unwraps only the outer
  * layer, so the app-level EVENT_RAW payload is still one whole envelope, not
- * our frame. The vendored build has the fix and delivers our frame directly,
+ * our frame. The npm engine has the fix and delivers our frame directly,
  * but peers running an older build still send double-wrapped payloads (the fix
  * is sender-side), so this shim stays for cross-version rooms.
  * (tc-vrsns works around the same bug by scanning its JSON payloads for the

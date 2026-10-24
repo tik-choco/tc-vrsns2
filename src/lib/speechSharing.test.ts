@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { storageGet } = vi.hoisted(() => ({ storageGet: vi.fn() }))
 
-vi.mock('../vendor/mistlib/wrappers/web/index.js', () => ({
+vi.mock('@tik-choco/mistlib-web', () => ({
   storage_add: vi.fn(),
   storage_get: storageGet,
 }))

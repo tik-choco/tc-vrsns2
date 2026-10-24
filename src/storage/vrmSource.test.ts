@@ -17,7 +17,7 @@ vi.mock('../lib/mistNode.js', () => ({
   ensureMistNode: async () => ({}),
 }))
 
-vi.mock('../vendor/mistlib/wrappers/web/index.js', () => ({
+vi.mock('@tik-choco/mistlib-web', () => ({
   storage_get: async (cid: string) => {
     storageGetCalls.push(cid)
     if (gate) await gate
