@@ -5,7 +5,16 @@
 // second throws. Every consumer (net layer, shared profile storage, VRM
 // distribution) must go through this one shared instance.
 import { MistNode } from "../vendor/mistlib/wrappers/web/index.js";
+import * as mistWasmUntyped from "@tik-choco/mistlib";
 import { mistSignalingConfig } from "./mistSignaling";
+
+// get_version/get_build_info exist only on engine builds newer than the
+// published 0.6.1, so node_modules' .d.ts (what tsc reads) doesn't declare
+// them — hence the cast, rather than extending the vendored wrapper's surface.
+const mistWasm = mistWasmUntyped as unknown as {
+  get_version: (() => string) | undefined;
+  get_build_info: (() => string) | undefined;
+};
 
 // Per-TAB node id, deliberately in sessionStorage (not localStorage): the
 // node id is this tab's identity toward peers, and localStorage is shared
@@ -60,6 +69,17 @@ export async function ensureMistNode(): Promise<InstanceType<typeof MistNode>> {
     initPromise = (async () => {
       if (!node) node = new MistNode(getPageNodeId(), mistSignalingConfig());
       await node.init();
+      // Log which engine build this page is running. get_version/get_build_info
+      // only exist on builds newer than the published 0.6.1 — real values here
+      // mean the MISTLIB_LOCAL (local wasm-pack) engine is loaded; "n/a"
+      // means node_modules' published engine.
+      const engineVersion = mistWasm.get_version?.();
+      const engineBuild = mistWasm.get_build_info?.();
+      if (engineVersion !== undefined && engineBuild !== undefined) {
+        console.log(`[mistlib] engine version=${engineVersion} build=${engineBuild}`);
+      } else {
+        console.log("[mistlib] get_version/get_build_info absent — published npm build (MISTLIB_LOCAL not active)");
+      }
       return node;
     })();
     initPromise.finally(() => {
