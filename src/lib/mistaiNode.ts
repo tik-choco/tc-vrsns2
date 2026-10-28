@@ -35,7 +35,7 @@
 // the real node's identity assigned by mistlib-wasm, not mistai's id.
 import { ensureMistNode, currentNodeId, subscribeRoomEvents } from './mistNode'
 import type { MistNode } from '@tik-choco/mistlib-web'
-import type { MistNodeLike } from '@tik-choco/mistai'
+import type { MistDelivery, MistNodeLike } from '@tik-choco/mistai'
 
 /**
  * Reference counts per AI-Network roomId, shared by every handle this module
@@ -51,7 +51,7 @@ const roomReleaseTokens = new Map<string, object>()
 type EventHandler = (eventType: number, fromId: string, payload: unknown, roomId?: string) => void
 
 /** One room-scoped send held until its room finishes joining (see MistaiNodeHandle.sendMessage). */
-type PendingSend = { toId: string | null | undefined; payload: Uint8Array; delivery?: number }
+type PendingSend = { toId: string | null | undefined; payload: Uint8Array; delivery?: MistDelivery }
 
 /**
  * Cap on messages held per room while a join completes. Only the handful of
@@ -66,10 +66,9 @@ class MistaiNodeHandle implements MistNodeLike {
   private handler: EventHandler | null = null
   private readonly joinedRooms = new Set<string>()
   private readonly unsubscribes = new Map<string, () => void>()
-  // The room a bare sendMessage() (mistai's MistNodeLike shape carries no
-  // roomId parameter) is scoped to. mistai's Network/ConsumerClient/
-  // ProviderService each join exactly one room per handle over its
-  // lifetime, so "the most recently joined room still held" is always the
+  // The room a sendMessage() without an explicit roomId is scoped to.
+  // mistai's Network/ConsumerClient/ProviderService each join exactly one
+  // room per handle, so the most recently joined room still held is the
   // right one in practice.
   private sendRoomId: string | null = null
   /** Rooms whose join has actually completed — see trackJoinCompletion(). */
@@ -81,14 +80,12 @@ class MistaiNodeHandle implements MistNodeLike {
 
   // Captures the shared node once and keeps it, rather than re-resolving
   // ensureMistNode() on every call. mistNode.ts's docblock notes it
-  // re-creates the node if a previous consumer's argless `leaveRoom()` (no
-  // roomId) decommissioned it, which WOULD make this captured reference
-  // stale — but every leaveRoom() call in this codebase (this class's own,
-  // RoomSession's, DiscoverySession's) is room-scoped (passes a roomId), and
-  // this class's own `leaveRoom()` below is deliberately never argless
-  // either (see its doc comment). The whole-node teardown path is therefore
-  // unreachable in practice; if that ever changes, this cache would need to
-  // start re-checking `ensureMistNode()`'s return value instead of trusting it.
+  // reinitializes the node if a previous consumer's `leaveAllRooms()`
+  // decommissioned it, which WOULD make this captured reference
+  // stale. The adapter, RoomSession and DiscoverySession only call the real
+  // node's room-scoped leaveRoom(roomId), even when this handle's leaveRoom()
+  // is called without an id. If whole-node teardown is added, this cache would
+  // need to re-check ensureMistNode() instead of trusting the captured node.
   async init(): Promise<void> {
     this.node = await ensureMistNode()
   }
@@ -258,7 +255,7 @@ class MistaiNodeHandle implements MistNodeLike {
    * flight): losing one best-effort announce is survivable, but letting it
    * propagate is exactly what broke the session before.
    */
-  sendMessage(toId: string | null | undefined, payload: Uint8Array, delivery?: number, explicitRoomId?: string): void {
+  sendMessage(toId: string | null | undefined, payload: Uint8Array, delivery?: MistDelivery, explicitRoomId?: string): void {
     const roomId = explicitRoomId ?? this.sendRoomId
     if (!this.node || !roomId || !this.joinedRooms.has(roomId)) return
     if (!this.readyRooms.has(roomId)) {

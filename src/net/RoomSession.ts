@@ -495,12 +495,9 @@ export class RoomSession {
   // --- teardown --------------------------------------------------------------
 
   /**
-   * Leaves this room only. Unlike the @tik-choco/mistlib-web wrapper's argument-less
-   * leaveRoom() — which decommissions the WHOLE page node (mist_leave_room(),
-   * clears MistNode.initialized) — leaveRoom(fullRoomId) calls
-   * mist_leave_room_id(roomId) and leaves the node (and any other joined
-   * room, e.g. DiscoverySession's discovery lobby) untouched. Confirmed by
-   * reading @tik-choco/mistlib-web's leaveRoom(roomId).
+   * Leaves this room only. The wrapper's leaveAllRooms() decommissions the
+   * whole page node; leaveRoom(fullRoomId) calls mist_leave_room(roomId) and
+   * leaves the node and any other joined room untouched.
    */
   leave(): void {
     if (this.closed) return

@@ -8,8 +8,7 @@ import { MistNode } from "@tik-choco/mistlib-web";
 import * as mistWasmUntyped from "@tik-choco/mistlib";
 import { mistSignalingConfig } from "./mistSignaling";
 
-// The pinned npm engine (0.6.6) declares both get_version and get_build_info.
-// Keep these diagnostics optional for local engine builds that omit either API.
+// Read version and build metadata for diagnostics after the wrapper initializes.
 const mistWasm = mistWasmUntyped as unknown as {
   get_version: (() => string) | undefined;
   get_build_info: (() => string) | undefined;
@@ -55,12 +54,11 @@ let node: InstanceType<typeof MistNode> | null = null;
 let initPromise: Promise<InstanceType<typeof MistNode>> | null = null;
 
 // Resolves once the page's single MistNode is ready to use. Creates it on
-// first call; re-initializes it if a previous session's leaveRoom() tore it
-// down — mistlib-wasm's leaveRoom() fully decommissions the node (not just
-// the room), so the next consumer needs to bring it back up.
+// first call; re-initializes it if leaveAllRooms() tore it down. That call
+// fully decommissions the node, so the next consumer needs to bring it back up.
 export async function ensureMistNode(): Promise<InstanceType<typeof MistNode>> {
   // `initialized` is a real runtime property the @tik-choco/mistlib-web wrapper sets
-  // (flipped back to false by leaveRoom()) but it isn't part of the
+  // (flipped back to false by leaveAllRooms()) but it isn't part of the
   // package .d.ts's public surface — hence the cast rather than a type
   // error, since that .d.ts is regenerated upstream and not ours to extend.
   if (node && (node as unknown as { initialized: boolean }).initialized) return node;

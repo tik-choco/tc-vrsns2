@@ -1,8 +1,16 @@
 // Node-environment tests for RoomSession's peer discovery, presence
-// reconciliation, and outbound sync cadence. The @tik-choco/mistlib-web wrapper is
-// mocked (its module pulls in the wasm glue), and the page-singleton
-// mistNode module is stubbed with a fake in-memory node.
+// reconciliation, and outbound sync cadence. The page-singleton mistNode
+// module is stubbed with a fake in-memory node.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  EVENT_AOI_ENTERED,
+  EVENT_AOI_LEFT,
+  EVENT_NEIGHBORS,
+  EVENT_OVERLAY,
+  EVENT_PEER_CONNECTED,
+  EVENT_PEER_DISCONNECTED,
+  EVENT_RAW,
+} from '@tik-choco/mistlib-web'
 import type { ObjectState, PlayerProfile, PlayerState } from '../shared/types'
 import type { ScriptInput } from '../script/ir'
 import {
@@ -18,23 +26,6 @@ import {
   decode,
   encode,
 } from './protocol'
-
-// Constants mirror @tik-choco/mistlib-web.
-vi.mock('@tik-choco/mistlib-web', () => ({
-  EVENT_RAW: 0,
-  EVENT_OVERLAY: 1,
-  EVENT_NEIGHBORS: 2,
-  EVENT_AOI_ENTERED: 3,
-  EVENT_AOI_LEFT: 4,
-  EVENT_PEER_CONNECTED: 5,
-  EVENT_PEER_DISCONNECTED: 6,
-  EVENT_AOI_NODES: 7,
-  MEDIA_EVENT_TRACK_ADDED: 100,
-  MEDIA_EVENT_TRACK_REMOVED: 101,
-  DELIVERY_RELIABLE: 0,
-  DELIVERY_UNRELIABLE_ORDERED: 1,
-  DELIVERY_UNRELIABLE: 2,
-}))
 
 const SELF_ID = 'self-node'
 
@@ -265,7 +256,7 @@ describe('room scoping of outbound frames', () => {
 
   it('scopes a targeted send too — a peer we greet is a peer in our room', () => {
     fakeNode.sent = []
-    fakeNode.eventHandler!(5 /* EVENT_PEER_CONNECTED */, 'p1', null)
+    fakeNode.eventHandler!(EVENT_PEER_CONNECTED, 'p1', null)
 
     const greets = sentTo('p1')
     expect(greets.length).toBeGreaterThan(0)
@@ -307,11 +298,37 @@ describe('room scoping of outbound frames', () => {
 })
 
 describe('peer discovery', () => {
+  it('handles the current topology event codes and their UTF-8 payloads', () => {
+    expect([
+      EVENT_PEER_CONNECTED,
+      EVENT_PEER_DISCONNECTED,
+      EVENT_NEIGHBORS,
+      EVENT_AOI_ENTERED,
+      EVENT_AOI_LEFT,
+    ]).toEqual([2, 3, 4, 5, 6])
+
+    const onJoined = vi.fn()
+    const onLeft = vi.fn()
+    session.onPeerJoined = onJoined
+    session.onPeerLeft = onLeft
+    const encoder = new TextEncoder()
+
+    fakeNode.eventHandler!(EVENT_PEER_CONNECTED, 'p1', encoder.encode('joined'))
+    fakeNode.eventHandler!(EVENT_AOI_ENTERED, 'p2', encoder.encode('entered'))
+    expect(onJoined.mock.calls.map((call) => call[0])).toEqual(['p1', 'p2'])
+
+    fakeNode.eventHandler!(EVENT_AOI_LEFT, 'p1', encoder.encode('left'))
+    expect(onLeft).not.toHaveBeenCalled()
+    fakeNode.eventHandler!(EVENT_PEER_DISCONNECTED, 'p1', encoder.encode('left'))
+    expect(onLeft).toHaveBeenCalledOnce()
+    expect(onLeft).toHaveBeenCalledWith('p1')
+  })
+
   it('greets a peer from an EVENT_NEIGHBORS payload and announces it once', () => {
     const onJoined = vi.fn()
     session.onPeerJoined = onJoined
     const payload = new TextEncoder().encode(JSON.stringify([{ id: 'p1' }, SELF_ID]))
-    fakeNode.eventHandler!(2 /* EVENT_NEIGHBORS */, '', payload)
+    fakeNode.eventHandler!(EVENT_NEIGHBORS, '', payload)
 
     expect(onJoined).toHaveBeenCalledTimes(1)
     expect(onJoined).toHaveBeenCalledWith('p1')
@@ -324,9 +341,9 @@ describe('peer discovery', () => {
   it('discovers peers via overlay/AOI/peer-connected hints', () => {
     const onJoined = vi.fn()
     session.onPeerJoined = onJoined
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
-    fakeNode.eventHandler!(3 /* EVENT_AOI_ENTERED */, 'p2', null)
-    fakeNode.eventHandler!(5 /* EVENT_PEER_CONNECTED */, 'p3', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, 'p1', null)
+    fakeNode.eventHandler!(EVENT_AOI_ENTERED, 'p2', null)
+    fakeNode.eventHandler!(EVENT_PEER_CONNECTED, 'p3', null)
     expect(onJoined.mock.calls.map((c) => c[0])).toEqual(['p1', 'p2', 'p3'])
   })
 
@@ -339,14 +356,14 @@ describe('peer discovery', () => {
   })
 
   it('re-greets an unanswered peer at the rate limit, then stops once its profile arrives', () => {
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, 'p1', null)
     fakeNode.neighbors = ['p1'] // stays alive in topology
     expect(kindsSentTo('p1')).toEqual([MSG_PROFILE, MSG_STATE_REQ])
 
     vi.advanceTimersByTime(2500) // past GREET_MIN_INTERVAL_MS
     expect(kindsSentTo('p1')).toEqual([MSG_PROFILE, MSG_STATE_REQ, MSG_PROFILE, MSG_STATE_REQ])
 
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_PROFILE, profile: PROFILE }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_PROFILE, profile: PROFILE }))
     fakeNode.sent = []
     vi.advanceTimersByTime(5000)
     expect(sentTo('p1')).toEqual([])
@@ -355,8 +372,8 @@ describe('peer discovery', () => {
   it('ignores its own id and empty ids', () => {
     const onJoined = vi.fn()
     session.onPeerJoined = onJoined
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, SELF_ID, null)
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, '', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, SELF_ID, null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, '', null)
     expect(onJoined).not.toHaveBeenCalled()
   })
 })
@@ -365,7 +382,7 @@ describe('presence reconciliation', () => {
   it('drops a peer that is silent and missing from the topology', () => {
     const onLeft = vi.fn()
     session.onPeerLeft = onLeft
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, 'p1', null)
     fakeNode.neighbors = []
     vi.advanceTimersByTime(4500) // past PEER_TIMEOUT_MS
     expect(onLeft).toHaveBeenCalledWith('p1')
@@ -388,7 +405,7 @@ describe('presence reconciliation', () => {
   it('does not reap anyone on a round where the topology could not be read', () => {
     const onLeft = vi.fn()
     session.onPeerLeft = onLeft
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, 'p1', null)
     // The room-scoped query throws until the join takes effect. Treating that
     // as "the room is empty" would tell the reaper everyone left.
     fakeNode.neighborsThrow = true
@@ -399,7 +416,7 @@ describe('presence reconciliation', () => {
   it('keeps a peer alive while it is listed in getNeighbors()', () => {
     const onLeft = vi.fn()
     session.onPeerLeft = onLeft
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, 'p1', null)
     fakeNode.neighbors = [{ nodeId: 'p1' }]
     vi.advanceTimersByTime(10000)
     expect(onLeft).not.toHaveBeenCalled()
@@ -408,11 +425,11 @@ describe('presence reconciliation', () => {
   it('keeps a silent-but-absent peer while messages still arrive', () => {
     const onLeft = vi.fn()
     session.onPeerLeft = onLeft
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, 'p1', null)
     fakeNode.neighbors = []
     for (let t = 0; t < 8; t += 1) {
       vi.advanceTimersByTime(1000)
-      fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_STATE, state: STATE }))
+      fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_STATE, state: STATE }))
     }
     expect(onLeft).not.toHaveBeenCalled()
   })
@@ -448,7 +465,7 @@ describe('outbound sync', () => {
   it('replays the last state and profile to a MSG_STATE_REQ', () => {
     session.sendState(STATE)
     fakeNode.sent = []
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_STATE_REQ }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_STATE_REQ }))
     const kinds = kindsSentTo('p1')
     expect(kinds).toContain(MSG_STATE)
     expect(kinds).toContain(MSG_PROFILE)
@@ -461,7 +478,7 @@ describe('inbound state', () => {
   it('forwards validated remote state and counts the peer', () => {
     const onState = vi.fn()
     session.onRemoteState = onState
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_STATE, state: STATE }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_STATE, state: STATE }))
     expect(onState).toHaveBeenCalledWith('p1', STATE)
     expect(session.peerCount).toBe(1)
   })
@@ -469,7 +486,7 @@ describe('inbound state', () => {
   it('drops frames from itself', () => {
     const onState = vi.fn()
     session.onRemoteState = onState
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_STATE, state: STATE }))
+    fakeNode.eventHandler!(EVENT_RAW, SELF_ID, encode({ kind: MSG_STATE, state: STATE }))
     expect(onState).not.toHaveBeenCalled()
   })
 })
@@ -498,7 +515,7 @@ describe('script effects/inputs', () => {
 
     const received = vi.fn()
     session.onNpcSpeech = received
-    fakeNode.eventHandler!(0, 'p1', encode({ kind: MSG_NPC_SPEECH, ...speech }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_NPC_SPEECH, ...speech }))
     expect(received).toHaveBeenCalledWith('p1', speech)
   })
 
@@ -519,14 +536,14 @@ describe('script effects/inputs', () => {
   it('delivers inbound script effects to onScriptEffects with the sender id', () => {
     const onEffects = vi.fn()
     session.onScriptEffects = onEffects
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_EVENT, effects: EFFECTS }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_EVENT, effects: EFFECTS }))
     expect(onEffects).toHaveBeenCalledWith('p1', EFFECTS)
   })
 
   it('delivers inbound script inputs to onScriptInputs with the sender id', () => {
     const onInputs = vi.fn()
     session.onScriptInputs = onInputs
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_INPUT, inputs: INPUTS }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_INPUT, inputs: INPUTS }))
     expect(onInputs).toHaveBeenCalledWith('p1', INPUTS)
   })
 
@@ -535,8 +552,8 @@ describe('script effects/inputs', () => {
     const onInputs = vi.fn()
     session.onScriptEffects = onEffects
     session.onScriptInputs = onInputs
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_EVENT, effects: EFFECTS }))
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_INPUT, inputs: INPUTS }))
+    fakeNode.eventHandler!(EVENT_RAW, SELF_ID, encode({ kind: MSG_EVENT, effects: EFFECTS }))
+    fakeNode.eventHandler!(EVENT_RAW, SELF_ID, encode({ kind: MSG_INPUT, inputs: INPUTS }))
     expect(onEffects).not.toHaveBeenCalled()
     expect(onInputs).not.toHaveBeenCalled()
   })
@@ -561,32 +578,31 @@ describe('object state stream', () => {
   it('delivers inbound object states to onObjectStates with the sender id', () => {
     const onStates = vi.fn()
     session.onObjectStates = onStates
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_OBJ_STATE, states: STATES }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_OBJ_STATE, states: STATES }))
     expect(onStates).toHaveBeenCalledWith('p1', STATES)
   })
 
   it('drops object-state frames from itself', () => {
     const onStates = vi.fn()
     session.onObjectStates = onStates
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, SELF_ID, encode({ kind: MSG_OBJ_STATE, states: STATES }))
+    fakeNode.eventHandler!(EVENT_RAW, SELF_ID, encode({ kind: MSG_OBJ_STATE, states: STATES }))
     expect(onStates).not.toHaveBeenCalled()
   })
 
   it('is never replayed to a MSG_STATE_REQ newcomer, unlike MSG_OBJECTS', () => {
     session.sendObjectStates(STATES)
     fakeNode.sent = []
-    fakeNode.eventHandler!(0 /* EVENT_RAW */, 'p1', encode({ kind: MSG_STATE_REQ }))
+    fakeNode.eventHandler!(EVENT_RAW, 'p1', encode({ kind: MSG_STATE_REQ }))
     expect(kindsSentTo('p1')).not.toContain(MSG_OBJ_STATE)
   })
 })
 
 describe('leave', () => {
   it('stops the presence loop and tears the room down', () => {
-    fakeNode.eventHandler!(1 /* EVENT_OVERLAY */, 'p1', null)
+    fakeNode.eventHandler!(EVENT_OVERLAY, 'p1', null)
     session.leave()
     expect(fakeNode.leftRoom).toBe(true)
-    // Room-scoped leave (mist_leave_room_id), not the argument-less
-    // leaveRoom() that decommissions the whole node — see leave()'s doc.
+    // Room-scoped leave keeps the shared node alive — see leave()'s doc.
     expect(fakeNode.leftRoomId).toBe('tc-vrsns2/lobby')
     fakeNode.sent = []
     vi.advanceTimersByTime(5000) // presence loop must not fire again

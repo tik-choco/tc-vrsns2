@@ -2,6 +2,12 @@
 // FakeNode + mocked ./mistNode convention used by
 // src/net/DiscoverySession.test.ts and src/net/RoomSession.test.ts.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { EVENT_PEER_CONNECTED, EVENT_PEER_DISCONNECTED, EVENT_RAW } from '@tik-choco/mistai'
+import {
+  DELIVERY_RELIABLE_UNORDERED,
+  EVENT_PEER_CONNECTED as WRAPPER_PEER_CONNECTED,
+  EVENT_PEER_DISCONNECTED as WRAPPER_PEER_DISCONNECTED,
+} from '@tik-choco/mistlib-web'
 
 type Handler = (eventType: number, fromId: string, payload: unknown, roomId?: string) => void
 type Sent = { toId: string | null | undefined; payload: Uint8Array; delivery: number | undefined; roomId: string | undefined }
@@ -169,12 +175,13 @@ describe('sends during the join window', () => {
     await handle.init()
     handle.joinRoom(roomId)
 
-    handle.sendMessage(null, new Uint8Array([1]), 0)
+    handle.sendMessage(null, new Uint8Array([1]), DELIVERY_RELIABLE_UNORDERED)
     expect(fakeNode.sent).toEqual([]) // queued, NOT dropped and NOT thrown
 
     await fakeNode.completeJoin(roomId)
     expect(fakeNode.sent).toHaveLength(1)
     expect(fakeNode.sent[0].payload).toEqual(new Uint8Array([1]))
+    expect(fakeNode.sent[0].delivery).toBe(DELIVERY_RELIABLE_UNORDERED)
     expect(fakeNode.sent[0].roomId).toBe(roomId)
   })
 
@@ -200,8 +207,9 @@ describe('sends during the join window', () => {
     handle.joinRoom(roomId)
     await fakeNode.completeJoin(roomId)
 
-    handle.sendMessage(null, new Uint8Array([9]), 0)
+    handle.sendMessage(null, new Uint8Array([9]), DELIVERY_RELIABLE_UNORDERED)
     expect(fakeNode.sent).toHaveLength(1)
+    expect(fakeNode.sent[0].delivery).toBe(DELIVERY_RELIABLE_UNORDERED)
   })
 
   it('drops what it held when the join genuinely fails, rather than replaying into a room we never entered', async () => {
@@ -293,12 +301,20 @@ describe('createMistaiNode', () => {
     handle.joinRoom(roomA)
 
     expect(fakeNode.joinedRooms).toEqual([roomA])
-    dispatch(0, 'peer-1', 'hello-bytes', roomA)
-    expect(received).toEqual([[0, 'peer-1', 'hello-bytes', roomA]])
+    dispatch(EVENT_RAW, 'peer-1', 'hello-bytes', roomA)
+    const joined = new TextEncoder().encode('joined')
+    const left = new TextEncoder().encode('left')
+    dispatch(WRAPPER_PEER_CONNECTED, 'peer-1', joined, roomA)
+    dispatch(WRAPPER_PEER_DISCONNECTED, 'peer-1', left, roomA)
+    expect(received).toEqual([
+      [EVENT_RAW, 'peer-1', 'hello-bytes', roomA],
+      [EVENT_PEER_CONNECTED, 'peer-1', joined, roomA],
+      [EVENT_PEER_DISCONNECTED, 'peer-1', left, roomA],
+    ])
 
     // An event for a room this handle never joined must not reach it.
-    dispatch(0, 'peer-2', 'other-room-bytes', roomB)
-    expect(received).toHaveLength(1)
+    dispatch(EVENT_RAW, 'peer-2', 'other-room-bytes', roomB)
+    expect(received).toHaveLength(3)
   })
 
   it('sendMessage() scopes every send to the room this handle joined', async () => {
@@ -404,7 +420,7 @@ describe('createMistaiNode', () => {
     handle.joinRoom(roomA)
     handle.leaveRoom(roomA)
 
-    dispatch(0, 'peer-1', 'late-event', roomA)
+    dispatch(EVENT_RAW, 'peer-1', 'late-event', roomA)
     expect(received).toEqual([])
   })
 })

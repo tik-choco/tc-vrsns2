@@ -1,26 +1,11 @@
 // Node-environment tests for DiscoverySession's gossip announce/relay/prune
-// behavior. Follows RoomSession.test.ts's mocking pattern: the npm package
-// @tik-choco/mistlib-web is mocked (its module pulls in the wasm glue), and
-// src/lib/mistNode.ts is stubbed with a fake in-memory node plus a minimal
+// behavior. Follows RoomSession.test.ts's mocking pattern: src/lib/mistNode.ts
+// is stubbed with a fake in-memory node plus a minimal
 // re-implementation of subscribeRoomEvents()'s roomId-fanout.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DELIVERY_UNRELIABLE, EVENT_AOI_ENTERED, EVENT_NEIGHBORS, EVENT_PEER_CONNECTED, EVENT_RAW } from '@tik-choco/mistlib-web'
 import { MSG_ROOM_ANNOUNCE, decode, encodeRoomAnnounce } from './protocol'
 import type { RoomAnnounceEntry } from './protocol'
-
-// Constants mirror @tik-choco/mistlib-web.
-vi.mock('@tik-choco/mistlib-web', () => ({
-  EVENT_RAW: 0,
-  EVENT_OVERLAY: 1,
-  EVENT_NEIGHBORS: 2,
-  EVENT_AOI_ENTERED: 3,
-  EVENT_AOI_LEFT: 4,
-  EVENT_PEER_CONNECTED: 5,
-  EVENT_PEER_DISCONNECTED: 6,
-  EVENT_AOI_NODES: 7,
-  DELIVERY_RELIABLE: 0,
-  DELIVERY_UNRELIABLE_ORDERED: 1,
-  DELIVERY_UNRELIABLE: 2,
-}))
 
 const SELF_ID = 'self-node'
 const DISCOVERY_ROOM_ID = 'tc-vrsns2/discovery#v1'
@@ -106,7 +91,7 @@ vi.mock('../lib/mistNode', () => ({
 import { DiscoverySession } from './DiscoverySession'
 
 function announceFrom(fromId: string, rooms: RoomAnnounceEntry[]): void {
-  fakeNode.eventHandler!(0 /* EVENT_RAW */, fromId, encodeRoomAnnounce(rooms), DISCOVERY_ROOM_ID)
+  fakeNode.eventHandler!(EVENT_RAW, fromId, encodeRoomAnnounce(rooms), DISCOVERY_ROOM_ID)
 }
 
 function lastSent(): Sent {
@@ -148,7 +133,7 @@ describe('periodic announce', () => {
     const sent = lastSent()
     expect(sent.toId).toBeNull()
     expect(sent.roomId).toBe(DISCOVERY_ROOM_ID)
-    expect(sent.delivery).toBe(2 /* DELIVERY_UNRELIABLE */)
+    expect(sent.delivery).toBe(DELIVERY_UNRELIABLE)
     expect(decodedRooms(sent)).toEqual([])
   })
 
@@ -190,13 +175,18 @@ describe('setOwnRoom immediate announce', () => {
 
 describe('new-peer triggers an immediate announce', () => {
   it('re-announces (rate-limited) on EVENT_NEIGHBORS and EVENT_PEER_CONNECTED', () => {
-    fakeNode.eventHandler!(2 /* EVENT_NEIGHBORS */, '', null, DISCOVERY_ROOM_ID)
+    fakeNode.eventHandler!(EVENT_NEIGHBORS, '', null, DISCOVERY_ROOM_ID)
     expect(fakeNode.sent).toHaveLength(1)
-    fakeNode.eventHandler!(5 /* EVENT_PEER_CONNECTED */, 'p1', null, DISCOVERY_ROOM_ID)
+    fakeNode.eventHandler!(EVENT_PEER_CONNECTED, 'p1', new TextEncoder().encode('joined'), DISCOVERY_ROOM_ID)
     expect(fakeNode.sent).toHaveLength(1) // still within ANNOUNCE_MIN_GAP_MS
     vi.advanceTimersByTime(2_100)
-    fakeNode.eventHandler!(5 /* EVENT_PEER_CONNECTED */, 'p2', null, DISCOVERY_ROOM_ID)
+    fakeNode.eventHandler!(EVENT_PEER_CONNECTED, 'p2', new TextEncoder().encode('joined'), DISCOVERY_ROOM_ID)
     expect(fakeNode.sent).toHaveLength(2)
+  })
+
+  it('does not re-announce for an AOI entry', () => {
+    fakeNode.eventHandler!(EVENT_AOI_ENTERED, 'p1', new TextEncoder().encode('entered'), DISCOVERY_ROOM_ID)
+    expect(fakeNode.sent).toHaveLength(0)
   })
 })
 
@@ -240,7 +230,7 @@ describe('receiving announces', () => {
 
   it('ignores a malformed/undecodable frame without throwing', () => {
     expect(() => {
-      fakeNode.eventHandler!(0 /* EVENT_RAW */, 'peer1', new Uint8Array([0xff, 1, 2]), DISCOVERY_ROOM_ID)
+      fakeNode.eventHandler!(EVENT_RAW, 'peer1', new Uint8Array([0xff, 1, 2]), DISCOVERY_ROOM_ID)
     }).not.toThrow()
     expect(session.rooms()).toEqual([])
   })

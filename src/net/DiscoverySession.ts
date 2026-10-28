@@ -153,7 +153,7 @@ export class DiscoverySession {
     this.store.clear()
     this.ownRoom = null
     try {
-      // Room-scoped leave (mist_leave_room_id) — same mechanism as
+      // Room-scoped leave (mist_leave_room) — same mechanism as
       // RoomSession.leave(), confirmed by reading the @tik-choco/mistlib-web wrapper's
       // leaveRoom(roomId): it leaves this room only, leaving the node (and
       // any other joined room) untouched.
